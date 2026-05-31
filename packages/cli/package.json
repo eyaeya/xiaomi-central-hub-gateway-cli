@@ -1,0 +1,33 @@
+{
+  "name": "@xgg/cli",
+  "version": "0.1.0",
+  "description": "Command-line tool for operating Xiaomi Gateway Geek Edition automations",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "bin": {
+    "xgg": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js",
+      "default": "./dist/cli.js"
+    }
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@xgg/core": "workspace:^",
+    "cli-table3": "^0.6.5",
+    "commander": "^12.1.0"
+  }
+}

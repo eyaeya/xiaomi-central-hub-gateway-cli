@@ -1,0 +1,48 @@
+import { Command } from 'commander';
+import { attachDelete } from './delete.js';
+import { attachDisable } from './disable.js';
+import { attachEdgeAdd } from './edge-add.js';
+import { attachEdgeRemove } from './edge-remove.js';
+import { attachEnable } from './enable.js';
+import { attachExport } from './export.js';
+import { attachGet } from './get.js';
+import { attachImport } from './import.js';
+import { attachLayout } from './layout.js';
+import { attachLint } from './lint.js';
+import { attachList } from './list.js';
+import { attachLogs } from './logs.js';
+import { attachNew } from './new.js';
+import { attachNodeAdd } from './node-add.js';
+import { attachNodeRemove } from './node-remove.js';
+import { attachNodeUpdate } from './node-update.js';
+import { attachRename } from './rename.js';
+import { attachSetTags } from './set-tags.js';
+import { attachSet } from './set.js';
+import { attachValidate } from './validate.js';
+import { attachView } from './view.js';
+
+export function ruleCommand(): Command {
+  const cmd = new Command('rule').description('Rule (graph) operations');
+  attachList(cmd);
+  attachGet(cmd);
+  attachView(cmd);
+  attachLogs(cmd);
+  attachNew(cmd);
+  attachExport(cmd);
+  attachImport(cmd);
+  attachEnable(cmd);
+  attachDisable(cmd);
+  attachRename(cmd);
+  attachSetTags(cmd);
+  attachSet(cmd);
+  attachNodeAdd(cmd);
+  attachNodeUpdate(cmd);
+  attachNodeRemove(cmd);
+  attachEdgeAdd(cmd);
+  attachEdgeRemove(cmd);
+  attachLayout(cmd);
+  attachLint(cmd);
+  attachValidate(cmd);
+  attachDelete(cmd);
+  return cmd;
+}

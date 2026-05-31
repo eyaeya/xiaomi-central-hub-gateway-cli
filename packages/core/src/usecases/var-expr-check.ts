@@ -1,0 +1,205 @@
+// Faithful 1:1 port of the gateway's arithmetic-expression validator
+// `class Lr { check(e) {…} }` (gateway.6cbc85.js), exposed to the web UI as
+// `Jr.yg.check` and invoked by `nodeCheckTool.varSetNumber` on the assembled
+// element template (const → value, var → "$"). The official save() flow shows
+// `运算式不合法` and blocks the save when this throws.
+//
+// PARITY CONTRACT (G-D, 2026-05-29): this MUST accept/reject exactly what the
+// gateway parser does — no stricter, no looser. Do not "improve" the grammar.
+// Quirks deliberately preserved for fidelity:
+//   - leading unary +/- works via the "empty left operand counts as 1" rule;
+//   - `String.charAt(-1)` returns "" (not undefined), so a +/- at index 0 is
+//     treated as a binary op whose left side is empty → valid;
+//   - `Number("Infinity")`/hex/scientific pass because `Number(token)` is used
+//     verbatim; only the literal `$` placeholder bypasses the numeric parse;
+//   - `check` returns an "arg count" (comma sums children); a bare top-level
+//     comma list does NOT throw, matching the gateway (nodeCheckTool only cares
+//     whether it throws, never inspects the returned count).
+
+interface OpDef {
+  name: 'comma' | 'add' | 'substract' | 'multiply' | 'devide' | 'modulo' | 'func' | 'number';
+  pri: number;
+}
+
+const OPS: Record<OpDef['name'], OpDef> = {
+  comma: { name: 'comma', pri: 0 },
+  add: { name: 'add', pri: 1 },
+  substract: { name: 'substract', pri: 1 },
+  multiply: { name: 'multiply', pri: 2 },
+  devide: { name: 'devide', pri: 2 },
+  modulo: { name: 'modulo', pri: 2 },
+  func: { name: 'func', pri: 3 },
+  number: { name: 'number', pri: 4 },
+};
+
+// Gateway `Lr.FUNCS`. `""` (empty function name) is the plain grouping-paren
+// case (argc 1). `max`/`min` are variadic (minArgc 1); the rest are fixed-arity.
+const FUNCS: Record<string, { argc?: number; minArgc?: number }> = {
+  '': { argc: 1 },
+  abs: { argc: 1 },
+  pow: { argc: 2 },
+  log: { argc: 2 },
+  sin: { argc: 1 },
+  cos: { argc: 1 },
+  tan: { argc: 1 },
+  asin: { argc: 1 },
+  acos: { argc: 1 },
+  atan: { argc: 1 },
+  max: { minArgc: 1 },
+  min: { minArgc: 1 },
+  round: { argc: 1 },
+  floor: { argc: 1 },
+  ceil: { argc: 1 },
+  rand: { argc: 0 },
+  randint: { argc: 2 },
+  now: { argc: 0 },
+  year: { argc: 0 },
+  month: { argc: 0 },
+  date: { argc: 0 },
+  day: { argc: 0 },
+  hours: { argc: 0 },
+  minutes: { argc: 0 },
+  seconds: { argc: 0 },
+  pi: { argc: 0 },
+  e: { argc: 0 },
+};
+
+const BINARY_OPS: Record<string, OpDef> = {
+  ',': OPS.comma,
+  '+': OPS.add,
+  '-': OPS.substract,
+  '*': OPS.multiply,
+  '/': OPS.devide,
+  '%': OPS.modulo,
+};
+
+const UNARY_PRECEDERS = ['e', '+', '-', '*', '/', '%'];
+
+// Recursive-descent split-on-lowest-precedence checker. Returns the "arg
+// count" of the (sub)expression; throws on any malformed input. Mirrors the
+// gateway control flow byte-for-byte.
+function checkExpr(input: string): number {
+  let splitIdx: number | undefined;
+  const e = input.trim();
+  let chosen: OpDef = OPS.number;
+  let depth = 0;
+
+  for (let a = 0; a < e.length; a += 1) {
+    const ch = e.charAt(a);
+    if (ch === '(') {
+      if (depth === 0 && chosen.pri > OPS.func.pri) {
+        chosen = OPS.func;
+        splitIdx = a;
+      }
+      depth += 1;
+      continue;
+    }
+    if (ch === ')') {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== 0) continue;
+    if (ch === '-' || ch === '+') {
+      let t2 = a - 1;
+      while (t2 >= 0 && e.charAt(t2) === ' ') t2 -= 1;
+      // charAt(-1) === "" — not in UNARY_PRECEDERS → treated as a binary op
+      // whose left side is empty (handled by the add/substract case below).
+      if (UNARY_PRECEDERS.includes(e.charAt(t2))) continue;
+    }
+    const op = BINARY_OPS[ch];
+    if (op !== undefined && op.pri <= chosen.pri) {
+      chosen = op;
+      splitIdx = a;
+    }
+  }
+
+  if (depth !== 0) throw new Error('Bracket error');
+
+  let result = Number.NaN;
+  switch (chosen.name) {
+    case 'comma': {
+      if (splitIdx === undefined) throw new Error('Impossible');
+      return checkExpr(e.slice(0, splitIdx)) + checkExpr(e.slice(splitIdx + 1));
+    }
+    case 'add':
+    case 'substract': {
+      if (splitIdx === undefined) throw new Error('Impossible');
+      const left = e.slice(0, splitIdx);
+      const lc = left.trim().length === 0 ? 1 : checkExpr(left);
+      const rc = checkExpr(e.slice(splitIdx + 1));
+      if (lc !== 1) throw new Error('Invalid expression');
+      if (rc !== 1) throw new Error('Invalid expression');
+      result = 1;
+      break;
+    }
+    case 'multiply':
+    case 'devide':
+    case 'modulo': {
+      if (splitIdx === undefined) throw new Error('Impossible');
+      const lc = checkExpr(e.slice(0, splitIdx));
+      const rc = checkExpr(e.slice(splitIdx + 1));
+      if (lc !== 1) throw new Error('Invalid expression');
+      if (rc !== 1) throw new Error('Invalid expression');
+      result = 1;
+      break;
+    }
+    case 'func': {
+      if (splitIdx === undefined) throw new Error('Impossible');
+      const fname = e.slice(0, splitIdx).trim();
+      const fdef = FUNCS[fname];
+      if (fdef === undefined) throw new Error('Invalid function');
+      let argCount = 0;
+      const inner = e.slice(splitIdx + 1, e.length - 1);
+      if (!/^\s*$/.test(inner)) argCount = checkExpr(inner);
+      if (fdef.argc !== undefined && argCount !== fdef.argc) {
+        throw new Error('Invalid arg count');
+      }
+      if (fdef.minArgc !== undefined && argCount < fdef.minArgc) {
+        throw new Error('invalid arg count');
+      }
+      result = 1;
+      break;
+    }
+    case 'number': {
+      if (/^\s*$/.test(e)) throw new Error('Invalid number');
+      if (e !== '$' && Number.isNaN(Number(e))) throw new Error('Invalid number');
+      result = 1;
+      break;
+    }
+  }
+
+  if (Number.isNaN(result)) throw new Error('Math error');
+  return result;
+}
+
+// varSetNumber element → template fragment, matching the UI's
+// `el.type===const ? el.value : el.type===var ? "$" : ""` assembly.
+function assembleExprTemplate(elements: unknown[]): string {
+  let template = '';
+  for (const el of elements) {
+    if (el !== null && typeof el === 'object' && !Array.isArray(el)) {
+      const rec = el as Record<string, unknown>;
+      if (rec.type === 'const') {
+        template += String(rec.value ?? '');
+      } else if (rec.type === 'var') {
+        template += '$';
+      }
+      // any other element type → "" (faithful to the UI's else branch)
+    }
+  }
+  return template;
+}
+
+/**
+ * Returns true when the assembled varSetNumber element template is a valid
+ * arithmetic expression per the gateway's `Lr.check` parser (i.e. `yg.check`
+ * does not throw). The UI rejects a save with `运算式不合法` when this is false.
+ */
+export function isValidVarSetNumberExpr(elements: unknown[]): boolean {
+  try {
+    checkExpr(assembleExprTemplate(elements));
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -1,0 +1,60 @@
+export { agentCall } from './agent-call.js';
+export type { AgentCallInputs, IpcClientFactory } from './agent-call.js';
+export { dumpAll } from './dump-all.js';
+export type { DumpAllResult } from './dump-all.js';
+export { dumpBeforeWrite } from './dump-before-write.js';
+export type { DumpBeforeWriteInputs } from './dump-before-write.js';
+export { harvestBaseline } from './harvest-baseline.js';
+export type { CodexProduct, HarvestOpts, HarvestResult } from './harvest-baseline.js';
+export { lintGraph } from './lint-graph.js';
+export type { LintGraphInput, LintIssue } from './lint-graph.js';
+export { checkReachability } from './reachability.js';
+export { validateGraph, validateGraphOrThrow } from './validate-graph.js';
+export type { ValidateGraphInput } from './validate-graph.js';
+export { login } from './login.js';
+export type { LoginInputs, LoginResult, SpawnFn } from './login.js';
+export { logout } from './logout.js';
+export type { LogoutInputs, LogoutResult, SignalFn } from './logout.js';
+export { defaultSnapshotsDir } from './snapshots-dir.js';
+export { status } from './status.js';
+export type { IpcProbe, StatusInputs, StatusResult } from './status.js';
+export { getDeviceSpec } from './get-device-spec.js';
+export type { GetDeviceSpecOptions } from './get-device-spec.js';
+export {
+  fetchRuleLogs,
+  filterRuleLogs,
+  parseLogLine,
+  parseTimestamp,
+} from './rule-logs.js';
+export type {
+  FetchRuleLogsInputs,
+  FetchRuleLogsResult,
+  FilterRuleLogsOpts,
+  RuleLogEntry,
+} from './rule-logs.js';
+export {
+  diffVariableSnapshots,
+  snapshotAllVariables,
+} from './variable-watch.js';
+export type {
+  DiffVariableSnapshotsOpts,
+  SnapshotAllVariablesOpts,
+  SnapshotAllVariablesResult,
+  VariableEvent,
+  VariableEventOp,
+  VariableSnapshot,
+  VariableSnapshotEntry,
+} from './variable-watch.js';
+export {
+  applyRename,
+  exportRule,
+  exportRuleFromView,
+  renderExportedAsShell,
+} from './export-rule.js';
+export type {
+  ExportedCommand,
+  ExportedRule,
+  ExportFlag,
+  ExportRuleInputs,
+  RenameOptions,
+} from './export-rule.js';
