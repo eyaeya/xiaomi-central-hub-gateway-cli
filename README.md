@@ -6,10 +6,10 @@
 
 本仓库包含两个包（命令名为 `xgg`）：
 
-- `@xgg/core`：协议、会话、schema、资源和用例层。
-- `@xgg/cli`：命令行入口，安装后提供 `xgg` 命令。
+- `@eyaeya/xgg-core`：协议、会话、schema、资源和用例层。
+- `@eyaeya/xgg-cli`：命令行入口，安装后提供 `xgg` 命令，并携带 Agent skill 文档。
 
-> npm 包名/scope 待定（`@xgg` 为占位）；命令名固定为 `xgg`。
+GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli)。npm 包：[`@eyaeya/xgg-cli`](https://www.npmjs.com/package/@eyaeya/xgg-cli)、[`@eyaeya/xgg-core`](https://www.npmjs.com/package/@eyaeya/xgg-core)。
 
 ## 免责声明
 
@@ -62,10 +62,24 @@ xgg rule view <rule-id> --pretty
 - 能从当前电脑访问网关极客版网页地址，通常是 `http://<gateway-ip>:8086`。
 - 手机米家 App 中网关设备页显示的 6 位登录码。登录码短时有效且通常只能用一次。
 
-从 GitHub 源码运行（当前推荐方式）：
+从 npm 安装 CLI（推荐）：
 
 ```bash
-git clone <repo-url> xgg
+npm install -g @eyaeya/xgg-cli
+xgg --version
+xgg --help
+```
+
+`@eyaeya/xgg-cli` 会自动安装匹配版本的 `@eyaeya/xgg-core`，通常不需要手动安装 core 包。只有在 Node.js 程序里直接复用协议、schema 或 usecase 层时，才需要：
+
+```bash
+npm install @eyaeya/xgg-core
+```
+
+从 GitHub 源码运行：
+
+```bash
+git clone https://github.com/eyaeya/xiaomi-central-hub-gateway-cli.git xgg
 cd xgg
 corepack enable pnpm
 pnpm install
@@ -73,19 +87,27 @@ pnpm build
 node packages/cli/dist/cli.js --help
 ```
 
-npm 包待发布（scope 待定）。发布后将支持：
-
-```bash
-npm install -g @xgg/cli   # 待发布
-xgg --version
-xgg --help
-```
-
 ## AI Agent 安装
 
-推荐让 Agent 同时构建 CLI 并读取本仓库内置 Skill。当前从 GitHub 源码构建（见上方「人类安装」；npm 发布后可改用 `npm install -g @xgg/cli`）。
+推荐让 Agent 同时安装 CLI 并读取本项目内置 Skill。使用 npm 安装后，CLI 包内会携带一份离线 skill：
 
-然后把 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md) 交给你的 Agent 读取，或放入 Agent 支持的本地 skills 目录。例如：
+```bash
+npm install -g @eyaeya/xgg-cli
+```
+
+如果你的 Agent 支持本地 skills 目录，可以从全局 npm 包中复制：
+
+```bash
+CLI_PKG="$(npm root -g)/@eyaeya/xgg-cli"
+
+mkdir -p ~/.claude/skills/xgg-rule-authoring
+cp "$CLI_PKG/skills/xgg-rule-authoring/SKILL.md" ~/.claude/skills/xgg-rule-authoring/SKILL.md
+
+mkdir -p ~/.agents/skills/xgg-rule-authoring
+cp "$CLI_PKG/skills/xgg-rule-authoring/SKILL.md" ~/.agents/skills/xgg-rule-authoring/SKILL.md
+```
+
+从 GitHub 源码运行时，也可以直接把 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md) 交给 Agent 读取，或复制到本地 skills 目录：
 
 ```bash
 mkdir -p ~/.claude/skills/xgg-rule-authoring
@@ -194,7 +216,7 @@ xgg backup create --from fds --file-name <name>
 
 GitHub 源码发布根目录是本目录。**本仓库不包含任何小米官方前端 bundle 或专有代码**。
 
-npm 只发布 `@xgg/core` 与 `@xgg/cli` 两个包。两个包的 `package.json` 使用 `files` allow-list，npm tarball 只包含 `dist`、`LICENSE`、`README.md`，不会包含 fixtures、开发计划、探测记录、快照或本地逆向材料。
+npm 只发布 `@eyaeya/xgg-core` 与 `@eyaeya/xgg-cli` 两个包。`@eyaeya/xgg-cli` 依赖并自动安装 `@eyaeya/xgg-core`，用户只需要全局安装 CLI 包。两个包的 `package.json` 使用 `files` allow-list：core tarball 只包含 `dist`、`LICENSE`、`README.md`；cli tarball 额外包含 `skills/xgg-rule-authoring/SKILL.md`，不会包含 fixtures、开发计划、探测记录、快照或本地逆向材料。
 
 ## 开发与发布检查
 
@@ -204,25 +226,25 @@ pnpm install
 pnpm check
 pnpm build
 pnpm pack:release
-tar -tzf release-artifacts/xgg-cli-0.1.0.tgz
+tar -tzf release-artifacts/eyaeya-xgg-cli-0.1.0.tgz
 ```
 
 发布前至少确认：
 
 - `pnpm check` 通过。
-- `pnpm pack:release` 能生成 `@xgg/core` 和 `@xgg/cli` tarball。
+- `pnpm pack:release` 能生成 `@eyaeya/xgg-core` 和 `@eyaeya/xgg-cli` tarball。
 - 临时安装生成的 CLI tarball 后，`xgg --version` 和 `xgg --help` 正常。
-- `tar -tzf` 确认 npm tarball 只含 `dist/LICENSE/README.md`（不含源码、fixtures、本地材料）。
+- `tar -tzf` 确认 core tarball 只含 `dist/LICENSE/README.md`，cli tarball 只额外含 `skills/xgg-rule-authoring/SKILL.md`（不含源码、fixtures、本地材料）。
 - 公开树中没有真实 IP、6 位登录码、设备 DID、家庭名或本地快照。
 
 发布命令：
 
 ```bash
-pnpm --filter @xgg/core publish --access public
-pnpm --filter @xgg/cli publish --access public
+npm publish release-artifacts/eyaeya-xgg-core-0.1.0.tgz --access public
+npm publish release-artifacts/eyaeya-xgg-cli-0.1.0.tgz --access public
 ```
 
-如果没有 `@xgg` scope 权限，请先改两个包的 `name` 和相互依赖，再重新打包验证。
+必须先发布 `@eyaeya/xgg-core`，再发布 `@eyaeya/xgg-cli`，因为 CLI 包依赖 core 包。
 
 ## Agent 权威参考
 
