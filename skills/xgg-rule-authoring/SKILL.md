@@ -11,6 +11,56 @@ description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Editio
 
 > 本 Skill 里的所有命令形态与自动化模板，均已在真实网关上 `validate` + `lint` 全清并（可运行的部分）跑通验证。把它当事实来源；和 `--help` 冲突时以 `--help` 的**参数名**为准，和官方网关行为冲突时以网关为准。
 
+## 使用场景（Agent 可承担的任务）
+
+本 Skill 让你（Agent）独立承担下面三类任务，覆盖自动化的完整生命周期。三类与 README 的三类场景一一呼应，但写成给你的操作指引——每类点出关键命令与验收标准。任何一类都遵循同一条原则：写完不算完，要用日志或变量读数证明它真的按需求运行，命令返回 ok 不算完成。
+
+### 1. 设计并创建自动化
+
+把用户的自然语言需求变成一张可用的规则图。固定路径：
+
+```bash
+xgg rule new --name "<规则名>"            # 拿到 rule-id
+xgg rule node add --rule-id <rule-id> ... # 每张卡片一条；设备卡先 device spec 查参数
+xgg rule edge add --rule-id <rule-id> --from <node:pin> --to <node:pin>
+xgg rule layout <rule-id>                  # 连完线跑一次，按数据流分层布局
+xgg rule validate --rule-id <rule-id>      # 卡片配置 + 变量存在/scope
+xgg rule enable <rule-id>                  # 启用（自带保存键级预检）
+xgg rule logs <rule-id> --tail 20          # 触发后看日志证明运行
+```
+
+设备相关卡片务必先 `xgg device spec <did>` 查清属性 / 事件 / 动作名，不猜字段。能自触发的（`onLoad` / `loop`）用 `disable` + `enable` 重放后读日志 / 变量；物理触发的（按钮、传感器）请用户实际触发后再看日志。
+
+### 2. 读日志诊断并修复既有自动化
+
+用户说某条自动化「不工作」时，先读它的真实运行日志定位，再改图修复，不要凭猜重写：
+
+```bash
+xgg rule logs <rule-id> --tail 50          # 定位：没触发 / 触发了没动作 / 条件没满足
+xgg rule view <rule-id> --pretty           # 对照规则图看是哪一段
+# 改图：rule node add / rule edge add，或取整图 JSON 改后写回
+xgg rule validate --rule-id <rule-id>      # 改完先静态校验
+xgg rule enable <rule-id>                  # 重新启用（disable + enable 可重放 onLoad）
+xgg rule logs <rule-id> --tail 20          # 复看日志确认修复
+```
+
+日志读法见「调试与验收」：`link <src>.<pin> → <dst>.<pin> = <事件>` 是边触发，`<node> [value]` 是取值 / 分支，`<node> success` / `<node> failed` 是动作结果。日志里完全没出现触发器节点 = 规则根本没触发；走了 `unmet` 分支 = 条件没满足。
+
+### 3. 盘点现有设备与自动化，与用户头脑风暴新方案
+
+帮用户在真实清单上做规划，而不是空想。先用只读命令建立全貌：
+
+```bash
+xgg device list --pretty                    # 家里有哪些可用设备（默认排除 ghost）
+xgg rule list --pretty                      # 已经配了哪些自动化
+xgg rule view <rule-id> --pretty            # 逐条看现有自动化做了什么
+xgg device spec <did> --pretty              # 某设备具体能力
+```
+
+据此判断哪些设备还没被任何规则用上、现有自动化是否有覆盖空白或互相冲突，再向用户提出更有价值的点子并说明依据。方案聊定后，直接走第 1 类的标准流程把它落地——盘点与创建在同一会话内衔接，不必让用户在设备列表和画布之间来回抄标识。
+
+> 收尾时提醒用户：CLI 的改动需要在网关网页 **F5 刷新**才能看到（见「避坑：网页端变量缓存」）。
+
 ## 一、必须遵守的 CLI 操作规范
 
 1. **会话失效就停手要码。** 出现 `AUTH_REQUIRED` / `AUTH_EXPIRED`，或写命令退出码 `3` 时，立即停止当前写操作，向用户索取一个新的 6 位登录码，再执行（登录码由用户在网关网页控制台获取，是一次性的）：
@@ -252,6 +302,24 @@ xgg variable watch --pretty                       # 实时观察变量变化
 - **`set-value` 改值会核对类型：** `--type` 与变量已存类型不符直接退出 `5`(要改类型加 `--force-type`;不给 `--type` 则自动用已存类型)。删除用 `variable delete --scope <s> --id <id>`(或 `--all` 删整个 scope);`variable watch --follow --max-events <N>` 跟 N 条变化后退出。
 - 若用户明确说「不要用变量」，就别 `variable create`、别 `varChange/varGet/varSet*`。优先用 `deviceGet` 读真实设备状态；设备无可读状态时再问是否允许用 `register` 这种图内状态卡片。
 
+### 避坑：网页端变量缓存（CLI 写不广播 configChanged）
+
+CLI 直连网关写入变量，但**不会**向其他已打开的网页会话广播 `configChanged`。所以用 `variable create` / `set-value` / `delete` 对变量增删改查后，长开着网关网页的用户在浏览器刷新前看不到任何变更：
+
+- 新建的变量在网页「全局变量」「本规则变量」里**看不到**——容易被误判为「CLI 创建失败」。
+- 更具迷惑性的是，**引用该变量的卡片节点会在网页上显示「变量已丢失」**——容易被误判为「变量真的没了 / 被删了」。
+
+这两种都是已知的网页端 UI 缓存表现，**不是** CLI 写入失败，也**不是**变量真的丢失。
+
+**给 Agent 的行为指引**：当你已经用 `xgg variable get-value` 在网关上确认值真实存在、用 `xgg rule view` 确认规则引用的 scope/id 也对，而用户却反馈「网页上没看到这个变量」或「卡片显示变量已丢失」时，**不要**把它当成 CLI 写入失败、也**不要**断定变量真的丢了，更不要据此重写规则或重建变量。正确做法是主动告知用户：这是已知的网页端 UI 缓存 bug，请按 **F5 刷新网页**后再查看，变量与卡片即会恢复正常。诊断顺序固定为：
+
+```bash
+xgg variable get-value --scope <scope> --id <id>      # ① 确认网关上真有这个值
+xgg rule view <rule-id> --pretty                       # ② 确认卡片引用的 scope/id 也对
+# ③ 让用户 F5 刷新网页
+# ④ 三项都过才往别处排查
+```
+
 ## 八、表达式（`varSetNumber` / `varSetString` 的 `--expr`）
 
 `--expr` 把你写的表达式拆成网关的 `elements` 数组。语法：
@@ -435,8 +503,8 @@ xgg variable get-value --scope global --id probeMarker     # 期望 1
 
 ```bash
 xgg backup list --from fds --pretty             # 列云备份
-xgg backup create --from fds --name "<名字>"     # 网关会给名字追加 .bak 后缀
-xgg backup download <id> --from fds             # generate/load 前必须先 download
+xgg backup create --from fds --file-name "<名字>"   # 网关会给名字追加 .bak 后缀
+xgg backup download --from fds --did <did> --ts <ts> --file-name "<名字>"   # 三项均来自 backup list；generate/load 前必须先 download
 ```
 
 `--from fds` 指小米云存储。Agent 模式同样受快照目录约束。

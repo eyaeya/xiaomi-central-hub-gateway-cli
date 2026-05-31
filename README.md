@@ -17,6 +17,43 @@
 
 > Unofficial project, not affiliated with or endorsed by Xiaomi. All trademarks belong to their respective owners.
 
+## 使用场景
+
+`xgg` 把网关的设备读取、规则图编辑、变量管理和运行日志都暴露成稳定、可解析的命令，因此特别适合交给 LLM Agent 按步骤操作。它让 Codex、Claude 等 Agent 不只是「帮你敲命令」，而是从需求出发，自己查设备、连规则图、校验、启用、读日志验证。下面三类用法都已在真实网关上跑通，覆盖从无到有、从坏到好、从有到更好的完整生命周期。
+
+### 用 LLM Agent 设计并创建自动化（主用法）
+
+这是最主要的用法：把一句自然语言需求交给 Agent，剩下的交给它。
+
+> 「天黑回家自动开玄关灯，半夜起夜把灯调到 10% 亮度。」
+
+Agent 会先 `xgg device list` / `xgg device spec <did>` 看清你有哪些设备、它们能做什么，再按上文「创建自动化的标准流程」`rule new → node add → edge add → layout → validate → enable` 把规则图建好并启用，最后用 `xgg rule logs <rule-id> --tail <N>` 确认它真的触发，而不是停在「命令返回 ok」。你只描述想要的效果，不必关心节点、边、表达式这些细节。
+
+### 诊断与修复既有自动化
+
+自动化「不工作」往往不是没创建，而是触发条件、时间段或动作目标写错了一处。与其在网页画布上反复猜，不如让 Agent 读真实运行日志定位：
+
+```bash
+xgg rule logs <rule-id> --tail 50
+xgg rule view <rule-id> --pretty
+```
+
+Agent 读日志后能区分到底是**根本没触发**、**触发了但动作没执行**，还是**条件没满足走了另一分支**。定位之后，Agent 直接修改规则图，重新 `validate` 并 `enable`，再看一眼日志确认修好了——整个排障过程有据可查，而不是反复试错。
+
+### 盘点现有设备与自动化，一起头脑风暴
+
+用久了，家里有哪些设备、配过哪些自动化，自己往往也记不全。可以让 Agent 先盘点，再在此基础上提想法：
+
+```bash
+xgg device list --pretty
+xgg rule list --pretty
+xgg rule view <rule-id> --pretty
+```
+
+在这份真实清单的基础上，Agent 能和你一起头脑风暴：哪些设备还没被用起来、哪些场景值得自动化、现有规则有没有可以合并或补强的地方。聊定有价值的新点子后，直接接上「主用法」的标准流程落地——盘点、构思、实现连成一条线，不用你在设备列表和画布之间来回抄标识。
+
+> 提示：CLI 写入不会自动同步到已打开的网关网页。Agent 完成改动后，请在网页 **F5 刷新**再查看（见「重要限制」）。
+
 ## 人类安装
 
 要求：
@@ -141,7 +178,7 @@ xgg backup list --from fds [--pretty]
 xgg backup create --from fds --file-name <name>
 ```
 
-默认 stdout 输出 JSON，适合 Agent 解析；需要人读表格时加 `--pretty`。
+默认 stdout 输出 JSON，适合 Agent 解析；需要人读表格时加 `--pretty`。例外：`xgg rule logs` 默认输出人类表格，需要 JSON 时显式加 `--json`。
 
 ## 重要限制
 
