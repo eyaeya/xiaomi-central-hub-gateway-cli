@@ -5,7 +5,7 @@ import {
   getDevicePartitions,
   getDeviceSpec,
   listDevices,
-} from '@xgg/core';
+} from '@eyaeya/xgg-core';
 import Table from 'cli-table3';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';

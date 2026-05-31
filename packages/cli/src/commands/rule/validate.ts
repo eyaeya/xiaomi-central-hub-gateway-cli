@@ -5,7 +5,7 @@ import {
   getRule,
   listAvailVarsForRule,
   validateGraph,
-} from '@xgg/core';
+} from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {

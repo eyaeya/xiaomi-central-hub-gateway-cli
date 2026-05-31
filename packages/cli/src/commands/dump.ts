@@ -1,4 +1,4 @@
-import { ConfigError, createStore, dumpAll } from '@xgg/core';
+import { ConfigError, createStore, dumpAll } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
 import { emit } from '../output.js';

@@ -1,5 +1,5 @@
 {
-  "name": "@xgg/core",
+  "name": "@eyaeya/xgg-core",
   "version": "0.1.0",
   "description": "Core runtime library for xgg, the Xiaomi Gateway Geek Edition CLI",
   "license": "GPL-3.0-or-later",
@@ -14,6 +14,15 @@
     }
   },
   "files": ["dist", "LICENSE", "README.md"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eyaeya/xiaomi-central-hub-gateway-cli.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/eyaeya/xiaomi-central-hub-gateway-cli#readme",
+  "bugs": {
+    "url": "https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/issues"
+  },
   "publishConfig": {
     "access": "public"
   },

@@ -1,16 +1,18 @@
-# @xgg/cli
+# @eyaeya/xgg-cli
 
 小米中枢网关极客版命令行工具。安装后提供 `xgg` 命令，可登录网关、读取设备/规则/变量、编辑自动化规则图、管理变量与备份，并读取规则运行日志。
 
 ## 安装
 
 ```bash
-npm install -g @xgg/cli
+npm install -g @eyaeya/xgg-cli
 xgg --version
 xgg --help
 ```
 
-要求 Node.js 20.11 或更高版本。
+要求 Node.js 20.11 或更高版本。`@eyaeya/xgg-cli` 会自动安装匹配版本的 `@eyaeya/xgg-core`，不需要单独安装 core 包。
+
+GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli)。
 
 ## 快速使用
 
@@ -33,7 +35,13 @@ export XGG_AGENT_MODE=1
 export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 ```
 
-完整 Agent 操作说明见 GitHub 仓库中的 `skills/xgg-rule-authoring/SKILL.md`。
+完整 Agent 操作说明随 CLI 包一起发布，路径为：
+
+```bash
+$(npm root -g)/@eyaeya/xgg-cli/skills/xgg-rule-authoring/SKILL.md
+```
+
+同一份文档也可在 GitHub 仓库中的 `skills/xgg-rule-authoring/SKILL.md` 查看。
 
 ## 常用流程
 

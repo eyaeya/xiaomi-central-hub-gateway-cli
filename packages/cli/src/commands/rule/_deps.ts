@@ -1,4 +1,4 @@
-import { ConfigError, createStore } from '@xgg/core';
+import { ConfigError, createStore } from '@eyaeya/xgg-core';
 
 export interface RuleOpts {
   baseUrl?: string;

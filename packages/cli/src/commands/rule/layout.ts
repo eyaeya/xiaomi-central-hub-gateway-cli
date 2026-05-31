@@ -1,4 +1,4 @@
-import { dumpBeforeWrite, relayoutGraph } from '@xgg/core';
+import { dumpBeforeWrite, relayoutGraph } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {

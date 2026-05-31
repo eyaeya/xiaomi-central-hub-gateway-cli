@@ -1,4 +1,4 @@
-import { ConfigError } from '@xgg/core';
+import { ConfigError } from '@eyaeya/xgg-core';
 import { type Command, Option } from 'commander';
 import { ttyBoldYellow } from '../tty.js';
 

@@ -1,4 +1,4 @@
-import { ConfigError, type LoginInputs, login } from '@xgg/core';
+import { ConfigError, type LoginInputs, login } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
 import { resolveAgentBinary } from '../agent-binary.js';

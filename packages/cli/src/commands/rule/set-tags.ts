@@ -1,4 +1,4 @@
-import { dumpBeforeWrite, setRuleTags } from '@xgg/core';
+import { dumpBeforeWrite, setRuleTags } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import { emit } from '../../output.js';

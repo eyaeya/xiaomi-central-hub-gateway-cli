@@ -1,4 +1,4 @@
-import { dumpBeforeWrite, enableRule } from '@xgg/core';
+import { dumpBeforeWrite, enableRule } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {

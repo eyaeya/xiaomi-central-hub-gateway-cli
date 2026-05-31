@@ -1,4 +1,4 @@
-import { addEdge, dumpBeforeWrite } from '@xgg/core';
+import { addEdge, dumpBeforeWrite } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {

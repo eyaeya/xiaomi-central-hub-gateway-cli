@@ -13,7 +13,7 @@
     "check": "pnpm lint && pnpm build",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "pack:release": "pnpm -C packages/core pack --pack-destination ../../release-artifacts && pnpm -C packages/cli pack --pack-destination ../../release-artifacts"
+    "pack:release": "rm -rf release-artifacts && pnpm build && pnpm -C packages/core pack --pack-destination ../../release-artifacts && pnpm -C packages/cli pack --pack-destination ../../release-artifacts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",

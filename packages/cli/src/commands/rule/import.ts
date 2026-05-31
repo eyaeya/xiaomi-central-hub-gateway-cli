@@ -1,5 +1,10 @@
 import { readFile } from 'node:fs/promises';
-import { ConfigError, type ExportedRule, applyRename, renderExportedAsShell } from '@xgg/core';
+import {
+  ConfigError,
+  type ExportedRule,
+  applyRename,
+  renderExportedAsShell,
+} from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import { addNextHintFlag, buildNextSteps, printNextStepHintLine } from '../../agent-hints.js';

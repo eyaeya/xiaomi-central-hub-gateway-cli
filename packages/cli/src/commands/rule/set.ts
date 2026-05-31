@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { dumpBeforeWrite, upsertGraph } from '@xgg/core';
+import { dumpBeforeWrite, upsertGraph } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {

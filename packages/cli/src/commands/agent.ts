@@ -1,4 +1,4 @@
-import { ConfigError, type RunAgentMainOptions, runAgentMain } from '@xgg/core';
+import { ConfigError, type RunAgentMainOptions, runAgentMain } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 
 interface AgentServeOpts {

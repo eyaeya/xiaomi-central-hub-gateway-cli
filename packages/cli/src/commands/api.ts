@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { ConfigError, agentCall, createStore } from '@xgg/core';
+import { ConfigError, agentCall, createStore } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
 import { emit } from '../output.js';

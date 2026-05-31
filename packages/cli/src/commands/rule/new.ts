@@ -1,4 +1,4 @@
-import { ConfigError, createRule, dumpBeforeWrite } from '@xgg/core';
+import { ConfigError, createRule, dumpBeforeWrite } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {

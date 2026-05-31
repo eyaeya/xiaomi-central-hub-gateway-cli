@@ -20,7 +20,7 @@ importers:
 
   packages/cli:
     dependencies:
-      '@xgg/core':
+      '@eyaeya/xgg-core':
         specifier: workspace:^
         version: link:../core
       cli-table3:

@@ -15,7 +15,7 @@ import {
   setVariableConfig,
   setVariableValue,
   snapshotAllVariables,
-} from '@xgg/core';
+} from '@eyaeya/xgg-core';
 import Table from 'cli-table3';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
@@ -541,7 +541,7 @@ to intentionally re-type a variable in place.`,
 // M15 (2026-05-29): the Mi-Home Geek-Edition "real-time variable dashboard"
 // Tampermonkey script piggybacks on the page's WS via `editor.gateway.callAPI`
 // and polls `getVarScopeList` + `getVarList` every 800ms. Both methods are
-// already wrapped in @xgg/core — `variable watch` makes that same pattern
+// already wrapped in @eyaeya/xgg-core — `variable watch` makes that same pattern
 // ergonomic for AI agents that need a current-state snapshot (for picking
 // thresholds) or a streaming diff (for observing an automation).
 //

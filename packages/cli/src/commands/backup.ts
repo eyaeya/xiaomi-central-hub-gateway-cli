@@ -12,7 +12,7 @@ import {
   listBackups,
   loadBackup,
   setBackupConfig,
-} from '@xgg/core';
+} from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
 import { type TableColumn, emit, emitList } from '../output.js';

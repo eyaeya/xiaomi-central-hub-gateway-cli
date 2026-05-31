@@ -5,7 +5,7 @@ import {
   NotConfirmedError,
   SchemaError,
   XggError,
-} from '@xgg/core';
+} from '@eyaeya/xgg-core';
 
 export interface ExitMapping {
   code: number;

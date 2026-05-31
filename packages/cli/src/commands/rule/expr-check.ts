@@ -1,4 +1,4 @@
-import { type ExprCheckResult, checkVarSetNumberExprString } from '@xgg/core';
+import { type ExprCheckResult, checkVarSetNumberExprString } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import { emit } from '../../output.js';

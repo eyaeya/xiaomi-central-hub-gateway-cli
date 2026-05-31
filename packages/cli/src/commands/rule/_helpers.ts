@@ -1,4 +1,4 @@
-import { GatewayError } from '@xgg/core';
+import { GatewayError } from '@eyaeya/xgg-core';
 
 // Shared NID:pin parser — extracted when edge-remove introduced a second call-site.
 // GatewayError kept as spike-grade decision; retro will revisit error class.

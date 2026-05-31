@@ -1,4 +1,4 @@
-import { NotFoundError, deleteGraph, dumpBeforeWrite, listRules } from '@xgg/core';
+import { NotFoundError, deleteGraph, dumpBeforeWrite, listRules } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {

@@ -1,5 +1,5 @@
-import { ConfigError, addNode, dumpBeforeWrite, getDevice } from '@xgg/core';
-import type { AddNodeShortcut } from '@xgg/core';
+import { ConfigError, addNode, dumpBeforeWrite, getDevice } from '@eyaeya/xgg-core';
+import type { AddNodeShortcut } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {

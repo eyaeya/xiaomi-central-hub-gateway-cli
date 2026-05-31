@@ -1,4 +1,10 @@
-import { AuthRequiredError, ConfigError, type SessionStore, createStore, logout } from '@xgg/core';
+import {
+  AuthRequiredError,
+  ConfigError,
+  type SessionStore,
+  createStore,
+  logout,
+} from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
 import { emit } from '../output.js';

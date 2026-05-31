@@ -1,4 +1,4 @@
-import { viewRule } from '@xgg/core';
+import { viewRule } from '@eyaeya/xgg-core';
 import Table from 'cli-table3';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';

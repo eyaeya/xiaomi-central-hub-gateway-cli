@@ -1,4 +1,4 @@
-import { exportRule, renderExportedAsShell } from '@xgg/core';
+import { exportRule, renderExportedAsShell } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {

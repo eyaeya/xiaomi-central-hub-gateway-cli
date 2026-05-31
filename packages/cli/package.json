@@ -1,5 +1,5 @@
 {
-  "name": "@xgg/cli",
+  "name": "@eyaeya/xgg-cli",
   "version": "0.1.0",
   "description": "Command-line tool for operating Xiaomi Gateway Geek Edition automations",
   "license": "GPL-3.0-or-later",
@@ -17,7 +17,16 @@
       "default": "./dist/cli.js"
     }
   },
-  "files": ["dist", "LICENSE", "README.md"],
+  "files": ["dist", "LICENSE", "README.md", "skills"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eyaeya/xiaomi-central-hub-gateway-cli.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/eyaeya/xiaomi-central-hub-gateway-cli#readme",
+  "bugs": {
+    "url": "https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -26,7 +35,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@xgg/core": "workspace:^",
+    "@eyaeya/xgg-core": "workspace:^",
     "cli-table3": "^0.6.5",
     "commander": "^12.1.0"
   }
