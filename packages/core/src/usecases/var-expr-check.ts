@@ -1,20 +1,20 @@
-// Faithful 1:1 port of the gateway's arithmetic-expression validator
-// `class Lr { check(e) {…} }` (gateway.6cbc85.js), exposed to the web UI as
-// `Jr.yg.check` and invoked by `nodeCheckTool.varSetNumber` on the assembled
-// element template (const → value, var → "$"). The official save() flow shows
-// `运算式不合法` and blocks the save when this throws.
+// Faithful 1:1 port of the official gateway's arithmetic-expression validator —
+// the same parser the web rule-editor runs when you press "保存" on a 数值运算
+// (varSetNumber) card. It validates the assembled element template (const →
+// value, var → "$"). The official save() flow shows `运算式不合法` and blocks
+// the save when this throws.
 //
-// PARITY CONTRACT (G-D, 2026-05-29): this MUST accept/reject exactly what the
-// gateway parser does — no stricter, no looser. Do not "improve" the grammar.
-// Quirks deliberately preserved for fidelity:
+// PARITY CONTRACT (verified against the real gateway, 2026-05-29): this MUST
+// accept/reject exactly what the gateway parser does — no stricter, no looser.
+// Do not "improve" the grammar. Quirks deliberately preserved for fidelity:
 //   - leading unary +/- works via the "empty left operand counts as 1" rule;
 //   - `String.charAt(-1)` returns "" (not undefined), so a +/- at index 0 is
 //     treated as a binary op whose left side is empty → valid;
 //   - `Number("Infinity")`/hex/scientific pass because `Number(token)` is used
 //     verbatim; only the literal `$` placeholder bypasses the numeric parse;
 //   - `check` returns an "arg count" (comma sums children); a bare top-level
-//     comma list does NOT throw, matching the gateway (nodeCheckTool only cares
-//     whether it throws, never inspects the returned count).
+//     comma list does NOT throw, matching the gateway (the per-card check only
+//     cares whether it throws, never inspects the returned count).
 
 // Distinct failure modes the parser can report. Mirrors the gateway's throw
 // sites 1:1 — every `throw new Error(...)` in checkExpr maps to one kind. The
@@ -55,8 +55,9 @@ const OPS: Record<OpDef['name'], OpDef> = {
   number: { name: 'number', pri: 4 },
 };
 
-// Gateway `Lr.FUNCS`. `""` (empty function name) is the plain grouping-paren
-// case (argc 1). `max`/`min` are variadic (minArgc 1); the rest are fixed-arity.
+// Gateway built-in function table. `""` (empty function name) is the plain
+// grouping-paren case (argc 1). `max`/`min` are variadic (minArgc 1); the rest
+// are fixed-arity.
 const FUNCS: Record<string, { argc?: number; minArgc?: number }> = {
   '': { argc: 1 },
   abs: { argc: 1 },
@@ -308,8 +309,8 @@ export function checkVarSetNumberExprString(input: string): ExprCheckResult {
 
 /**
  * Returns true when the assembled varSetNumber element template is a valid
- * arithmetic expression per the gateway's `Lr.check` parser (i.e. `yg.check`
- * does not throw). The UI rejects a save with `运算式不合法` when this is false.
+ * arithmetic expression per the gateway's parser (i.e. the parser does not
+ * throw). The UI rejects a save with `运算式不合法` when this is false.
  * Thin boolean wrapper over {@link checkVarSetNumberExpr} for existing callers.
  */
 export function isValidVarSetNumberExpr(elements: unknown[]): boolean {

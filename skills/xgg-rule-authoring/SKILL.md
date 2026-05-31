@@ -262,7 +262,20 @@ xgg variable watch --pretty                       # 实时观察变量变化
 
 例：`--expr '$global.count + 1'`（自增）、`--expr 'round($global.brightness65535 / 655.35)'`（65535→百分比）、`--expr 'randint(1, 16777215)'`（随机颜色）、`--expr '现在温度 $global.temp 度'`（字符串）。
 
-> CLI **不**在本地校验数字表达式语法，写错（如 `flor(x)`）会在运行时失败——去 `rule logs` 看 eval 报错。
+> CLI **会**在本地校验 `varSetNumber` 数字表达式语法——内置与网页"保存"按钮**完全一致**的解析器。两种触发：① `rule set`/`import`/`node add`/`enable` 写入时自动校验，非法即拒绝并回显**具体错误**（kind + 拼好的表达式串）；② `rule expr-check '<表达式>'` 纯本地单验一条（不连网关，0 合法 / 2 非法，支持 `--pretty`）。**推荐 agent 拼规则前先 `expr-check` 验一遍。**
+
+```bash
+$ xgg rule expr-check '$global.count + 1'
+{"ok":true,"input":"$global.count + 1","template":"$ + 1"}      # exit 0
+
+$ xgg rule expr-check 'flor($x)'                                  # 拼错函数名
+{"ok":false,"input":"flor($x)","template":"flor($)","kind":"function","message":"未知函数（检查拼写与大小写；无参函数也要带括号，如 rand()）"}   # exit 2
+
+$ xgg rule expr-check --pretty 'abs($x'                           # 括号不配对
+✗ 不合法 — 括号不匹配（检查 ( 与 ) 是否成对）[bracket]（表达式: "abs($"）   # exit 2
+```
+
+错误 `kind` 六类：`bracket`（括号不配对）、`function`（未知函数）、`argCount`（参数个数不对）、`number`（空操作数/非数字 token）、`expression`（运算符两侧操作数不合法）、`internal`（解析内部错误）。`template` 是解析器实际看到的串（`$var` 折叠成 `$`）。`expr-check` 只校验**数字**表达式；`varSetString` 是纯拼接、网关不做语法检查。
 
 ## 九、观察设备实时状态
 
@@ -434,7 +447,8 @@ xgg backup download <id> --from fds             # generate/load 前必须先 dow
 | bool 属性比较不触发 | bool 只能 `eq`，threshold 必须 0/1 | `--op eq --threshold 1`(真) 或 `0`(假) |
 | 设备属性触发不触发 | 设备 `pushAvailable=false`，property notify 收不到 | 改用 `deviceGet` 在事件到来时主动读 |
 | 目标设备命令超时 `-9999` | ghost device 或设备不可达 | 换非 ghost 设备，查 `device list` 的可用性 |
-| `varSetNumber` 运行时 eval 报错 | 表达式语法写错（CLI 不本地校验） | 看 `rule logs`，修表达式；无参函数记得带括号 |
+| `varSetNumber` 表达式语法非法（写入被拒，exit 5） | 写错函数名/括号/参数 | 看回显的具体 kind+表达式串；或 `rule expr-check '<表达式>'` 单验一条；无参函数记得带括号 |
+| `varSetNumber` 语法合法但算错（运行期数值不对） | 取值/逻辑问题（语法已过本地校验） | 看 `rule logs` 的 eval 结果 |
 
 ## 十四、收尾标准
 
