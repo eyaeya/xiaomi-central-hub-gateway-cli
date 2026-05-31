@@ -5,6 +5,7 @@ import { attachEdgeAdd } from './edge-add.js';
 import { attachEdgeRemove } from './edge-remove.js';
 import { attachEnable } from './enable.js';
 import { attachExport } from './export.js';
+import { attachExprCheck } from './expr-check.js';
 import { attachGet } from './get.js';
 import { attachImport } from './import.js';
 import { attachLayout } from './layout.js';
@@ -43,6 +44,7 @@ export function ruleCommand(): Command {
   attachLayout(cmd);
   attachLint(cmd);
   attachValidate(cmd);
+  attachExprCheck(cmd);
   attachDelete(cmd);
   return cmd;
 }

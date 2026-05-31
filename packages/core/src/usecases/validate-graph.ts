@@ -5,7 +5,7 @@ import { ConfigError, NotFoundError } from '../transport/errors.js';
 import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
 import type { LintIssue } from './lint-graph.js';
 import { checkNodeStrict } from './typed-schemas.js';
-import { isValidVarSetNumberExpr } from './var-expr-check.js';
+import { checkVarSetNumberExpr } from './var-expr-check.js';
 
 export interface ValidateGraphInput {
   graph: {
@@ -580,9 +580,19 @@ function checkVarSetProps(
   // G-D (2026-05-29 save-flow parity): varSetNumber runs the official
   // arithmetic-expression grammar check (`Jr.yg.check`, ported faithfully in
   // var-expr-check.ts). varSetString is plain concat — no grammar check (the
-  // official nodeCheckTool.varSetString arm omits it).
-  if (type === 'varSetNumber' && !isValidVarSetNumberExpr(elements)) {
-    out.push(issue(`${path}.elements`, '卡片配置有误: 运算式不合法'));
+  // official nodeCheckTool.varSetString arm omits it). F68 (2026-05-31): surface
+  // the *specific* failure (kind + assembled template) instead of the gateway's
+  // blanket `运算式不合法`, so authors see why it was rejected.
+  if (type === 'varSetNumber') {
+    const exprResult = checkVarSetNumberExpr(elements);
+    if (!exprResult.ok) {
+      out.push(
+        issue(
+          `${path}.elements`,
+          `卡片配置有误: 运算式不合法 — ${exprResult.message}（表达式: "${exprResult.template}"）`,
+        ),
+      );
+    }
   }
   return out;
 }

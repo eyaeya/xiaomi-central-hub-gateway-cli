@@ -16,6 +16,29 @@
 //     comma list does NOT throw, matching the gateway (nodeCheckTool only cares
 //     whether it throws, never inspects the returned count).
 
+// Distinct failure modes the parser can report. Mirrors the gateway's throw
+// sites 1:1 — every `throw new Error(...)` in checkExpr maps to one kind. The
+// two `'Impossible'` defensive branches map to `internal` (they cannot fire
+// for real input but are kept for parity with the gateway control flow).
+export type ExprErrorKind =
+  | 'bracket' // unbalanced parentheses
+  | 'expression' // a binary operator's operand is not a single value
+  | 'function' // unknown function name
+  | 'argCount' // wrong number of arguments for a function
+  | 'number' // an operand is empty or not a number / `$`
+  | 'internal'; // defensive branch (should be unreachable)
+
+// Thrown by checkExpr. Carries the failure kind so callers can render a
+// specific, localized diagnostic instead of a generic "运算式不合法".
+export class ExprSyntaxError extends Error {
+  readonly kind: ExprErrorKind;
+  constructor(kind: ExprErrorKind, message: string) {
+    super(message);
+    this.name = 'ExprSyntaxError';
+    this.kind = kind;
+  }
+}
+
 interface OpDef {
   name: 'comma' | 'add' | 'substract' | 'multiply' | 'devide' | 'modulo' | 'func' | 'number';
   pri: number;
@@ -113,62 +136,63 @@ function checkExpr(input: string): number {
     }
   }
 
-  if (depth !== 0) throw new Error('Bracket error');
+  if (depth !== 0) throw new ExprSyntaxError('bracket', 'Bracket error');
 
   let result = Number.NaN;
   switch (chosen.name) {
     case 'comma': {
-      if (splitIdx === undefined) throw new Error('Impossible');
+      if (splitIdx === undefined) throw new ExprSyntaxError('internal', 'Impossible');
       return checkExpr(e.slice(0, splitIdx)) + checkExpr(e.slice(splitIdx + 1));
     }
     case 'add':
     case 'substract': {
-      if (splitIdx === undefined) throw new Error('Impossible');
+      if (splitIdx === undefined) throw new ExprSyntaxError('internal', 'Impossible');
       const left = e.slice(0, splitIdx);
       const lc = left.trim().length === 0 ? 1 : checkExpr(left);
       const rc = checkExpr(e.slice(splitIdx + 1));
-      if (lc !== 1) throw new Error('Invalid expression');
-      if (rc !== 1) throw new Error('Invalid expression');
+      if (lc !== 1) throw new ExprSyntaxError('expression', 'Invalid expression');
+      if (rc !== 1) throw new ExprSyntaxError('expression', 'Invalid expression');
       result = 1;
       break;
     }
     case 'multiply':
     case 'devide':
     case 'modulo': {
-      if (splitIdx === undefined) throw new Error('Impossible');
+      if (splitIdx === undefined) throw new ExprSyntaxError('internal', 'Impossible');
       const lc = checkExpr(e.slice(0, splitIdx));
       const rc = checkExpr(e.slice(splitIdx + 1));
-      if (lc !== 1) throw new Error('Invalid expression');
-      if (rc !== 1) throw new Error('Invalid expression');
+      if (lc !== 1) throw new ExprSyntaxError('expression', 'Invalid expression');
+      if (rc !== 1) throw new ExprSyntaxError('expression', 'Invalid expression');
       result = 1;
       break;
     }
     case 'func': {
-      if (splitIdx === undefined) throw new Error('Impossible');
+      if (splitIdx === undefined) throw new ExprSyntaxError('internal', 'Impossible');
       const fname = e.slice(0, splitIdx).trim();
       const fdef = FUNCS[fname];
-      if (fdef === undefined) throw new Error('Invalid function');
+      if (fdef === undefined) throw new ExprSyntaxError('function', 'Invalid function');
       let argCount = 0;
       const inner = e.slice(splitIdx + 1, e.length - 1);
       if (!/^\s*$/.test(inner)) argCount = checkExpr(inner);
       if (fdef.argc !== undefined && argCount !== fdef.argc) {
-        throw new Error('Invalid arg count');
+        throw new ExprSyntaxError('argCount', 'Invalid arg count');
       }
       if (fdef.minArgc !== undefined && argCount < fdef.minArgc) {
-        throw new Error('invalid arg count');
+        throw new ExprSyntaxError('argCount', 'invalid arg count');
       }
       result = 1;
       break;
     }
     case 'number': {
-      if (/^\s*$/.test(e)) throw new Error('Invalid number');
-      if (e !== '$' && Number.isNaN(Number(e))) throw new Error('Invalid number');
+      if (/^\s*$/.test(e)) throw new ExprSyntaxError('number', 'Invalid number');
+      if (e !== '$' && Number.isNaN(Number(e)))
+        throw new ExprSyntaxError('number', 'Invalid number');
       result = 1;
       break;
     }
   }
 
-  if (Number.isNaN(result)) throw new Error('Math error');
+  if (Number.isNaN(result)) throw new ExprSyntaxError('internal', 'Math error');
   return result;
 }
 
@@ -190,16 +214,104 @@ function assembleExprTemplate(elements: unknown[]): string {
   return template;
 }
 
+// Localized, actionable diagnostic per failure kind. The gateway only ever
+// shows the blanket `运算式不合法`; the CLI can do better because it owns the
+// faithful parser. Kept terse so it fits one stderr line + the JSON `message`.
+const DIAGNOSTICS: Record<ExprErrorKind, string> = {
+  bracket: '括号不匹配（检查 ( 与 ) 是否成对）',
+  expression: '运算符两侧的操作数不合法（每个 + - * / % 左右须各是一个值）',
+  function: '未知函数（检查拼写与大小写；无参函数也要带括号，如 rand()）',
+  argCount: '函数参数个数不对（用 ASCII 逗号分隔；固定参数函数参数数须精确匹配）',
+  number: '存在空操作数或非数字 token（变量请用 $id / $scope.id 引用）',
+  internal: '表达式解析内部错误',
+};
+
+export interface ExprCheckResult {
+  /** true when the gateway parser would accept this expression. */
+  ok: boolean;
+  /** failure kind (only present when `ok` is false). */
+  kind?: ExprErrorKind;
+  /** localized, actionable diagnostic (only present when `ok` is false). */
+  message?: string;
+  /** the raw gateway error message preserved verbatim (only when `ok` false). */
+  rawMessage?: string;
+  /**
+   * the assembled expression string the parser actually saw — `var` elements
+   * collapse to `$`, so this is what the gateway evaluates. Helps the author
+   * see why a fragment-built expression failed.
+   */
+  template: string;
+}
+
+// Run the faithful parser over an already-assembled expression string and map
+// any ExprSyntaxError to a structured, localized result. Shared by both the
+// element-array path (varSetNumber) and the raw-string CLI path.
+function runCheck(template: string): ExprCheckResult {
+  try {
+    checkExpr(template);
+    return { ok: true, template };
+  } catch (err) {
+    const kind: ExprErrorKind = err instanceof ExprSyntaxError ? err.kind : 'internal';
+    const rawMessage = err instanceof Error ? err.message : String(err);
+    return { ok: false, kind, message: DIAGNOSTICS[kind], rawMessage, template };
+  }
+}
+
+/**
+ * Structured validation of a varSetNumber element array. Returns the specific
+ * failure kind + a localized diagnostic + the assembled template, instead of
+ * just a boolean. Use this when you want to tell the author *why* the
+ * expression is rejected (CLI `rule expr-check`, validate-graph diagnostics).
+ */
+export function checkVarSetNumberExpr(elements: unknown[]): ExprCheckResult {
+  return runCheck(assembleExprTemplate(elements));
+}
+
+/**
+ * Structured validation of a raw expression *string* (the form a human types,
+ * e.g. `abs($x - 100) + 5`). `$id` / `$scope.id` variable references collapse
+ * to the gateway's `$` placeholder before checking, so the grammar verdict
+ * matches what `varSetNumber` would get after `parseVarSetExpr`. Powers the
+ * `xgg rule expr-check '<expr>'` command.
+ */
+export function checkVarSetNumberExprString(input: string): ExprCheckResult {
+  // Collapse `$id` / `$scope.id` (and escaped `$$`) to the gateway's bare `$`
+  // operand, matching parseVarSetExpr → assembleExprTemplate. Everything else
+  // (numbers, operators, function names, parens) is passed through untouched.
+  let template = '';
+  let i = 0;
+  while (i < input.length) {
+    const ch = input[i];
+    if (ch !== '$') {
+      template += ch;
+      i += 1;
+      continue;
+    }
+    if (input[i + 1] === '$') {
+      template += '$';
+      i += 2;
+      continue;
+    }
+    const m = input.slice(i + 1).match(/^([A-Za-z][A-Za-z0-9]*)(?:\.([A-Za-z][A-Za-z0-9]*))?/);
+    if (m === null) {
+      // bare `$` not followed by an identifier → keep it; the parser accepts a
+      // lone `$` as a number-placeholder operand.
+      template += '$';
+      i += 1;
+      continue;
+    }
+    template += '$';
+    i += 1 + m[0].length;
+  }
+  return runCheck(template);
+}
+
 /**
  * Returns true when the assembled varSetNumber element template is a valid
  * arithmetic expression per the gateway's `Lr.check` parser (i.e. `yg.check`
  * does not throw). The UI rejects a save with `运算式不合法` when this is false.
+ * Thin boolean wrapper over {@link checkVarSetNumberExpr} for existing callers.
  */
 export function isValidVarSetNumberExpr(elements: unknown[]): boolean {
-  try {
-    checkExpr(assembleExprTemplate(elements));
-    return true;
-  } catch {
-    return false;
-  }
+  return checkVarSetNumberExpr(elements).ok;
 }

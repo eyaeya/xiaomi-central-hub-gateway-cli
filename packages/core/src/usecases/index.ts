@@ -11,6 +11,13 @@ export type { LintGraphInput, LintIssue } from './lint-graph.js';
 export { checkReachability } from './reachability.js';
 export { validateGraph, validateGraphOrThrow } from './validate-graph.js';
 export type { ValidateGraphInput } from './validate-graph.js';
+export {
+  ExprSyntaxError,
+  checkVarSetNumberExpr,
+  checkVarSetNumberExprString,
+  isValidVarSetNumberExpr,
+} from './var-expr-check.js';
+export type { ExprCheckResult, ExprErrorKind } from './var-expr-check.js';
 export { login } from './login.js';
 export type { LoginInputs, LoginResult, SpawnFn } from './login.js';
 export { logout } from './logout.js';
