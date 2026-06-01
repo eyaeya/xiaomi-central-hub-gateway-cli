@@ -65,6 +65,8 @@ xgg rule view <rule-id> --pretty
 
 Agent 读日志后能区分到底是**根本没触发**、**触发了但动作没执行**，还是**条件没满足走了另一分支**。定位之后，Agent 直接修改规则图，重新 `validate` 并 `enable`，再看一眼日志确认修好了——整个排障过程有据可查，而不是反复试错。
 
+> `xgg rule logs` 拿到的是网关**原始日志行**（仅按 rule id / 时间 / level 过滤），比网页日志面板更全也更「糙」——网页那套会再按节点连接类型过滤、逐节点渲染中文说明并丢弃解析不了的行，所以 CLI 日志更适合排障，但不必和网页逐行对应。
+
 ### 盘点现有设备与自动化，一起头脑风暴
 
 用久了，家里有哪些设备、配过哪些自动化，自己往往也记不全。可以让 Agent 先盘点，再在此基础上提想法：
@@ -234,7 +236,8 @@ xgg variable set-value --scope global --id <id> --value <value>
 xgg variable watch [--pretty]
 
 xgg backup list --from fds [--pretty]
-xgg backup create --from fds --file-name <name>
+xgg backup create --from fds --file-name <name> [--wait]
+xgg backup download --from fds --did <did> --ts <ts> --file-name <name> [--wait]
 ```
 
 默认 stdout 输出 JSON，适合 Agent 解析；需要人读表格时加 `--pretty`。例外：`xgg rule logs` 默认输出人类表格，需要 JSON 时显式加 `--json`。
