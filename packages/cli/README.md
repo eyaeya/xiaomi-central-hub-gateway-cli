@@ -24,7 +24,7 @@ xgg rule list --pretty
 xgg variable list --pretty
 ```
 
-6 位登录码来自手机米家 App 的中枢网关设备页。登录码短时有效且通常只能用一次；认证失效或退出码 3 时，请获取新码后重新 `xgg login`。
+6 位登录码来自米家 App 的中枢网关设备页（若中枢网关是路由器或家庭屏自带的，则在对应设备内的中枢网关功能页面获取）。登录码短时有效且通常只能用一次；认证失效或退出码 3 时，请获取新码后重新 `xgg login`。
 
 ## AI Agent
 
@@ -41,7 +41,11 @@ export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 $(npm root -g)/@eyaeya/xgg-cli/skills/xgg-rule-authoring/SKILL.md
 ```
 
-同一份文档也可在 GitHub 仓库中的 `skills/xgg-rule-authoring/SKILL.md` 查看。
+同一份文档也可在 GitHub 仓库中的 `skills/xgg-rule-authoring/SKILL.md` 查看。也可以用 [skills CLI](https://github.com/vercel-labs/skills) 一键安装该 Skill：
+
+```bash
+npx skills add eyaeya/xiaomi-central-hub-gateway-cli
+```
 
 ## 常用流程
 

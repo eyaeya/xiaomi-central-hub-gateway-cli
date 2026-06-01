@@ -60,7 +60,7 @@ xgg rule view <rule-id> --pretty
 
 - Node.js 20.11 或更高版本。
 - 能从当前电脑访问网关极客版网页地址，通常是 `http://<gateway-ip>:8086`。
-- 手机米家 App 中网关设备页显示的 6 位登录码。登录码短时有效且通常只能用一次。
+- 米家 App 中枢网关设备页显示的 6 位登录码（若中枢网关是路由器或家庭屏自带的，则在对应设备内的中枢网关功能页面获取）。登录码短时有效且通常只能用一次。
 
 从 npm 安装 CLI（推荐）：
 
@@ -89,13 +89,21 @@ node packages/cli/dist/cli.js --help
 
 ## AI Agent 安装
 
-推荐让 Agent 同时安装 CLI 并读取本项目内置 Skill。使用 npm 安装后，CLI 包内会携带一份离线 skill：
+让 Agent 用起来需要两步：装 CLI（提供 `xgg` 命令）+ 装 Skill（让 Agent 知道怎么用 `xgg`）。
+
+**第一步：安装 CLI。**
 
 ```bash
 npm install -g @eyaeya/xgg-cli
 ```
 
-如果你的 Agent 支持本地 skills 目录，可以从全局 npm 包中复制：
+**第二步：安装 Skill。** 推荐用 [skills CLI](https://github.com/vercel-labs/skills) 一键从本仓库拉取并安装（会自动放到 `.claude/skills/` 或 `.agents/skills/`）：
+
+```bash
+npx skills add eyaeya/xiaomi-central-hub-gateway-cli
+```
+
+也可以手动安装。`@eyaeya/xgg-cli` 包内自带一份离线 skill，若你的 Agent 支持本地 skills 目录，可从全局 npm 包中复制：
 
 ```bash
 CLI_PKG="$(npm root -g)/@eyaeya/xgg-cli"
@@ -124,7 +132,9 @@ export XGG_AGENT_MODE=1
 export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 ```
 
-`XGG_AGENT_MODE=1` 会拒绝无快照写入，避免 Agent 修改规则图或变量后没有可回滚证据。
+`XGG_AGENT_MODE=1` 会拒绝无快照写入，避免 Agent 修改规则图或变量后没有可回滚证据。建议把快照目录建在当前项目目录下（上面的 `$PWD/snapshots`），让快照随项目留存、便于回溯。
+
+装好之后，Agent 应主动引导用户完成登录：请用户打开**米家 App 中的中枢网关设备页面**（如果中枢网关是路由器或家庭屏自带的，则打开对应设备内的中枢网关功能页面），把页面上的**中枢网关网址**和 **6 位动态码**发给 Agent，Agent 据此运行 `xgg login --code <6位动态码> --base-url <中枢网关网址>` 完成登录，之后即可开始读取设备、创建自动化。
 
 ## 快速开始
 
@@ -226,7 +236,7 @@ pnpm install
 pnpm check
 pnpm build
 pnpm pack:release
-tar -tzf release-artifacts/eyaeya-xgg-cli-0.1.0.tgz
+tar -tzf release-artifacts/eyaeya-xgg-cli-*.tgz
 ```
 
 发布前至少确认：
@@ -240,8 +250,8 @@ tar -tzf release-artifacts/eyaeya-xgg-cli-0.1.0.tgz
 发布命令：
 
 ```bash
-npm publish release-artifacts/eyaeya-xgg-core-0.1.0.tgz --access public
-npm publish release-artifacts/eyaeya-xgg-cli-0.1.0.tgz --access public
+npm publish release-artifacts/eyaeya-xgg-core-*.tgz --access public
+npm publish release-artifacts/eyaeya-xgg-cli-*.tgz --access public
 ```
 
 必须先发布 `@eyaeya/xgg-core`，再发布 `@eyaeya/xgg-cli`，因为 CLI 包依赖 core 包。
