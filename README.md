@@ -11,6 +11,31 @@
 
 GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli)。npm 包：[`@eyaeya/xgg-cli`](https://www.npmjs.com/package/@eyaeya/xgg-cli)、[`@eyaeya/xgg-core`](https://www.npmjs.com/package/@eyaeya/xgg-core)。
 
+## 实机效果
+
+下面是一次完整的真机演示：把一句中文需求交给 Agent（这里用 CodeX），它自己调用 `xgg` 查设备、连规则图、校验并写入网关，最终在中枢网关里生成可运行的自动化。三张图依「需求 → Agent 处理 → 网关成品」顺序排列，均为缩略图，**点击可在 GitHub 文件查看页中打开完整原图**。
+
+**① 用户给 Agent 的需求 Prompt**
+
+<a href="卧室自动化CodeX%20需求.png"><img src="卧室自动化CodeX%20需求.png" alt="卧室自动化需求 Prompt（点击查看完整原图）" width="720" loading="lazy"></a>
+
+一句话自然语言需求，描述想要的卧室自动化效果，直接交给 CodeX。
+
+<table>
+  <tr>
+    <td align="center"><b>② CodeX 的完整处理回显</b></td>
+    <td align="center"><b>③ 网关里实际创建出的自动化</b></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="卧室自动化CodeX%20回复.png"><img src="卧室自动化CodeX%20回复.png" alt="CodeX 处理过程回显（点击查看完整原图）" height="380" loading="lazy"></a></td>
+    <td align="center"><a href="卧室自动化实例.png"><img src="卧室自动化实例.png" alt="中枢网关里实际创建的自动化（点击查看完整原图）" height="380" loading="lazy"></a></td>
+  </tr>
+  <tr>
+    <td align="center">CodeX 调用 <code>xgg</code> 查设备、组装规则图、表达式校验、推送保存并读日志验证的全过程（缩略图为开头一段）。</td>
+    <td align="center">中枢网关 App 里被 Agent 实际创建出来的规则图。原图极长（高约万余像素），缩略图只显示一窄条。</td>
+  </tr>
+</table>
+
 ## 免责声明
 
 本项目是**非官方**工具，与小米（Xiaomi）**无任何隶属关系，未获其授权或背书**。「小米」「米家」「中枢网关极客版」「Xiaomi」等名称为其各自所有者的商标，本项目仅作描述性使用，不使用任何官方 logo。`xgg` 通过加密 WebSocket 与**用户自有**的网关设备通信，仅供个人合法使用，风险自负。
