@@ -31,8 +31,8 @@ GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaey
     <td align="center"><a href="卧室自动化实例.png"><img src="卧室自动化实例.png" alt="中枢网关里实际创建的自动化（点击查看完整原图）" height="380" loading="lazy"></a></td>
   </tr>
   <tr>
-    <td align="center">CodeX 调用 <code>xgg</code> 查设备、组装规则图、表达式校验、推送保存并读日志验证的全过程（缩略图为开头一段）。</td>
-    <td align="center">中枢网关 App 里被 Agent 实际创建出来的规则图。原图极长（高约万余像素），缩略图只显示一窄条。</td>
+    <td align="center">CodeX 调用 <code>xgg</code> 查设备、组装规则图、表达式校验、推送保存并读日志验证的全过程。</td>
+    <td align="center">中枢网关 App 里被 Agent 实际创建出来的规则图。</td>
   </tr>
 </table>
 
@@ -113,6 +113,8 @@ node packages/cli/dist/cli.js --help
 ```
 
 ## AI Agent 安装
+
+> 请将以下内容复制给 Agent，让其帮安装。
 
 让 Agent 用起来需要两步：装 CLI（提供 `xgg` 命令）+ 装 Skill（让 Agent 知道怎么用 `xgg`）。
 
