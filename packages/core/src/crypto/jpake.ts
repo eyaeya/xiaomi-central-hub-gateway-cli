@@ -43,15 +43,22 @@ function pointWire(p: Point): Buffer {
 }
 
 function pointParse(buf: Buffer, off: number): { point: Point; next: number } {
-  if (buf[off] !== 0x41) {
-    throw new Error(`expected 0x41 at offset ${off}, got 0x${buf[off]?.toString(16)}`);
+  // Read the 1-byte length prefix instead of asserting 0x41 (65). The on-wire
+  // point/scalar blocks are length-prefixed TLV; the official frontend reads
+  // this length dynamically. An uncompressed SEC1 point is in practice always
+  // 65B (0x04||X(32)||Y(32)), but honoring the declared length keeps the parser
+  // aligned with the wire and never trips a hard-coded constant.
+  const len = buf[off];
+  if (len === undefined) throw new Error(`point length prefix out of range at offset ${off}`);
+  if (off + 1 + len > buf.length) {
+    throw new Error(`point block overruns buffer at offset ${off} (len ${len})`);
   }
   if (buf[off + 1] !== 0x04) {
     throw new Error(`expected 0x04 at offset ${off + 1}, got 0x${buf[off + 1]?.toString(16)}`);
   }
-  const pointBytes = buf.subarray(off + 1, off + 1 + 65); // includes the 0x04
+  const pointBytes = buf.subarray(off + 1, off + 1 + len); // [0x04||X||Y]
   const point = Point.fromHex(pointBytes);
-  return { point, next: off + 1 + 65 };
+  return { point, next: off + 1 + len };
 }
 
 function scalarWire(n: bigint): Buffer {
@@ -59,11 +66,20 @@ function scalarWire(n: bigint): Buffer {
 }
 
 function scalarParse(buf: Buffer, off: number): { scalar: bigint; next: number } {
-  if (buf[off] !== 0x20) {
-    throw new Error(`expected 0x20 at offset ${off}, got 0x${buf[off]?.toString(16)}`);
+  // Read the 1-byte length prefix instead of asserting 0x20 (32). The gateway
+  // firmware minimal-encodes the ZKP scalar `r` (drops leading zero bytes), so a
+  // block is 1..32B; the ~1/256 short case made the whole frame 1 byte shorter
+  // (167 not 168 / 329 not 330) and a fixed 32-byte slice would misalign every
+  // subsequent block. Big-endian interpretation is length-agnostic, so a 31-byte
+  // block yields the identical bigint.
+  const len = buf[off];
+  if (len === undefined) throw new Error(`scalar length prefix out of range at offset ${off}`);
+  if (len > 32) throw new Error(`scalar block too long at offset ${off} (len ${len})`);
+  if (off + 1 + len > buf.length) {
+    throw new Error(`scalar block overruns buffer at offset ${off} (len ${len})`);
   }
-  const scalar = bigintFrom32BE(Buffer.from(buf.subarray(off + 1, off + 1 + 32)));
-  return { scalar, next: off + 1 + 32 };
+  const scalar = bigintFromBytesBE(Buffer.from(buf.subarray(off + 1, off + 1 + len)));
+  return { scalar, next: off + 1 + len };
 }
 
 /** Hash-input point (#K): [u32BE(65)][0x04|X|Y] = 69 bytes. NOTE: NOT the same as #P. */
@@ -206,7 +222,9 @@ export class JpakeParty {
   }
 
   readRoundOne(buf: Buffer): void {
-    if (buf.length !== 330) throw new Error(`expected 330-byte round 1, got ${buf.length}`);
+    // Parse by length prefix instead of asserting === 330. Round 1 is ~330B but
+    // a short trailing ZKP scalar (firmware minimal-encoding) makes it 329B.
+    // Overrun is caught inside the *Parse helpers; trailing bytes rejected below.
     let off = 0;
     const p1 = pointParse(buf, off);
     off = p1.next;
@@ -216,6 +234,9 @@ export class JpakeParty {
     off = p2.next;
     const z2 = zkpParse(buf, off);
     off = z2.next;
+    if (off !== buf.length) {
+      throw new Error(`round 1 has ${buf.length - off} unexpected trailing byte(s)`);
+    }
     if (!verifyZKP(z1.zkp, G, p1.point, this.otherRole)) {
       throw new Error('invalid ZKP for peer X1');
     }
@@ -240,24 +261,24 @@ export class JpakeParty {
   }
 
   readRoundTwo(buf: Buffer): void {
-    // Server-sent round 2 is 3 bytes longer due to the #V() prefix
+    // Parse by length prefix instead of asserting === 168/165. The server frame
+    // is ~168B but a short ZKP scalar makes it 167B. The 3-byte server prefix is
+    // validated structurally (client role); overrun/trailing rejected below.
     let off = 0;
     if (this.role === 'client') {
-      // receiving from server → strip 3-byte prefix
-      if (buf.length !== 168)
-        throw new Error(`expected 168-byte server round 2, got ${buf.length}`);
+      // receiving from server → strip 3-byte #V() prefix [0x03 0x00 0x16]
       if (buf[0] !== 0x03 || buf[1] !== 0x00 || buf[2] !== 0x16) {
         throw new Error('invalid server round 2 prefix');
       }
       off = 3;
-    } else {
-      if (buf.length !== 165)
-        throw new Error(`expected 165-byte client round 2, got ${buf.length}`);
     }
     const p = pointParse(buf, off);
     off = p.next;
     const z = zkpParse(buf, off);
     off = z.next;
+    if (off !== buf.length) {
+      throw new Error(`round 2 has ${buf.length - off} unexpected trailing byte(s)`);
+    }
     // G2_peer (as we compute it from our side) = X1_self + X2_self + X1_peer
     const peerG2 = this.X1.add(this.X2).add(this.peerX1);
     if (!verifyZKP(z.zkp, peerG2, p.point, this.otherRole)) {

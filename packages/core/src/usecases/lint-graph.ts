@@ -96,6 +96,9 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
   }
 
   // Phase 2: check edges on each successfully-parsed node.
+  // Also collect every edge target string ("<dstId>.<dstPin>") so a later pass
+  // can flag required state-input pins that nothing feeds.
+  const edgeTargets = new Set<string>();
   for (const { node, idx } of parsed) {
     const outputs = node.outputs;
     if (!outputs || typeof outputs !== 'object') continue;
@@ -107,6 +110,7 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
       let hasDuplicate = false;
 
       for (let j = 0; j < arr.length; j++) {
+        if (typeof arr[j] === 'string') edgeTargets.add(arr[j] as string);
         const entry = arr[j];
         const edgePath = `nodes[${idx}].outputs.${pin}[${j}]`;
 
@@ -220,6 +224,24 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
           message: 'duplicate edge entries (gateway accepts; canvas refuses second identical wire)',
         });
       }
+    }
+  }
+
+  // A `condition` node whose `condition` input has no incoming edge has no state
+  // source feeding the gate. A canvas-authored condition always wires one
+  // (timeRange / logic / varGet / deviceInput); the CLI funnel can't "see" the
+  // empty pin the way the canvas does. Verified against the real gateway: an
+  // unconnected condition defaults to FALSE, so ONLY the `unmet` branch fires
+  // and `met` is dead.
+  for (const { node, idx } of parsed) {
+    if (node.type !== 'condition') continue;
+    const id = node.id as string;
+    if (!edgeTargets.has(`${id}.condition`)) {
+      issues.push({
+        severity: 'warn',
+        path: `nodes[${idx}]`,
+        message: `condition node "${id}" condition input has no incoming edge — gateway defaults it to FALSE (verified), so only the "unmet" branch fires and "met" is dead. Wire a state source (timeRange/logic/varGet/deviceInput) into ${id}.condition.`,
+      });
     }
   }
 

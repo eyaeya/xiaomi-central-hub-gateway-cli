@@ -83,6 +83,11 @@ export function categoryFromUrn(urn: string | undefined): string {
 
 export function deviceCommand(): Command {
   const cmd = new Command('device').description('Device read operations');
+  // Set expectations: there is NO realtime device push.
+  cmd.addHelpText(
+    'after',
+    "\nNote: device reads (list/get/spec) are one-shot snapshots. The gateway exposes\nno realtime device-property push channel to clients. To observe a device's LIVE\nproperty values, copy them into a variable with a rule — `deviceInputSetVar`\n(on change) or `deviceGetSetVar` (on demand) — then `xgg variable watch --follow`.",
+  );
 
   const listCmd = cmd
     .command('list')

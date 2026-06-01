@@ -75,8 +75,12 @@ Limitations:
   - deviceInput / deviceOutput nodes require the source gateway to be
     online so the spec for the referenced device can be fetched (used
     to reverse siid+piid into property/action/event names).
-  - Node types without a c-shortcut equivalent (e.g. eventSequence,
-    register, modeSwitch) emit a # WARNING comment; recreate them by hand
+  - All modeled flow / logic / timing / variable node types (including
+    eventSequence, register, modeSwitch, signalOr, logicAnd/Or/Not, condition,
+    counter, onlyNTimes, loop, delay, statusLast) DO have c-shortcut
+    equivalents and round-trip as \`rule node add\` commands. Only genuinely
+    unknown / not-yet-modeled node types (e.g. nop, or a future card the
+    exporter has not learned) emit a # WARNING comment; recreate those by hand
     with \`rule node add --cfg '<JSON>'\`.`,
     )
     .action(

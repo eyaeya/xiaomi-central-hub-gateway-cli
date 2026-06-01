@@ -32,8 +32,8 @@ export type DeviceInputCfg = z.infer<typeof DeviceInputCfg>;
 
 const propertyBase = {
   did: z.string(),
-  siid: z.number(),
-  piid: z.number(),
+  siid: z.number().int(),
+  piid: z.number().int(),
   preload: z.boolean().optional(),
 };
 
@@ -202,9 +202,12 @@ const DeviceInputEventArgument = z.union([
 const DeviceInputEventProps = z
   .object({
     did: z.string(),
-    siid: z.number(),
-    eiid: z.number(),
-    arguments: z.array(DeviceInputEventArgument),
+    siid: z.number().int(),
+    eiid: z.number().int(),
+    // Optional: the gateway guards event filters with `"arguments" in props`, so
+    // an event trigger with no arguments (= "match any value of this event") is
+    // valid; requiring them false-rejected that shape.
+    arguments: z.array(DeviceInputEventArgument).optional(),
   })
   .strict();
 

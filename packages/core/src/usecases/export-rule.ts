@@ -267,6 +267,11 @@ async function renderNode(
   }
 }
 
+// Operators the CLI's `--event-filter <piid><op><v1>` parser accepts.
+// between/include event-arg filters fall outside this set and are surfaced as a
+// warning rather than silently dropped.
+const EVENT_FILTER_OPS = new Set(['=', '!=', '>', '<', '>=', '<=']);
+
 async function renderDeviceInput(
   n: { id: string; cfg?: Record<string, unknown>; props?: Record<string, unknown> },
   deps: ResourceDeps,
@@ -300,6 +305,25 @@ async function renderDeviceInput(
     } else {
       flags.push({ name: '--device-event', value: eventName });
     }
+    // Round-trip per-arg event filters via --event-filter. Pre-fix these were
+    // silently dropped, so the replayed rule fired on ANY value of the event
+    // instead of the captured filter. Args without an operator are "match any".
+    const eventArgs = props.arguments;
+    if (Array.isArray(eventArgs)) {
+      for (const arg of eventArgs) {
+        if (!isRecord(arg) || typeof arg.piid !== 'number' || !('operator' in arg)) continue;
+        const op = String(arg.operator);
+        if (!EVENT_FILTER_OPS.has(op)) {
+          warnings.push(
+            `deviceInput node ${n.id}: event arg piid=${arg.piid} uses operator "${op}" which --event-filter cannot express (only =, !=, >, <, >=, <=); the filter was dropped on export`,
+          );
+          continue;
+        }
+        const v1 = arg.v1;
+        const val = typeof v1 === 'boolean' ? (v1 ? '1' : '0') : String(v1);
+        flags.push({ name: '--event-filter', value: `${arg.piid}${op}${val}` });
+      }
+    }
   } else if (isProperty) {
     const spec = await ensureSpec(did, deps, specCache);
     const propertyName = findPropertyName(spec, Number(props.siid), Number(props.piid));
@@ -322,6 +346,14 @@ async function renderDeviceInput(
     // re-coerces via Boolean() to scalar true/false at re-author time.
     const v1 = props.v1;
     const threshold = Array.isArray(v1) ? v1[0] : v1;
+    // `include` carries an integer SET in v1; the CLI's single `--threshold` only
+    // round-trips the first element, so a multi-value membership test silently
+    // shrinks on replay. Warn loudly.
+    if (Array.isArray(v1) && v1.length > 1) {
+      warnings.push(
+        `deviceInput node ${n.id}: include() v1 has ${v1.length} values [${v1.join(',')}]; --threshold round-trips only the first (${String(v1[0])}). Re-author the rule to preserve the full membership set.`,
+      );
+    }
     if (typeof threshold === 'number')
       flags.push({ name: '--threshold', value: String(threshold) });
     else if (typeof threshold === 'boolean')
@@ -384,6 +416,12 @@ async function renderDeviceGet(
   if (reverseOp !== null) flags.push({ name: '--op', value: reverseOp });
   const v1 = props.v1;
   const threshold = Array.isArray(v1) ? v1[0] : v1;
+  // Same include() multi-value truncation as deviceInput.
+  if (Array.isArray(v1) && v1.length > 1) {
+    warnings.push(
+      `deviceGet node ${n.id}: include() v1 has ${v1.length} values [${v1.join(',')}]; --threshold round-trips only the first (${String(v1[0])}). Re-author the rule to preserve the full membership set.`,
+    );
+  }
   if (typeof threshold === 'number') flags.push({ name: '--threshold', value: String(threshold) });
   else if (typeof threshold === 'boolean')
     flags.push({ name: '--threshold', value: threshold ? '1' : '0' });
@@ -894,7 +932,12 @@ function addDayFilterFlags(flags: ExportFlag[], rawFilter: unknown): void {
   const filter = rawFilter as { inHoliday?: boolean; day?: number[] };
   if (filter.inHoliday === false) flags.push({ name: '--weekday-only' });
   else if (filter.inHoliday === true) flags.push({ name: '--holiday-only' });
-  else if (Array.isArray(filter.day)) flags.push({ name: '--days', value: filter.day.join(',') });
+  // Only emit --days for a NON-empty day array. An empty `filter.day: []`
+  // (already invalid per validate-graph's "至少选择一天") otherwise produced
+  // `--days ''`, which re-imports as `[NaN]` and makes buildDayFilter throw — a
+  // round-trip crash. Skipping it keeps the replay parseable.
+  else if (Array.isArray(filter.day) && filter.day.length > 0)
+    flags.push({ name: '--days', value: filter.day.join(',') });
 }
 
 async function ensureSpec(

@@ -6,12 +6,14 @@ import {
   deleteBackup,
   downloadBackup,
   dumpBeforeWrite,
+  extractBackupProgressId,
   generateBackup,
   getBackupConfig,
   getBackupProgress,
   listBackups,
   loadBackup,
   setBackupConfig,
+  waitForBackupProgress,
 } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
@@ -24,6 +26,10 @@ interface BackupOpts {
   timeout: string;
   pretty?: boolean;
   from: string;
+  // Optional poll-to-100 on create/download/load.
+  wait?: boolean;
+  pollIntervalMs?: string;
+  pollTimeoutMs?: string;
 }
 
 interface BackupTargetOpts extends BackupOpts {
@@ -80,6 +86,32 @@ function addTargetOptions(cmd: Command): Command {
     .option('--device-name <name>', 'optional deviceName copied from `xgg backup list`')
     .option('--model-name <name>', 'optional modelName copied from `xgg backup list`')
     .option('--self', 'include self=true in the backup reference');
+}
+
+// `--wait` polls the returned progress_id to 100% before the command returns; a
+// progress_id of 0 (local-cache hit) resolves instantly.
+function addWaitOptions(cmd: Command): Command {
+  return cmd
+    .option('--wait', 'poll the operation progress to 100% before returning')
+    .option('--poll-interval-ms <ms>', 'progress poll interval when --wait (default 1000)')
+    .option('--poll-timeout-ms <ms>', 'progress poll timeout when --wait (default 60000)');
+}
+
+async function maybeWaitForProgress(
+  opts: BackupOpts,
+  result: unknown,
+  deps: ReturnType<typeof makeDeps>,
+): Promise<{ progress: number } | undefined> {
+  if (opts.wait !== true) return undefined;
+  const progressId = extractBackupProgressId(result);
+  // Nothing pollable (e.g. loadBackup returned {} / true) — surface as-is.
+  if (progressId === null) return undefined;
+  const pollIntervalMs = parseOptionalNumber(opts.pollIntervalMs, '--poll-interval-ms');
+  const pollTimeoutMs = parseOptionalNumber(opts.pollTimeoutMs, '--poll-timeout-ms');
+  return waitForBackupProgress({ from: opts.from, progressId }, deps, {
+    ...(pollIntervalMs !== undefined && { pollIntervalMs }),
+    ...(pollTimeoutMs !== undefined && { pollTimeoutMs }),
+  });
 }
 
 function addSnapshotOptions(cmd: Command): Command {
@@ -161,17 +193,23 @@ export function backupCommand(): Command {
     }),
   );
 
-  addCommonOptions(
-    cmd
-      .command('create')
-      .description('Create a cloud backup')
-      .requiredOption('--file-name <name>', 'backup filename')
-      .addHelpText('after', '\nExample:\n  $ xgg backup create --from fds --file-name probe.bak'),
+  addWaitOptions(
+    addCommonOptions(
+      cmd
+        .command('create')
+        .description('Create a cloud backup')
+        .requiredOption('--file-name <name>', 'backup filename')
+        .addHelpText(
+          'after',
+          '\nExample:\n  $ xgg backup create --from fds --file-name probe.bak\n  $ xgg backup create --file-name probe.bak --wait   # poll to 100% before returning',
+        ),
+    ),
   ).action(
     wrap('backup.create', async (opts: CreateOpts) => {
       const deps = makeDeps(opts);
       const result = await createBackup({ from: opts.from, fileName: opts.fileName }, deps);
-      emit({ ok: true, result }, { pretty: opts.pretty === true });
+      const progress = await maybeWaitForProgress(opts, result, deps);
+      emit({ ok: true, result, ...(progress && { progress }) }, { pretty: opts.pretty === true });
     }),
   );
 
@@ -190,19 +228,22 @@ export function backupCommand(): Command {
     }),
   );
 
-  addTargetOptions(
-    cmd
-      .command('download')
-      .description('Request a cloud backup download')
-      .addHelpText(
-        'after',
-        '\nExample:\n  $ xgg backup download --from fds --did <DID> --ts <TS> --file-name <NAME>',
-      ),
+  addWaitOptions(
+    addTargetOptions(
+      cmd
+        .command('download')
+        .description('Request a cloud backup download')
+        .addHelpText(
+          'after',
+          '\nExample:\n  $ xgg backup download --from fds --did <DID> --ts <TS> --file-name <NAME> --wait\n  # download is a prerequisite for `backup generate` / `backup load` of the same\n  # {did,ts,file-name}; result 0 means the file is already in the gateway cache.',
+        ),
+    ),
   ).action(
     wrap('backup.download', async (opts: BackupTargetOpts) => {
       const deps = makeDeps(opts);
       const result = await downloadBackup({ from: opts.from, backup: backupRef(opts) }, deps);
-      emit({ ok: true, result }, { pretty: opts.pretty === true });
+      const progress = await maybeWaitForProgress(opts, result, deps);
+      emit({ ok: true, result, ...(progress && { progress }) }, { pretty: opts.pretty === true });
     }),
   );
 
@@ -212,7 +253,7 @@ export function backupCommand(): Command {
       .description('Request a generated/exportable backup')
       .addHelpText(
         'after',
-        '\nExample:\n  $ xgg backup generate --from fds --did <DID> --ts <TS> --file-name <NAME>',
+        '\nExample:\n  $ xgg backup generate --from fds --did <DID> --ts <TS> --file-name <NAME>\n  # Prerequisite: run `xgg backup download` with the SAME {did,ts,file-name}\n  # first — generate is a state-coupled read and fails if the file is not yet\n  # in the gateway cache.',
       ),
   ).action(
     wrap('backup.generate', async (opts: BackupTargetOpts) => {
@@ -222,22 +263,28 @@ export function backupCommand(): Command {
     }),
   );
 
-  addSnapshotOptions(
-    addTargetOptions(
-      cmd
-        .command('load')
-        .description('Restore a cloud backup (writes snapshot first)')
-        .addHelpText(
-          'after',
-          '\nExample:\n  $ xgg backup load --from fds --did <DID> --ts <TS> --file-name <NAME> --snapshots-dir ./snapshots/',
-        ),
+  addWaitOptions(
+    addSnapshotOptions(
+      addTargetOptions(
+        cmd
+          .command('load')
+          .description('Restore a cloud backup (writes snapshot first)')
+          .addHelpText(
+            'after',
+            '\nExample:\n  $ xgg backup load --from fds --did <DID> --ts <TS> --file-name <NAME> --snapshots-dir ./snapshots/\n  # Prerequisite: run `xgg backup download` with the SAME {did,ts,file-name} first.',
+          ),
+      ),
     ),
   ).action(
     wrap('backup.load', async (opts: SnapshotOpts) => {
       const deps = makeDeps(opts);
       const snapshot = await snapshotBeforeBackupWrite(opts, deps);
       const result = await loadBackup({ from: opts.from, backup: backupRef(opts) }, deps);
-      emit({ ok: true, snapshot, result }, { pretty: opts.pretty === true });
+      const progress = await maybeWaitForProgress(opts, result, deps);
+      emit(
+        { ok: true, snapshot, result, ...(progress && { progress }) },
+        { pretty: opts.pretty === true },
+      );
     }),
   );
 

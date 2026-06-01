@@ -8,8 +8,8 @@
 // canvas you wire on, so a fully-disconnected sink is visually obvious; the
 // CLI's save-then-enable split makes it possible to enable a never-fires graph.
 //
-// This is the universal funnel where the new check belongs (memory:
-// feedback-gate-on-agent-funnel-paths). Wired into validate-graph at the end of
+// This is the universal funnel where the new check belongs. Wired
+// into validate-graph at the end of
 // the per-node loop so per-card 卡片配置有误 errors still win priority — a sink
 // that fails its own schema check is more actionable than a reachability one.
 //

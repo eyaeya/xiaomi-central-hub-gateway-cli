@@ -280,7 +280,7 @@ export async function setGraph(
     // canvas and let the gateway accept silently-broken edges. Promote
     // lintGraph's error issues to a ConfigError here so every CLI write path
     // inherits the canvas-equivalent rejection without each command needing
-    // to wire lintGraph individually (feedback-gate-on-agent-funnel-paths).
+    // to wire lintGraph individually.
     // `skipLint` is the internal-mutator opt-out (see SetGraphOptions).
     if (opts.skipLint !== true) {
       const lintIssues = lintGraph({ graph: params, strict: true });
@@ -409,9 +409,8 @@ export async function upsertGraph(
 // It is idempotent: it first reads the scope's var list; if ≥1 var exists,
 // the scope is alive and we skip the write. Otherwise it writes a sacrificial
 // placeholder (`__xgg_scope_init` for global / `__r_scope_init` for R-scopes)
-// whose name makes the source clear in the UI. Per
-// `feedback-spike-rule-retention` the placeholder is retained — the user can
-// delete it manually if they don't want it. Errors from a racing concurrent
+// whose name makes the source clear in the UI. The placeholder is retained
+// by design — the user can delete it manually if they don't want it. Errors from a racing concurrent
 // create (`Variable already exists`) are tolerated so retries are safe.
 async function ensureScopeBootstrapped(scope: string, deps: ResourceDeps): Promise<void> {
   // Rule ids are valid graph ids even when they contain hyphens, but gateway
@@ -481,8 +480,7 @@ export interface CreateRuleOptions {
 // F63a — `rule new` analog at the core layer. Wraps setGraph + the two
 // scope-bootstrap follow-ups so every CLI/library path that creates a rule
 // gets the same invariant ("`R<ruleId>` exists immediately" when the derived
-// variable scope is valid). Without this,
-// the agent-funnel write path (see memory `feedback-gate-on-agent-funnel-paths`)
+// variable scope is valid). Without this, the agent-funnel write path
 // would silently produce rules whose `rule enable` later fails — too far from
 // the originating action to debug.
 export async function createRule(
@@ -517,9 +515,8 @@ export async function deleteGraph(id: string, deps: ResourceDeps): Promise<void>
   // `/api/deleteGraph` removes the rule body but leaves the rule-local
   // variable scope (`R<ruleId>`) intact, so any vars created by `rule new`
   // auto-create (B1 lifecycle pair) or by hand survive as ghost data the UI
-  // can't surface — there is no rule to attach them to. Per memory rule
-  // `feedback-gate-on-agent-funnel-paths`, the cleanup must live on the
-  // write path itself (not just CLI lint) so every funnel — CLI delete,
+  // can't surface — there is no rule to attach them to. The cleanup must
+  // live on the write path itself (not just CLI lint) so every funnel — CLI delete,
   // future bulk delete, programmatic SDK use — inherits it. "Invalid scope"
   // (rule never had a local scope) is swallowed and logged to stderr,
   // matching the existing `listAvailVarsForRule` swallow precedent in
@@ -1011,7 +1008,11 @@ function parseDeviceEventArg(
       { piid, siid: service.iid },
     );
   }
-  const dtype = mapFormatToDtype(prop.format) as 'int' | 'float' | 'boolean' | 'string';
+  const dtype = mapFormatToDtype(prop.format, propHasValueList(prop)) as
+    | 'int'
+    | 'float'
+    | 'boolean'
+    | 'string';
 
   if (dtype === 'boolean') {
     if (operator !== '=') {
@@ -1148,12 +1149,22 @@ function parseEventArgVar(
 // UI's wire format on walk-02-deviceget-toggle. Older fixtures using int+
 // include for bool remain parseable via the schema's union, but new c-shortcut
 // authoring uses the bool dialect.
-function mapFormatToDtype(format: string): string {
-  if (format === 'float') return 'float';
+// `hasValueList` mirrors the gateway capability builder, which downgrades a
+// value-list (enum) property's `float` format to `int`. Enumerated values are
+// discrete, so equality / set-membership (`=`/`include`) must be expressible; a
+// raw `float` dtype restricts operators to `>`/`<`/`between` and can't match a
+// specific enum value. The UI form renderer reads the downgraded dtype, so a
+// faithful c-shortcut emits `int` for value-list floats too.
+function mapFormatToDtype(format: string, hasValueList = false): string {
+  if (format === 'float') return hasValueList ? 'int' : 'float';
   if (format === 'string') return 'string';
   if (format === 'bool') return 'boolean';
   // signed / unsigned int widths → 'int'
   return 'int';
+}
+
+function propHasValueList(prop: { 'value-list'?: unknown }): boolean {
+  return Array.isArray(prop['value-list']) && prop['value-list'].length > 0;
 }
 
 // F16 fix: coerce CLI string value to gateway-storage type per MIoT format.
@@ -1211,6 +1222,27 @@ function propertyRangeFields(property: MiotProperty): Record<string, number> {
   if (range === undefined) return {};
   const [min, max, step] = range;
   return { min, max, step };
+}
+
+// When writing a *number* variable into a device property / action input, the
+// gateway requires numeric min/max/step. Source them from the target property's
+// value-range; for non-number variables emit nothing. Fail fast with an
+// actionable message when a number variable targets a property that declares no
+// value-range (rather than synthesizing a node the gateway rejects).
+function variableRangeFields(
+  varRef: DeviceOutputVariableRef,
+  property: MiotProperty | undefined,
+  context: string,
+): Record<string, number> {
+  if (varRef.dtype !== 'number') return {};
+  const range = property ? propertyRangeFields(property) : {};
+  if (!('min' in range)) {
+    throw new ConfigError(
+      `cannot write a number variable to ${context}: the MIoT property declares no value-range, but the gateway requires numeric min/max/step for a number-dtype variable. Use a literal value, or target a property that declares a value-range.`,
+      { context },
+    );
+  }
+  return range;
 }
 
 function coercePropertyValue(raw: string, format: string): number | string | boolean {
@@ -1480,7 +1512,7 @@ function synthesizeNodeFromShortcut(
       deviceModel,
     );
     const thresholdValue = shortcut.threshold ?? 0;
-    const dtype = mapFormatToDtype(property.format);
+    const dtype = mapFormatToDtype(property.format, propHasValueList(property));
     // M11 F19: when the MIoT spec advertises a value-range [lo, hi, step],
     // refuse thresholds outside it — saves a round-trip + a useless rule
     // that would never fire. Opt out with --force-out-of-range when the
@@ -1599,12 +1631,22 @@ function synthesizeNodeFromShortcut(
         const paramKey = prop
           ? (prop.type.split(':')[3] ?? `piid-${piid}`) // short name, e.g. "text-content"
           : `piid-${piid}`;
-        const rawValue = shortcut.params?.[paramKey] ?? '';
+        // Only emit an ins entry for piids the caller actually supplied a param
+        // for. Filling every action.in piid with `value:''` grew an external
+        // rule's ins on export→import round-trips (the exporter emits --params
+        // only for present ins). xgg-authored nodes are unaffected.
+        if (shortcut.params === undefined || !Object.hasOwn(shortcut.params, paramKey)) continue;
+        const rawValue = shortcut.params[paramKey] ?? '';
         const varRef = parseVariableParamObject(
           rawValue,
           mapFormatToVariableDtype(prop?.format ?? 'string'),
         );
-        if (varRef) ins.push({ piid, ...varRef });
+        if (varRef)
+          ins.push({
+            piid,
+            ...varRef,
+            ...variableRangeFields(varRef, prop, `action input piid=${piid}`),
+          });
         else ins.push({ piid, value: String(rawValue) });
       }
       return {
@@ -1666,7 +1708,10 @@ function synthesizeNodeFromShortcut(
           piid: property.iid,
           ...(varRef === null
             ? { value: coerced }
-            : { ...varRef, ...propertyRangeFields(property) }),
+            : {
+                ...varRef,
+                ...variableRangeFields(varRef, property, `property "${shortcut.deviceProperty}"`),
+              }),
         },
       };
     }
@@ -1692,7 +1737,7 @@ function synthesizeNodeFromShortcut(
       deviceModel,
     );
     const thresholdValue = shortcut.threshold ?? 0;
-    const dtype = mapFormatToDtype(property.format);
+    const dtype = mapFormatToDtype(property.format, propHasValueList(property));
     if (dtype !== 'boolean') {
       const range = property['value-range'];
       if (range !== undefined && shortcut.forceOutOfRange !== true) {

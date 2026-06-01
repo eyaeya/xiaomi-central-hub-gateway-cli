@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import {
   BackupConfigRequest,
   BackupConfigResponse,
@@ -134,6 +135,52 @@ export async function getBackupProgress(
   );
   const raw = await callBackup(deps, '/api/getBackupProgress', params);
   return parseOrThrow(BackupProgressResponse, raw, 'BackupProgressResponse');
+}
+
+// Pull a numeric progress_id out of a create/download/load response (the gateway
+// returns a bare number, `{progress_id}`, or `{progressId}`; `{}` / null mean
+// "no async progress to track"). Returns null when there is nothing pollable.
+export function extractBackupProgressId(resp: unknown): number | null {
+  if (typeof resp === 'number' && Number.isFinite(resp)) return resp;
+  if (resp !== null && typeof resp === 'object') {
+    const r = resp as Record<string, unknown>;
+    if (typeof r.progress_id === 'number') return r.progress_id;
+    if (typeof r.progressId === 'number') return r.progressId;
+  }
+  return null;
+}
+
+export interface WaitForBackupOptions {
+  pollIntervalMs?: number;
+  pollTimeoutMs?: number;
+  /** Test seam — inject a getBackupProgress stub. */
+  _getBackupProgress?: typeof getBackupProgress;
+}
+
+// Poll getBackupProgress until it reaches 100, used by the backup command's
+// `--wait` flag. A progressId of 0 means the gateway completed instantly (e.g.
+// downloadBackup found the file already in its local cache), so there is nothing
+// to poll — return done immediately.
+export async function waitForBackupProgress(
+  input: { from: string; progressId: number },
+  deps: ResourceDeps,
+  opts: WaitForBackupOptions = {},
+): Promise<BackupProgressResponse> {
+  if (input.progressId === 0) return { progress: 100 };
+  const poll = opts._getBackupProgress ?? getBackupProgress;
+  const pollIntervalMs = opts.pollIntervalMs ?? 1000;
+  const pollTimeoutMs = opts.pollTimeoutMs ?? 60_000;
+  const deadline = Date.now() + pollTimeoutMs;
+  for (;;) {
+    const p = await poll({ from: input.from, progressId: input.progressId }, deps);
+    if (p.progress >= 100) return p;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `backup progress polling timed out after ${pollTimeoutMs}ms (progressId=${input.progressId}, last=${p.progress})`,
+      );
+    }
+    await sleep(pollIntervalMs);
+  }
 }
 
 export async function getBackupConfig(

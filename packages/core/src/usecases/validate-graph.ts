@@ -276,6 +276,12 @@ function checkKnownWebShape(node: Record<string, unknown>, idx: number): LintIss
   if (!isRecord(node.outputs))
     issues.push(issue(`${base}.outputs`, '卡片配置有误: Invalid outputs'));
   if (!isRecord(node.props)) issues.push(issue(`${base}.props`, '卡片配置有误: Invalid props'));
+  // The gateway requires Number.isInteger(cfg.version). A fractional version
+  // passes the loose `z.number()` cfg schema but the gateway rejects setGraph
+  // with "Invalid cfg.version". Mirror it on the funnel path.
+  if (isRecord(node.cfg) && !Number.isInteger(node.cfg.version)) {
+    issues.push(issue(`${base}.cfg.version`, '卡片配置有误: Invalid cfg.version (须为整数)'));
+  }
   if (!isRecord(node.props)) return issues;
 
   switch (node.type) {
@@ -321,14 +327,23 @@ function checkKnownWebShape(node: Record<string, unknown>, idx: number): LintIss
         issues.push(issue(`${base}.props.n`, '卡片配置有误: Invalid n'));
       }
       break;
-    case 'delay':
     case 'statusLast':
+      // statusLast keeps the `> 0` guard: bundle Pr.statusLast throws on
+      // `timeout <= 0`.
       if (!Number.isInteger(node.props.timeout) || Number(node.props.timeout) <= 0) {
         issues.push(issue(`${base}.props.timeout`, '卡片配置有误: Invalid timeout'));
       }
       break;
+    case 'delay':
+      // bundle Pr.delay requires only Number.isInteger; no `> 0` guard (a live
+      // setGraph accepts timeout=0). Match the gateway.
+      if (!Number.isInteger(node.props.timeout)) {
+        issues.push(issue(`${base}.props.timeout`, '卡片配置有误: Invalid timeout'));
+      }
+      break;
     case 'loop':
-      if (!Number.isInteger(node.props.interval) || Number(node.props.interval) <= 0) {
+      // bundle Pr.loop requires only Number.isInteger; no `> 0` guard. Match it.
+      if (!Number.isInteger(node.props.interval)) {
         issues.push(issue(`${base}.props.interval`, '卡片配置有误: Invalid interval'));
       }
       break;
@@ -661,17 +676,15 @@ async function checkAgainstSpec(
     return issues;
   }
 
-  if (node.type === 'deviceInput' || node.type === 'deviceGet') {
-    const expected = uiDtypeFromFormat(property.format);
-    if (props.dtype !== expected) {
-      issues.push(
-        issue(
-          `${base}.dtype`,
-          `卡片配置有误: MIoT property ${property.type} uses format ${property.format}, so web UI expects dtype "${expected}" (got "${String(props.dtype)}")`,
-        ),
-      );
-    }
-  } else {
+  // deviceInput / deviceGet get NO dtype↔format check. The gateway's web UI save
+  // validator only checks v1-presence + (for int/float dtype) operator/v2; it
+  // never compares the node dtype to the spec format. The `变量类型不匹配`
+  // mismatch rule is used ONLY by the variable-capture nodes; the gateway
+  // checkWebNode doesn't consult the spec either. Erroring on a
+  // deviceInput/deviceGet dtype mismatch made this stricter than the UI Save
+  // button and false-rejected legitimate UI-exported rules (esp. the value-list
+  // float→int case). Mirror the UI: only the setVar nodes carry this check.
+  if (node.type === 'deviceInputSetVar' || node.type === 'deviceGetSetVar') {
     const expected = uiVarDtypeFromFormat(property.format);
     if (props.dtype !== expected) {
       issues.push(

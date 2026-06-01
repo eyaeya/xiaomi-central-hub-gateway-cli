@@ -63,7 +63,13 @@ Examples:
   $ xgg rule logs 1779888258312
   $ xgg rule logs 1779888258312 --tail 10 --level error --json
   $ xgg rule logs 1779888258312 --since 2026-05-27T12:00:00Z
-  $ xgg rule logs 1779888258312 --follow --interval-ms 1500`,
+  $ xgg rule logs 1779888258312 --follow --interval-ms 1500
+
+Note: this shows the gateway's RAW log rows, best-effort parsed and filtered only
+by rule id / time / level. It deliberately does NOT replicate the web UI's log
+VIEW, which additionally filters rows by node connection type, renders per-node
+Chinese info, and silently drops rows it cannot strictly parse. The raw payload
+is more useful for debugging a rule; expect richer/looser output than the web log panel.`,
     )
     .action(
       wrap('rule.logs', async (id: string, opts: LogsOpts) => {

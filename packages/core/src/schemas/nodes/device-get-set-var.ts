@@ -23,8 +23,8 @@ export type DeviceGetSetVarCfg = z.infer<typeof DeviceGetSetVarCfg>;
 export const DeviceGetSetVarProps = z
   .object({
     did: z.string(),
-    siid: z.number(),
-    piid: z.number(),
+    siid: z.number().int(),
+    piid: z.number().int(),
     dtype: z.enum(['number', 'boolean', 'string']),
     scope: z.string(),
     id: z.string(),

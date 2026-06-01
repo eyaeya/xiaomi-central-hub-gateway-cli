@@ -13,18 +13,13 @@ export const MiotPropertySchema = z
     iid: z.number().int().positive(),
     type: z.string().regex(new RegExp(`^urn:${URN_NS}:property:`)),
     description: z.string(),
-    format: z.enum([
-      'bool',
-      'uint8',
-      'uint16',
-      'uint32',
-      'int8',
-      'int16',
-      'int32',
-      'int64',
-      'float',
-      'string',
-    ]),
+    // Kept open as `z.string()` to mirror the gateway's own spec parser, which
+    // accepts ANY format string and maps unknowns to int. A closed enum threw a
+    // schema error on the WHOLE spec for any device using a format outside the
+    // list (the MIoT-spec-v2 standard set also includes uint64 / double / hex),
+    // making that device unusable. Downstream dtype mappers already degrade
+    // unknown formats to int/number, matching the gateway.
+    format: z.string(),
     // F10 fix: BLE/vendor devices use `access: []` + a sibling `gatt-access`
     // field. The empty array still satisfies the contract that `access` is
     // present-and-of-the-right-type, just empty.

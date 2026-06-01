@@ -13,12 +13,13 @@ export const DelayCfg = z
   .strict();
 export type DelayCfg = z.infer<typeof DelayCfg>;
 
-// F43 (2026-05-30) — bundle Pr.delay requires
-// `Number.isInteger(timeout) && timeout >= 1` (milliseconds);
-// non-integer returns "Invalid timeout".
+// bundle Pr.delay requires ONLY `Number.isInteger(timeout)` (milliseconds);
+// there is NO `>= 1` / `> 0` guard (unlike statusLast / eventSequence). A live
+// setGraph with `timeout: 0` is accepted, so an earlier `.min(1)` was stricter
+// than the gateway and false-rejected imported/round-tripped rules with timeout 0.
 export const DelayProps = z
   .object({
-    timeout: z.number().int().min(1),
+    timeout: z.number().int(),
   })
   .strict();
 export type DelayProps = z.infer<typeof DelayProps>;

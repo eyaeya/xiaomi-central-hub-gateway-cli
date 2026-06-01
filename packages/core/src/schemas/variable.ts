@@ -19,8 +19,7 @@ export type VarScopeListResponse = z.infer<typeof VarScopeListResponse>;
 // untyped. Tighten to a strict VarEntry that mirrors the UI's filter
 // shape so resource readers get a typed return and ill-formed gateway
 // responses surface as SchemaError instead of silent `unknown` leaks
-// (xgg memory: `feedback-gate-on-agent-funnel-paths` — fail loud on
-// the read path too).
+// (fail loud on the read path too).
 export const VarEntry = z
   .object({
     type: z.enum(['number', 'string']),
@@ -114,8 +113,8 @@ const VarScalar = z
 // `"Invalid id format"`; same constraint applies to scope per the
 // gateway hint phrasing surfaced on the createVar error. Pre-flight
 // rejection avoids the WS round-trip and gives a clearer error before
-// any side-effect runs (matches feedback-gate-on-agent-funnel-paths —
-// validation goes on the agent funnel write path).
+// any side-effect runs (validation belongs on the agent funnel
+// write path).
 //
 // F63h compatibility: ensureScopeBootstrapped uses the ids
 // `xggGlobalInit` / `xggRuleInit` and the scopes `global` / `R<digits>`

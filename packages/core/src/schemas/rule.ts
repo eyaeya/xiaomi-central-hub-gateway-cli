@@ -32,7 +32,13 @@ const UserData = z
     name: z.string(),
     transform: Transform,
     lastUpdateTime: z.number(),
-    version: z.number(),
+    // Optional: the gateway stores & returns rules whose userData omits
+    // `version` (a raw setGraph with a version-less userData is accepted, and
+    // getGraphList then returns it without `version`). A required `version` made
+    // the list response throw a schema error, breaking `rule list` / `rule view`
+    // / `rule delete` for the whole gateway. `rule new` still writes `version: 0`;
+    // this only relaxes parsing.
+    version: z.number().optional(),
     tags: z.array(z.string()).optional(),
   })
   .passthrough();

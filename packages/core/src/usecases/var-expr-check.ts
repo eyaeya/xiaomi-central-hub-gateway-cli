@@ -197,20 +197,21 @@ function checkExpr(input: string): number {
   return result;
 }
 
-// varSetNumber element → template fragment, matching the UI's
-// `el.type===const ? el.value : el.type===var ? "$" : ""` assembly.
+// varSetNumber element → template fragment. Match the gateway's own assembly
+// EXACTLY: `elements.map(e => "const" === e.type ? e.value : "$").join("")` —
+// a `const` contributes its value; EVERY other element (a `var`, an unknown
+// future type, or even a non-object entry) collapses to the `$` placeholder. An
+// earlier else→"" diverged from the gateway for non-const/non-var elements,
+// breaking the parity contract (no stricter / no looser).
 function assembleExprTemplate(elements: unknown[]): string {
   let template = '';
   for (const el of elements) {
-    if (el !== null && typeof el === 'object' && !Array.isArray(el)) {
-      const rec = el as Record<string, unknown>;
-      if (rec.type === 'const') {
-        template += String(rec.value ?? '');
-      } else if (rec.type === 'var') {
-        template += '$';
-      }
-      // any other element type → "" (faithful to the UI's else branch)
-    }
+    const isConst =
+      el !== null &&
+      typeof el === 'object' &&
+      !Array.isArray(el) &&
+      (el as Record<string, unknown>).type === 'const';
+    template += isConst ? String((el as Record<string, unknown>).value ?? '') : '$';
   }
   return template;
 }

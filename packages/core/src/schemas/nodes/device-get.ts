@@ -20,8 +20,8 @@ export type DeviceGetCfg = z.infer<typeof DeviceGetCfg>;
 
 const propertyBase = {
   did: z.string(),
-  siid: z.number(),
-  piid: z.number(),
+  siid: z.number().int(),
+  piid: z.number().int(),
   preload: z.boolean().optional(),
 };
 

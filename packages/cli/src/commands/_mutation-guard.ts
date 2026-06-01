@@ -59,7 +59,7 @@ export function assertAgentModeOrSnapshotsDir(opts: MutationGuardOpts): Resolved
 // B10 / F63e — refresh-UI hint after a successful gateway write.
 //
 // Why: the gateway does NOT fan configChanged from a non-UI session's write to
-// other open WS sessions (memory: feedback-ui-cache-refresh). When the operator
+// other open WS sessions. When the operator
 // runs `xgg variable create` / `rule new` / etc. with a 米家 dev-console tab
 // open in the browser, the tab's in-memory cache stays stale until they F5 —
 // silent footgun, exactly the B10 issue we're fixing.

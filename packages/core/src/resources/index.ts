@@ -22,12 +22,14 @@ export {
   createBackup,
   deleteBackup,
   downloadBackup,
+  extractBackupProgressId,
   generateBackup,
   getBackupConfig,
   getBackupProgress,
   listBackups,
   loadBackup,
   setBackupConfig,
+  waitForBackupProgress,
 } from './backup.js';
 export type {
   BackupConfigResponse,

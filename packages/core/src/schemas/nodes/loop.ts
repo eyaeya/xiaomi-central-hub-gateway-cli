@@ -13,11 +13,12 @@ export const LoopCfg = z
   .strict();
 export type LoopCfg = z.infer<typeof LoopCfg>;
 
-// F43 (2026-05-30) — bundle Pr.loop requires `Number.isInteger(interval)
-// && interval >= 1` (milliseconds).
+// bundle Pr.loop requires ONLY `Number.isInteger(interval)` (milliseconds); there
+// is NO `>= 1` / `> 0` guard. An earlier `.min(1)` was stricter than the gateway
+// and false-rejected imported rules carrying `interval: 0`.
 export const LoopProps = z
   .object({
-    interval: z.number().int().min(1),
+    interval: z.number().int(),
   })
   .strict();
 export type LoopProps = z.infer<typeof LoopProps>;

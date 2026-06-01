@@ -374,7 +374,7 @@ export const ACTION_TYPES = new Set<string>([
 /**
  * Cards that reference a variable by scope+id. After adding one, the hint
  * suggests confirming the referenced variable still resolves
- * (vars can be deleted out-of-band; see feedback-variable-scope-whitelist).
+ * (vars can be deleted out-of-band).
  */
 export const VAR_CARD_TYPES = new Set<string>([
   'varGet',

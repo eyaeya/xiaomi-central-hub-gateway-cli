@@ -29,8 +29,8 @@ const SetVarDtype = z.enum(['number', 'boolean', 'string']);
 const DeviceInputSetVarPropertyProps = z
   .object({
     did: z.string(),
-    siid: z.number(),
-    piid: z.number(),
+    siid: z.number().int(),
+    piid: z.number().int(),
     dtype: SetVarDtype,
     scope: z.string(),
     id: z.string(),
@@ -61,20 +61,28 @@ const DeviceInputSetVarPropertyProps = z
 //     produce a no-op node that the UI can't even re-edit.
 // Net: `arguments` carries at least one capture. Property-mode is the
 // right form for a "device → variable" wire that doesn't need an event.
+// The gateway event-arg check is `if ("scope" in t) { id must be string }`,
+// so a `scope` without an `id` is rejected ("Invalid var id"). The reverse
+// (id without scope) and a bare {piid,dtype} capture are NOT rejected, so we
+// only enforce the scope→id direction (no stricter than the gateway).
 const DeviceInputSetVarArgument = z
   .object({
-    piid: z.number(),
+    piid: z.number().int(),
     dtype: SetVarDtype,
     scope: z.string().optional(),
     id: z.string().optional(),
   })
-  .strict();
+  .strict()
+  .refine((a) => a.scope === undefined || typeof a.id === 'string', {
+    message: 'event arg with a scope must also carry id (gateway: "Invalid var id")',
+    path: ['id'],
+  });
 
 const DeviceInputSetVarEventProps = z
   .object({
     did: z.string(),
-    siid: z.number(),
-    eiid: z.number(),
+    siid: z.number().int(),
+    eiid: z.number().int(),
     arguments: z.array(DeviceInputSetVarArgument).min(1, {
       message:
         'event-mode deviceInputSetVar requires at least one argument capture; UI drops 0-arg events from the spec list (renders as "原已选功能丢失")',
