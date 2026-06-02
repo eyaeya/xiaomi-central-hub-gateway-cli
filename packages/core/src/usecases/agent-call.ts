@@ -35,10 +35,14 @@ export async function agentCall(input: AgentCallInputs): Promise<unknown> {
   const factory = input.ipcClient ?? defaultIpcClient;
   const client = factory(entry.socketPath);
   const timeoutMs = input.timeoutMs ?? 10_000;
+  const kind = input.kind ?? 'read';
   let timerId: ReturnType<typeof setTimeout> | undefined;
   try {
-    const call = client.request(input.method, input.params);
-    const kind = input.kind ?? 'read';
+    // Forward the deadline + kind to the daemon so its router applies the same
+    // timeout (not its 10s default) and classifies a write timeout as
+    // NotConfirmedError. The local timer below is a backstop for a wedged
+    // daemon that never replies; both layers agree on the error class.
+    const call = client.request(input.method, input.params, { timeoutMs, kind });
     const timer = new Promise<never>((_, reject) => {
       timerId = setTimeout(() => {
         const msg = `agent IPC call ${input.method} timed out after ${timeoutMs}ms`;

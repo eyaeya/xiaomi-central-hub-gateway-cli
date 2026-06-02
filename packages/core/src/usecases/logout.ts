@@ -1,20 +1,41 @@
+import { createIpcClient } from '../agent/ipc-client.js';
 import type { StoredSession } from '../schemas/session.js';
 import type { SessionStore } from '../session/index.js';
 import { AuthRequiredError } from '../transport/errors.js';
 
 export type SignalFn = (pid: number, signal: NodeJS.Signals | 0) => boolean;
 
+/** Subset of the `$ping` reply logout needs to confirm daemon identity. */
+export interface LogoutLiveness {
+  /** `agentStartedAt` the live daemon reports (null if it omits it). */
+  agentStartedAt: string | null;
+}
+
+/** Probe the recorded socket for a live daemon. Resolves null when unreachable. */
+export type LogoutProbe = (socketPath: string) => Promise<LogoutLiveness | null>;
+
 export interface LogoutInputs {
   baseUrl: string;
   store: SessionStore;
   /** Test seam: defaults to `process.kill`. Returns `false` on ESRCH. */
   signal?: SignalFn;
+  /** Test seam: defaults to a real `$ping` over the recorded socket. */
+  probe?: LogoutProbe;
+  /**
+   * Probe timeout in ms (default 2000 — a touch more grace than status.ts's
+   * 1000ms because logout *acts* on the result: we'd rather wait a beat than
+   * wrongly decide the daemon is gone and skip the kill). A reachable daemon
+   * answers the local `$ping` in well under a millisecond (the socket connect
+   * itself resolves/rejects immediately — it's a unix socket / named pipe, not
+   * TCP), so this bound only ever bites a wedged daemon.
+   */
+  probeTimeoutMs?: number;
 }
 
 export interface LogoutResult {
   ok: true;
   host: string;
-  /** Whether a live agent was found and signalled at logout time. */
+  /** Whether a live, identity-matched agent was found and signalled at logout. */
   wasRunning: boolean;
 }
 
@@ -22,10 +43,17 @@ export interface LogoutResult {
  * Tear down the per-host agent and remove its session entry.
  *
  * Idempotent: if no session is recorded for `baseUrl`, raises
- * `AuthRequiredError`. If a session exists but the agent process has already
- * exited (ESRCH), the entry is still removed and `wasRunning: false` is
- * returned. We don't wait for the agent to actually exit — the agent's own
- * cleanup will remove the (now-orphaned) socket on its way out.
+ * `AuthRequiredError`.
+ *
+ * We only `SIGTERM` the recorded pid when a live daemon answers `$ping` on the
+ * recorded socket *and* identifies itself as the same instance the session
+ * describes (its `agentStartedAt` matches). A bare pid is not safe to signal:
+ * after a crash or reboot the session file keeps a stale pid that the OS may
+ * have recycled for an unrelated (same-user) process — killing it would be
+ * collateral damage. When the probe can't confirm our daemon, we skip the
+ * signal and just drop the (now-orphaned) session entry; any genuinely-alive
+ * daemon we couldn't reach will still self-exit on its idle timeout, and the
+ * socket is reclaimed by the next `xgg login` (deterministic per-host path).
  */
 export async function logout(input: LogoutInputs): Promise<LogoutResult> {
   let entry: StoredSession;
@@ -37,8 +65,14 @@ export async function logout(input: LogoutInputs): Promise<LogoutResult> {
     }
     throw e;
   }
+
+  const probe = input.probe ?? defaultProbe(input.probeTimeoutMs ?? 2000);
+  const live = await probe(entry.socketPath);
+  const isOurDaemon = live !== null && live.agentStartedAt === entry.agentStartedAt;
+
   const sig = input.signal ?? defaultSignal;
-  const wasRunning = sig(entry.pid, 'SIGTERM');
+  const wasRunning = isOurDaemon ? sig(entry.pid, 'SIGTERM') : false;
+
   await input.store.delete(input.baseUrl);
   return { ok: true, host: input.baseUrl, wasRunning };
 }
@@ -53,4 +87,24 @@ function defaultSignal(pid: number, signal: NodeJS.Signals | 0): boolean {
     // EPERM (we don't own the pid) or unknown — re-throw so the CLI surfaces it.
     throw e;
   }
+}
+
+function defaultProbe(timeoutMs: number): LogoutProbe {
+  return async (socketPath) => {
+    const client = createIpcClient({ path: socketPath });
+    try {
+      const ping = client.request('$ping', null);
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('probe timeout')), timeoutMs),
+      );
+      const payload = (await Promise.race([ping, timeout])) as {
+        agentStartedAt?: string | null;
+      };
+      return { agentStartedAt: payload.agentStartedAt ?? null };
+    } catch {
+      return null;
+    } finally {
+      client.close();
+    }
+  };
 }

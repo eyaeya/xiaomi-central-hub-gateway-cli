@@ -39,7 +39,7 @@ export function agentCommand(): Command {
       const mainOpts: RunAgentMainOptions = {
         host,
         passcode,
-        agentVersion: '0.1.3',
+        agentVersion: '0.1.4',
       };
       if (opts.sessionFile) mainOpts.sessionFile = opts.sessionFile;
       if (idleMs !== undefined) mainOpts.idleMs = idleMs;

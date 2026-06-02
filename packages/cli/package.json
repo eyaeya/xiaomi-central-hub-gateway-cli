@@ -1,6 +1,6 @@
 {
   "name": "@eyaeya/xgg-cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Command-line tool for operating Xiaomi Gateway Geek Edition automations",
   "license": "GPL-3.0-or-later",
   "type": "module",

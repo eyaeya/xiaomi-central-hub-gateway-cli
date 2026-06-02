@@ -17,6 +17,10 @@ import {
 export interface IpcRequest {
   method: string;
   params: unknown;
+  /** Per-call deadline (ms) the client wants the daemon's router to honour. */
+  timeoutMs?: number;
+  /** Whether the call mutates gateway state — drives the timeout error class. */
+  kind?: 'read' | 'write';
 }
 
 export type IpcHandler = (req: IpcRequest) => Promise<unknown>;
@@ -98,9 +102,20 @@ export async function createIpcServer(opts: IpcServerOptions): Promise<IpcServer
 async function handleLine(line: string, socket: Socket, handler: IpcHandler): Promise<void> {
   let id: number | undefined;
   try {
-    const parsed = JSON.parse(line) as { id: number; method: string; params: unknown };
+    const parsed = JSON.parse(line) as {
+      id: number;
+      method: string;
+      params: unknown;
+      timeoutMs?: number;
+      kind?: 'read' | 'write';
+    };
     id = parsed.id;
-    const result = await handler({ method: parsed.method, params: parsed.params });
+    const result = await handler({
+      method: parsed.method,
+      params: parsed.params,
+      ...(parsed.timeoutMs !== undefined && { timeoutMs: parsed.timeoutMs }),
+      ...(parsed.kind !== undefined && { kind: parsed.kind }),
+    });
     writeLine(socket, { id, result });
   } catch (e) {
     const env = errorEnvelope(e);

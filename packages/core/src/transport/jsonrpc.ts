@@ -33,7 +33,10 @@ interface JsonRpcResponse {
  *
  * Failure modes mapped to typed errors:
  *   - server `error` object → `GatewayError` (carries `gatewayCode` + `data`)
- *   - per-request deadline elapsed → `NetworkError("...timed out...")`
+ *   - per-request deadline elapsed → `NetworkError("...timed out...")`, or the
+ *     error returned by the caller's `onTimeout(timeoutMs)` factory (the daemon
+ *     uses this to map a write timeout to `NotConfirmedError` — the router stays
+ *     transport-generic and never hard-codes write/read semantics)
  *   - transport close / decrypt failure → all pending rejected, loop exits
  */
 export class JsonRpcRouter {
@@ -81,14 +84,22 @@ export class JsonRpcRouter {
     this.pending.clear();
   }
 
-  request(method: string, params: unknown, opts?: { timeoutMs?: number }): Promise<unknown> {
+  request(
+    method: string,
+    params: unknown,
+    opts?: { timeoutMs?: number; onTimeout?: (timeoutMs: number) => Error },
+  ): Promise<unknown> {
     if (!this.running) throw new Error('router not started');
     const id = this.nextId++;
     const timeoutMs = opts?.timeoutMs ?? this.defaultTimeoutMs;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new NetworkError(`request ${id} (${method}) timeout after ${timeoutMs}ms`));
+        reject(
+          opts?.onTimeout
+            ? opts.onTimeout(timeoutMs)
+            : new NetworkError(`request ${id} (${method}) timeout after ${timeoutMs}ms`),
+        );
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       try {

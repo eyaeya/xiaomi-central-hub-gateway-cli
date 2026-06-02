@@ -1,4 +1,10 @@
-import { ConfigError, addNode, dumpBeforeWrite, getDevice } from '@eyaeya/xgg-core';
+import {
+  ConfigError,
+  addNode,
+  dumpBeforeWrite,
+  getDevice,
+  nodeSchemaForType,
+} from '@eyaeya/xgg-core';
 import type { AddNodeShortcut } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
@@ -531,8 +537,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
           // only, which surfaces as "Invalid node parameter: Invalid props"
           // because non-shortcut node types require {cfg, inputs, outputs, props}.
           // Accept either form: full 4-tuple (preferred) or cfg-only (legacy
-          // shape; will fail at gateway with the same error message — but at
-          // least surfaces "Invalid props" as a gateway-side hint).
+          // shape).
           const obj = parsed as Record<string, unknown>;
           const looksLikeFullNode =
             'cfg' in obj || 'inputs' in obj || 'outputs' in obj || 'props' in obj;
@@ -544,6 +549,26 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
                 type: opts.type,
               }
             : { id: idFallback, type: opts.type, cfg: obj };
+          // For the 25 modeled node types, validate the hand-crafted node
+          // against that type's strict schema *before* the gateway round-trip.
+          // NodeUnion.safeParse can't do this — UnknownNode sits last and matches
+          // any {type, id}, so a deviceInput with malformed props would fall
+          // through and only fail at the gateway with a cryptic "Invalid props".
+          // An unmodeled --type (or empty, which becomes a SchemaError inside
+          // addNode) returns undefined here and falls through unchanged. Gated on
+          // --validate so --no-validate skips it like the gateway-side check.
+          const specificSchema = opts.validate !== false ? nodeSchemaForType(opts.type) : undefined;
+          if (specificSchema) {
+            const result = specificSchema.safeParse(node);
+            if (!result.success) {
+              const issue = result.error.issues[0];
+              const where = issue && issue.path.length > 0 ? issue.path.join('.') : '<root>';
+              const why = issue?.message ?? 'does not match the schema';
+              throw new ConfigError(
+                `--cfg shape invalid at ${where}: ${why} (type "${opts.type}"). Non-shortcut nodes need the full {cfg, inputs, outputs, props} tuple; see \`xgg rule node add --help\`.`,
+              );
+            }
+          }
           addNodeInput = {
             ruleId: opts.ruleId,
             node,

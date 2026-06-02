@@ -7,8 +7,16 @@ export interface IpcClientOptions {
   path: string;
 }
 
+/** Per-call hints forwarded to the daemon's router over the IPC frame. */
+export interface IpcCallOptions {
+  /** Deadline (ms) the daemon's router should apply to this gateway call. */
+  timeoutMs?: number;
+  /** Whether the call mutates gateway state — drives the daemon's timeout error class. */
+  kind?: 'read' | 'write';
+}
+
 export interface IpcClient {
-  request: (method: string, params: unknown) => Promise<unknown>;
+  request: (method: string, params: unknown, opts?: IpcCallOptions) => Promise<unknown>;
   close: () => void;
 }
 
@@ -90,13 +98,16 @@ export function createIpcClient(opts: IpcClientOptions): IpcClient {
   };
 
   return {
-    request: async (method, params) => {
+    request: async (method, params, opts) => {
       if (closed) throw new NetworkError('agent IPC client closed');
       const s = await connect();
       const id = nextId++;
+      const frame: Record<string, unknown> = { id, method, params };
+      if (opts?.timeoutMs !== undefined) frame.timeoutMs = opts.timeoutMs;
+      if (opts?.kind !== undefined) frame.kind = opts.kind;
       return new Promise<unknown>((resolve, reject) => {
         pending.set(id, { resolve, reject });
-        s.write(`${JSON.stringify({ id, method, params })}\n`, (e) => {
+        s.write(`${JSON.stringify(frame)}\n`, (e) => {
           if (e) {
             pending.delete(id);
             reject(new NetworkError(`agent IPC write failed: ${e.message}`));

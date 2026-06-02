@@ -1,3 +1,4 @@
+import { NetworkError, NotConfirmedError } from '../transport/errors.js';
 import type { HandshakeResult } from '../transport/handshake.js';
 import type { BinaryTransport } from '../transport/index.js';
 import { JsonRpcRouter, SessionChannel } from '../transport/index.js';
@@ -81,7 +82,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
 
   server = await createIpcServer({
     path: opts.socketPath,
-    handler: async ({ method, params }) => {
+    handler: async ({ method, params, timeoutMs, kind }) => {
       const isMeta = method.startsWith('$');
       // Only renew the idle window on real gateway traffic. Cheap meta probes
       // (status, health checks) must not keep the daemon alive indefinitely.
@@ -97,7 +98,21 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
           lastActivityAt,
         };
       }
-      return router.request(method, params);
+      // Forward to the gateway honouring the caller's deadline (so `--timeout`
+      // isn't silently clamped to the router default) and classifying a timeout
+      // by call kind: a write that times out *after* being sent is "not
+      // confirmed" (state may or may not have applied), not a plain network
+      // failure. That distinction survives the IPC boundary via reviveError.
+      return router.request(method, params, {
+        ...(timeoutMs !== undefined && { timeoutMs }),
+        onTimeout: (ms) =>
+          kind === 'write'
+            ? new NotConfirmedError(
+                `gateway call ${method} was not confirmed within ${ms}ms (the write may or may not have applied)`,
+                { method },
+              )
+            : new NetworkError(`gateway call ${method} timed out after ${ms}ms`),
+      });
     },
   });
 

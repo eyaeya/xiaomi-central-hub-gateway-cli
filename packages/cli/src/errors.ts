@@ -181,6 +181,24 @@ const HINTS: HintRule[] = [
     command: 'rule.node.remove',
     hint: 'When XGG_AGENT_MODE=1 every mutation must be checkpointed: pass --snapshots-dir <dir> (or set XGG_SNAPSHOTS_DIR).',
   },
+  // A malformed --from/--to now raises ConfigError (exit 5) instead of
+  // GatewayError (exit 1). messageMatches keeps the NID:pin guidance attached to
+  // that specific failure so it wins over the generic XGG_AGENT_MODE snapshot
+  // hint below (which is irrelevant to a format typo). The GATEWAY-class
+  // rule.edge.add/remove hints still cover real gateway-side failures (e.g.
+  // "outputs[pin] already exists").
+  {
+    code: 'CONFIG',
+    command: 'rule.edge.add',
+    messageMatches: 'NID:pin format',
+    hint: '--from/--to must be NID:pin (e.g. n1:output). Both halves are required and non-empty.',
+  },
+  {
+    code: 'CONFIG',
+    command: 'rule.edge.remove',
+    messageMatches: 'NID:pin format',
+    hint: '--from/--to must be NID:pin (e.g. n1:output). Both halves are required and non-empty.',
+  },
   {
     code: 'CONFIG',
     command: 'rule.edge.add',

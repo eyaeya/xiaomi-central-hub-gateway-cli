@@ -15,7 +15,7 @@ export function buildProgram(): Command {
   program
     .name('xgg')
     .description('Xiaomi Gateway Geek Edition CLI for AI Coding')
-    .version('0.1.3')
+    .version('0.1.4')
     .exitOverride();
 
   program.addCommand(apiCommand());
