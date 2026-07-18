@@ -15,6 +15,7 @@ import {
   printNextStepHintLine,
   withNextSteps,
 } from '../../agent-hints.js';
+import { parseJsonInput } from '../../local-input.js';
 import { emit } from '../../output.js';
 import {
   addRefreshHintFlag,
@@ -56,7 +57,7 @@ async function warnIfDeviceInputNoPush(
 }
 
 function parseParamsJson(raw: string): Record<string, unknown> {
-  const parsed = JSON.parse(raw) as unknown;
+  const parsed = parseJsonInput(raw, '--params');
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new ConfigError('--params must be a JSON object');
   }
@@ -353,6 +354,9 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
     )
     .action(
       wrap('rule.node.add', async (opts: NodeAddOpts) => {
+        const parsedParams = opts.params !== undefined ? parseParamsJson(opts.params) : undefined;
+        const parsedCfg =
+          opts.cfg !== undefined ? parseJsonInput<unknown>(opts.cfg, '--cfg') : undefined;
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
@@ -499,7 +503,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             ...(opts.op !== undefined && {
               op: opts.op as 'gt' | 'lt' | 'eq' | 'ne' | 'gte' | 'lte' | 'between',
             }),
-            ...(opts.params !== undefined && { params: parseParamsJson(opts.params) }),
+            ...(parsedParams !== undefined && { params: parsedParams }),
             ...(opts.value !== undefined && { value: opts.value }),
             ...(opts.forceOutOfRange === true && { forceOutOfRange: true }),
             ...(opts.varScope !== undefined && { varScope: opts.varScope }),
@@ -513,7 +517,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
           };
         } else {
           // Legacy --cfg path
-          if (!opts.cfg) {
+          if (parsedCfg === undefined) {
             throw new ConfigError(
               'Either a non-device --type, --device-did (device shortcut), or --cfg (legacy) is required',
             );
@@ -532,7 +536,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
               '--event-arg-var is mutually exclusive with --cfg. Either drop --cfg and use the device shortcut path, or hand-craft the arguments[] elements inside --cfg.',
             );
           }
-          const parsed = JSON.parse(opts.cfg);
+          const parsed = parsedCfg;
           if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
             throw new ConfigError('--cfg must be a JSON object');
           }

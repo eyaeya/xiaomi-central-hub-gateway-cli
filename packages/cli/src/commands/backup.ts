@@ -17,6 +17,7 @@ import {
 } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
+import { parsePositiveTimerMs } from '../local-input.js';
 import { type TableColumn, emit, emitList } from '../output.js';
 import { type ResolvedMutationGuard, assertAgentModeOrSnapshotsDir } from './_mutation-guard.js';
 
@@ -69,13 +70,12 @@ interface ParsedWaitOptions {
 
 type BackupWaitOperation = 'backup.create' | 'backup.download' | 'backup.load';
 
-const MAX_TIMER_MS = 2_147_483_647;
-
 function makeDeps(opts: BackupOpts) {
   const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
   if (!baseUrl) throw new ConfigError('missing --base-url or XGG_BASE_URL');
+  const timeoutMs = parsePositiveTimerMs(opts.timeout, '--timeout');
   const store = createStore(opts.sessionFile ? { sessionFile: opts.sessionFile } : {});
-  return { baseUrl, store, timeoutMs: Number(opts.timeout) };
+  return { baseUrl, store, timeoutMs };
 }
 
 // F26: gateway currently exposes a single vocab ("fds"); keep --from optional
@@ -152,21 +152,6 @@ function parseOptionalNumber(raw: string | undefined, flag: string): number | un
   if (raw === undefined) return undefined;
   const value = Number(raw);
   if (!Number.isFinite(value)) throw new ConfigError(`${flag} must be a number`);
-  return value;
-}
-
-function parsePositiveTimerMs(raw: string, flag: string): number {
-  if (!/^[1-9]\d*$/.test(raw)) {
-    throw new ConfigError(
-      `${flag} must be a positive decimal integer no greater than ${MAX_TIMER_MS}`,
-    );
-  }
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value > MAX_TIMER_MS) {
-    throw new ConfigError(
-      `${flag} must be a positive decimal integer no greater than ${MAX_TIMER_MS}`,
-    );
-  }
   return value;
 }
 

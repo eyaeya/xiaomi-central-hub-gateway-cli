@@ -1,6 +1,7 @@
 import { ConfigError, createStore, dumpAll } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
+import { parsePositiveTimerMs } from '../local-input.js';
 import { emit } from '../output.js';
 
 interface DumpOpts {
@@ -22,8 +23,9 @@ export function dumpCommand(): Command {
       wrap('dump', async (opts: DumpOpts) => {
         const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
         if (!baseUrl) throw new ConfigError('missing --base-url or XGG_BASE_URL');
+        const timeoutMs = parsePositiveTimerMs(opts.timeout, '--timeout');
         const store = createStore(opts.sessionFile ? { sessionFile: opts.sessionFile } : {});
-        const result = await dumpAll({ baseUrl, store, timeoutMs: Number(opts.timeout) });
+        const result = await dumpAll({ baseUrl, store, timeoutMs });
         const partial = result.errors.length > 0;
         emit({ ok: !partial, partial, ...result }, { pretty: opts.pretty === true });
         if (partial) process.exitCode = 1;

@@ -6,6 +6,7 @@ import {
   runAgentMain,
 } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
+import { parsePositiveTimerMs } from '../local-input.js';
 
 interface AgentServeOpts {
   host?: string;
@@ -40,12 +41,10 @@ export function agentCommand(deps: AgentCommandDeps = {}): Command {
     .action(async (opts: AgentServeOpts) => {
       const host = opts.host;
       if (!host) throw new ConfigError('agent serve: missing --host');
+      const idleMs =
+        opts.idleMs !== undefined ? parsePositiveTimerMs(opts.idleMs, '--idle-ms') : undefined;
       // Consume and close the one-shot pipe before any gateway connection.
       let passcode = await readOneShotLoginCode(deps.input ?? process.stdin);
-      const idleMs = opts.idleMs ? Number(opts.idleMs) : undefined;
-      if (idleMs !== undefined && (!Number.isFinite(idleMs) || idleMs <= 0)) {
-        throw new ConfigError('agent serve: --idle-ms must be a positive number');
-      }
       const mainOpts: RunAgentMainOptions = {
         host,
         passcode,

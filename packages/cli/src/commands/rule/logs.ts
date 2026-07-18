@@ -16,6 +16,7 @@ import {
   printNextStepHintLine,
   withNextSteps,
 } from '../../agent-hints.js';
+import { parsePositiveTimerMs } from '../../local-input.js';
 import { emit } from '../../output.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -100,7 +101,7 @@ is more useful for debugging a rule; expect richer/looser output than the web lo
 
         const intervalMs =
           opts.intervalMs !== undefined
-            ? parseIntOrThrow(opts.intervalMs, '--interval-ms')
+            ? parsePositiveTimerMs(opts.intervalMs, '--interval-ms')
             : DEFAULT_FOLLOW_INTERVAL_MS;
         await followLoop(fetchDeps, filterOpts, opts, intervalMs);
       }),

@@ -16,6 +16,7 @@ import {
   printNextStepHintLine,
   withNextSteps,
 } from '../agent-hints.js';
+import { parsePositiveTimerMs } from '../local-input.js';
 import { type TableColumn, emit, emitList } from '../output.js';
 
 interface DeviceOpts {
@@ -33,8 +34,9 @@ interface DeviceListOpts extends DeviceOpts {
 function makeDeps(opts: DeviceOpts) {
   const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
   if (!baseUrl) throw new ConfigError('missing --base-url or XGG_BASE_URL');
+  const timeoutMs = parsePositiveTimerMs(opts.timeout, '--timeout');
   const store = createStore(opts.sessionFile ? { sessionFile: opts.sessionFile } : {});
-  return { baseUrl, store, timeoutMs: Number(opts.timeout) };
+  return { baseUrl, store, timeoutMs };
 }
 
 interface DeviceFields {
@@ -181,7 +183,7 @@ export function deviceCommand(): Command {
       const device = await getDevice(did, deps);
       // 2. Fetch MIoT spec (public HTTP, no daemon)
       const spec = await getDeviceSpec(device.urn, {
-        timeoutMs: Number(opts.timeout ?? '5000'),
+        timeoutMs: deps.timeoutMs,
       });
       const hints = buildNextSteps('device.spec', { spec }, opts);
       if (!opts.pretty) {

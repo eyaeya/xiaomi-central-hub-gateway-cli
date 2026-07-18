@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import {
   type AvailableVariable,
   ConfigError,
@@ -17,6 +16,7 @@ import {
   printNextStepHintLine,
   withNextSteps,
 } from '../../agent-hints.js';
+import { parseJsonInput, parsePositiveTimerMs, readJsonInput } from '../../local-input.js';
 import { type TableColumn, emit, emitList } from '../../output.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -56,14 +56,10 @@ interface GraphForValidator {
 }
 
 function parseGraph(raw: string, source: string): GraphForValidator {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    throw new ConfigError(
-      `${source}: failed to parse JSON — ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
+  return parseGraphValue(parseJsonInput(raw, source), source);
+}
+
+function parseGraphValue(parsed: unknown, source: string): GraphForValidator {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new ConfigError(`${source}: expected a JSON object with at least { id, nodes }`);
   }
@@ -124,12 +120,15 @@ Local input contract:
         if (inputCount > 1) {
           throw new ConfigError('--body, --rule-id, and --stdin are mutually exclusive');
         }
+        // Validate every declared timer even when the selected input mode is
+        // otherwise fully offline. This keeps the CLI contract independent of
+        // whether --spec-aware or gateway-backed validation is enabled.
+        const timeoutMs = parsePositiveTimerMs(opts.timeout, '--timeout');
 
         let graph: GraphForValidator;
         let listAvailVars: ((ruleId: string) => Promise<AvailableVariable[]>) | undefined;
         if (opts.body !== undefined) {
-          const raw = await readFile(opts.body, 'utf8');
-          graph = parseGraph(raw, opts.body);
+          graph = parseGraphValue(await readJsonInput(opts.body, '--body'), opts.body);
         } else if (opts.stdin === true) {
           const raw = await readStdin();
           graph = parseGraph(raw, '<stdin>');
@@ -144,7 +143,7 @@ Local input contract:
           graph,
           ...(listAvailVars !== undefined && { listAvailVars }),
           ...(opts.specAware === true && {
-            getDeviceSpec: (urn: string) => getDeviceSpec(urn, { timeoutMs: Number(opts.timeout) }),
+            getDeviceSpec: (urn: string) => getDeviceSpec(urn, { timeoutMs }),
           }),
         });
         const payload = {

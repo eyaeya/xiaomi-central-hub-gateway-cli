@@ -29,6 +29,12 @@ export function buildProgram(): Command {
   program.addCommand(variableCommand());
   program.addCommand(agentCommand(), { hidden: true });
 
+  // Commander normally writes a human-formatted error before exitOverride()
+  // throws. The executable converts that exception to the same single-line
+  // CONFIG JSON envelope as action-level input failures, so suppress only the
+  // pre-rendered error channel. Successful --help/--version still use stdout.
+  configureMachineReadableErrors(program);
+
   program.addHelpText(
     'after',
     `
@@ -47,4 +53,10 @@ Run each subcommand with --help for command-specific options.
   );
 
   return program;
+}
+
+function configureMachineReadableErrors(command: Command): void {
+  command.exitOverride();
+  command.configureOutput({ outputError: () => {} });
+  for (const child of command.commands) configureMachineReadableErrors(child);
 }

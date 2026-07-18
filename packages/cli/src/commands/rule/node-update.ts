@@ -1,6 +1,7 @@
-import { dumpBeforeWrite, updateNode } from '@eyaeya/xgg-core';
+import { ConfigError, dumpBeforeWrite, updateNode } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
+import { parseJsonInput } from '../../local-input.js';
 import { emit } from '../../output.js';
 import {
   addRefreshHintFlag,
@@ -43,10 +44,14 @@ export function attachNodeUpdate(cmd: Command): void {
     )
     .action(
       wrap('rule.node.update', async (opts: NodeUpdateOpts) => {
+        const parsedPatch = parseJsonInput(opts.patch, '--patch');
+        if (parsedPatch === null || typeof parsedPatch !== 'object' || Array.isArray(parsedPatch)) {
+          throw new ConfigError('--patch must be a JSON object');
+        }
+        const patch = parsedPatch as Record<string, unknown>;
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
-        const patch = JSON.parse(opts.patch);
 
         const snapshotPath = !guard.snapshotEnabled
           ? null
