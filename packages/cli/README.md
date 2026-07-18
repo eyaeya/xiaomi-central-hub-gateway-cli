@@ -60,6 +60,8 @@ xgg rule enable <rule-id>
 xgg rule logs <rule-id> --tail 20
 ```
 
+本地候选图可直接用 `xgg rule validate --body candidate.json` 或管道到 `--stdin`。这两种模式默认不读取 session、不连接 daemon/网关，也不访问公网；只有显式添加 `--spec-aware` 才会查询公网 MIoT spec registry。`--rule-id` 会读取已登录网关的规则和变量，但同样只在添加 `--spec-aware` 后查询公网 spec。
+
 默认 stdout 输出 JSON，适合脚本和 Agent 解析；加 `--pretty` 输出人读表格。
 
 ## 注意

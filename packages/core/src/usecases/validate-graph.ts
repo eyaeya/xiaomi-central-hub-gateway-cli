@@ -2,8 +2,7 @@ import { MiotSpecFetchError } from '../http-client.js';
 import type { DeviceSpec, MiotProperty } from '../schemas/device-spec.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
 import type { AvailableVariable } from '../schemas/variable.js';
-import { ConfigError, NotFoundError } from '../transport/errors.js';
-import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
+import { ConfigError, NotFoundError, XggError } from '../transport/errors.js';
 import { duplicateNodeIdIssues, findDuplicateNodeIds } from './graph-invariants.js';
 import type { LintIssue } from './lint-graph.js';
 import { checkNodeStrict } from './typed-schemas.js';
@@ -15,6 +14,11 @@ export interface ValidateGraphInput {
     cfg?: { id?: string; enable?: boolean };
     nodes?: unknown[];
   };
+  /**
+   * Opt in to MIoT spec-aware checks. When omitted, validation is deterministic
+   * and performs no external spec I/O. Callers that provide this callback own
+   * its network/cache/fixture policy explicitly.
+   */
   getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
   // F23 (2026-05-30): the official save() function fetches `listAvailVars(graphId)`
   // and verifies every variable reference points to a known var (else
@@ -647,13 +651,32 @@ async function checkAgainstSpec(
   try {
     spec = await specForUrn(node.cfg.urn);
   } catch (e) {
-    // F39 (2026-05-30) — narrow the catch. Mirrors the
-    // listAvailVarsForRule tightening in bd8d1f4: only the canonical
-    // "URN missing from spec service" (MiotSpecFetchError 404) is
-    // soft-skipped; transport errors / 5xx / schema parse failures
-    // must surface so the agent doesn't silently lose dtype coverage.
+    const specPath = `nodes[${idx}].cfg.urn`;
+    // A missing registry entry means there is no external evidence to compare
+    // against. Keep the structural result usable, but make the skipped coverage
+    // visible instead of silently passing it.
     if (e instanceof MiotSpecFetchError && e.status === 404) {
-      return issues;
+      return [
+        {
+          severity: 'warn',
+          path: specPath,
+          message: `MIoT spec not found (HTTP 404) for ${node.cfg.urn}; spec-aware checks skipped`,
+        },
+      ];
+    }
+    // Registry transport/HTTP failures and malformed spec content are external
+    // validation failures, not graph-shape failures. Return them as their own
+    // issue so callers receive every local schema/expression diagnostic too.
+    // Keep programmer errors from arbitrary injected callbacks throwable.
+    if (e instanceof XggError && (e.code === 'NETWORK' || e.code === 'SCHEMA')) {
+      const status =
+        e instanceof MiotSpecFetchError && e.status !== undefined ? ` HTTP ${e.status}` : '';
+      return [
+        issue(
+          specPath,
+          `MIoT spec-aware validation failed [${e.code}${status}] for ${node.cfg.urn}: ${e.message}`,
+        ),
+      ];
     }
     throw e;
   }
@@ -764,16 +787,19 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
   if (!Array.isArray(nodes)) return [issue('nodes', '卡片配置有误: Invalid nodes')];
   issues.push(...duplicateNodeIdIssues(findDuplicateNodeIds(nodes)));
 
-  const specCache = new Map<string, Promise<DeviceSpec>>();
-  const getDeviceSpec = input.getDeviceSpec ?? fetchDeviceSpec;
-  const specForUrn = (urn: string) => {
-    let cached = specCache.get(urn);
-    if (cached === undefined) {
-      cached = getDeviceSpec(urn);
-      specCache.set(urn, cached);
-    }
-    return cached;
-  };
+  let specForUrn: ((urn: string) => Promise<DeviceSpec>) | undefined;
+  const getDeviceSpec = input.getDeviceSpec;
+  if (getDeviceSpec !== undefined) {
+    const specCache = new Map<string, Promise<DeviceSpec>>();
+    specForUrn = (urn: string) => {
+      let cached = specCache.get(urn);
+      if (cached === undefined) {
+        cached = getDeviceSpec(urn);
+        specCache.set(urn, cached);
+      }
+      return cached;
+    };
+  }
 
   // F23 — fetch the available-vars list once for the whole graph if a
   // callback is provided. Keep the two legal scopes separate so global.foo
@@ -817,20 +843,24 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
     const node = parsed.data as Record<string, unknown>;
     // Precise per-card checks first — they produce the exact UI messages
     // (请选择对比方式 / 未选择变量 / 输入不能为空 …).
-    const perCard: LintIssue[] = [];
-    perCard.push(...checkKnownWebShape(node, idx));
-    perCard.push(...(await checkAgainstSpec(node, idx, specForUrn)));
+    const localPerCard: LintIssue[] = [];
+    localPerCard.push(...checkKnownWebShape(node, idx));
     if (availableByScope !== null) {
-      perCard.push(...checkVarRefs(node, idx, input.graph.id, availableByScope));
+      localPerCard.push(...checkVarRefs(node, idx, input.graph.id, availableByScope));
     }
-    issues.push(...perCard);
+    issues.push(...localPerCard);
     // F24 KEYSTONE backstop: only when the precise checks found nothing, run
     // the strict per-type schema to catch the structural fall-throughs they
     // don't cover (missing pins, wiped props, etc.). Avoids shadowing the
     // nicer per-card messages while still rejecting every UnknownNode
     // fall-through for a modeled type.
-    if (perCard.length === 0) {
+    // Keep external spec diagnostics out of this decision: a timeout/5xx must
+    // never suppress local strict-schema coverage for the same node.
+    if (localPerCard.length === 0) {
       issues.push(...checkStrictSchema(node, idx));
+    }
+    if (specForUrn !== undefined) {
+      issues.push(...(await checkAgainstSpec(node, idx, specForUrn)));
     }
   }
 

@@ -552,7 +552,7 @@ xgg rule logs <rid> --tail 20
 
 ## 附录 A：整图 JSON 与逐类节点结构（冷启动手写参考）
 
-> 给手写 JSON 的人用——空网关、没有现成规则可抄，或要一次原子推送整张图时。本附录所有结构均经离线 `xgg rule validate --body` 实测：全 25 类节点 + 整图信封零错零警。（`rule validate --body` 不连网关也能跑卡片 schema 校验；`rule lint` 的边拓扑强校验**没有** `--body` 离线入口，会在 `rule set` / `rule enable` 写入时自动叠加；而**可达性（never-fires sink）校验只在 `rule enable` 写时跑、`rule set` 不跑**，离线想看就 `rule lint --strict`。）**首选仍是 shortcut（第五、十节）**；只有 shortcut 覆盖不到时才下沉到这里。
+> 给手写 JSON 的人用——空网关、没有现成规则可抄，或要一次原子推送整张图时。本附录所有结构均经离线 `xgg rule validate --body` 实测：全 25 类节点 + 整图信封零错零警。（`rule validate --body` / `--stdin` 默认不读 session、不连 daemon/网关、也不访问公网，能直接跑卡片 schema 校验；只有显式加 `--spec-aware` 才查询公网 MIoT spec。`rule lint` 的边拓扑强校验**没有** `--body` 离线入口，会在 `rule set` / `rule enable` 写入时自动叠加；而**可达性（never-fires sink）校验只在 `rule enable` 写时跑、`rule set` 不跑**，离线想看就 `rule lint --strict`。）**首选仍是 shortcut（第五、十节）**；只有 shortcut 覆盖不到时才下沉到这里。
 
 ### A.1 节点四段通用结构
 
