@@ -4,6 +4,16 @@ export { dumpAll } from './dump-all.js';
 export type { DumpAllResult } from './dump-all.js';
 export { dumpBeforeWrite } from './dump-before-write.js';
 export type { DumpBeforeWriteInputs } from './dump-before-write.js';
+export {
+  ROLLBACK_SNAPSHOT_VERSION,
+  collectRollbackSnapshot,
+} from './rollback-snapshot.js';
+export type {
+  CollectRollbackSnapshotOptions,
+  RollbackBackupContext,
+  RollbackBackupState,
+  RollbackSnapshot,
+} from './rollback-snapshot.js';
 export { harvestBaseline } from './harvest-baseline.js';
 export type { CodexProduct, HarvestOpts, HarvestResult } from './harvest-baseline.js';
 export { lintGraph } from './lint-graph.js';

@@ -203,8 +203,9 @@ function backupRef(opts: BackupTargetOpts): BackupItem {
 }
 
 async function snapshotBeforeBackupWrite(
-  opts: { snapshot?: boolean; snapshotsDir?: string },
+  opts: { snapshot?: boolean; snapshotsDir?: string; from: string },
   deps: ReturnType<typeof makeDeps>,
+  target: BackupItem,
 ): Promise<string | null> {
   const guard = assertAgentModeOrSnapshotsDir(opts);
   if (!guard.snapshotEnabled) return null;
@@ -213,6 +214,7 @@ async function snapshotBeforeBackupWrite(
     store: deps.store,
     ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
     ...(guard.snapshotsDir !== undefined && { snapshotsDir: guard.snapshotsDir }),
+    backup: { from: opts.from, target },
   });
 }
 
@@ -342,8 +344,9 @@ export function backupCommand(): Command {
     wrap('backup.load', async (opts: SnapshotOpts) => {
       const waitOpts = parseWaitOptions(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(opts, deps);
-      const result = await loadBackup({ from: opts.from, backup: backupRef(opts) }, deps);
+      const target = backupRef(opts);
+      const snapshot = await snapshotBeforeBackupWrite(opts, deps, target);
+      const result = await loadBackup({ from: opts.from, backup: target }, deps);
       const progress = await maybeWaitForProgress(opts.from, 'backup.load', waitOpts, result, deps);
       emit(
         { ok: true, snapshot, result, ...(progress && { progress }) },
@@ -365,8 +368,9 @@ export function backupCommand(): Command {
   ).action(
     wrap('backup.delete', async (opts: SnapshotOpts) => {
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(opts, deps);
-      const result = await deleteBackup({ from: opts.from, backup: backupRef(opts) }, deps);
+      const target = backupRef(opts);
+      const snapshot = await snapshotBeforeBackupWrite(opts, deps, target);
+      const result = await deleteBackup({ from: opts.from, backup: target }, deps);
       emit({ ok: true, snapshot, result }, { pretty: opts.pretty === true });
     }),
   );
