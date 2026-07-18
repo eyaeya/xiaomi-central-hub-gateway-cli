@@ -24,6 +24,11 @@ export type { CodexProduct, HarvestOpts, HarvestResult } from './harvest-baselin
 export { lintGraph } from './lint-graph.js';
 export type { LintGraphInput, LintIssue } from './lint-graph.js';
 export { checkReachability } from './reachability.js';
+export {
+  INDEPENDENT_EVENT_SOURCE_TYPES,
+  inputPropagatesEventReachability,
+  isIndependentEventSourceType,
+} from './pin-colors.js';
 export { validateGraph, validateGraphOrThrow } from './validate-graph.js';
 export type { ValidateGraphInput } from './validate-graph.js';
 export {

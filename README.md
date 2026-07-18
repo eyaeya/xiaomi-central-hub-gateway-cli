@@ -203,8 +203,9 @@ xgg rule logs <rule-id> --tail 20
 
 - 先跑 `xgg device spec <did>`，再选择属性、动作或事件，不要凭设备名猜字段。
 - 连线完成后跑 `xgg rule layout <rule-id>`，让网页画布中的卡片按数据流排布。
-- 启用前跑 `xgg rule validate --rule-id <rule-id>`；启用后用 `xgg rule logs` 看真实触发日志。
+- 启用前跑 `xgg rule validate --rule-id <rule-id>` 和 `xgg rule lint --rule-id <rule-id> --strict`；启用后用 `xgg rule logs` 看真实触发日志。
 - 对 Agent 自测场景，可用 `onLoad` 作为触发节点，再通过 `rule disable` + `rule enable` 重放，不需要人类物理按按钮。
+- 严格 lint 与 enable 会沿有效有向边检查动作可达性。独立事件源只有 `onLoad`、`alarmClock`、`deviceInput`、`deviceInputSetVar`、`varChange`；`timeRange` 只提供条件状态，`loop` 必须先收到 `start`，`register` 必须先收到 `setTrue` / `setFalse`，都不能单独证明下游动作可执行。
 
 ### 离线校验候选规则
 

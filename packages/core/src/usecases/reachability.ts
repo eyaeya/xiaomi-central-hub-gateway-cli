@@ -1,46 +1,26 @@
-// F63b (2026-05-30) — graph-level reachability gate for `rule enable`.
+// F63b (2026-05-30) / GitHub #25 (2026-07-19) — graph-level directed
+// reachability gate for `rule enable` and `rule lint --strict`.
 //
-// Story: a rule whose action card (deviceOutput / varSetNumber / varSetString /
-// deviceGetSetVar) is in a weakly-connected component with NO trigger card
-// (onLoad / alarmClock / deviceInput / loop / timeRange / varChange / register /
-// deviceInputSetVar) can be saved + enabled by the gateway, but it will never
-// fire. The official web UI hides this trap because save() runs from the same
-// canvas you wire on, so a fully-disconnected sink is visually obvious; the
-// CLI's save-then-enable split makes it possible to enable a never-fires graph.
-//
-// This is the universal funnel where the new check belongs. Wired
-// into validate-graph at the end of
-// the per-node loop so per-card 卡片配置有误 errors still win priority — a sink
-// that fails its own schema check is more actionable than a reachability one.
-//
-// `deviceInputSetVar` is the subtle case: per the node schemas it is BOTH a
-// trigger (`inputs: z.object({}).strict()` == self-firing) AND it writes a
-// variable. A standalone deviceInputSetVar with no edges is a complete
-// automation. We therefore classify it as a TRIGGER for the purposes of
-// reachability (it cannot be a dangling sink).
+// A sink is statically reachable only when a card that can independently
+// originate runtime activity has a valid source -> target path to it. Weak
+// connectivity is insufficient: a downstream loop/register must not prove
+// that an upstream action can ever run, and a timeRange state is not an event
+// bootstrap. The independent-source and input-flow facts live beside the pin
+// table in pin-colors.ts so lint, reachability, and CLI guidance cannot drift.
 
 import { NodeUnion } from '../schemas/nodes/index.js';
 import { targetInputPinStatus } from './edge-integrity.js';
 import { duplicateNodeIdIssues, findDuplicateNodeIds } from './graph-invariants.js';
 import type { LintIssue } from './lint-graph.js';
+import {
+  INDEPENDENT_EVENT_SOURCE_TYPES,
+  inputPropagatesEventReachability,
+  isIndependentEventSourceType,
+} from './pin-colors.js';
 
-// Self-firing nodes: their `inputs` schema is empty, or they are bootstrapped
-// internally by the runtime even when wired (loop start/stop, register
-// setTrue/setFalse). A graph component containing any of these can fire.
-const TRIGGER_TYPES = new Set<string>([
-  'onLoad',
-  'alarmClock',
-  'deviceInput',
-  'deviceInputSetVar',
-  'loop',
-  'register',
-  'timeRange',
-  'varChange',
-]);
-
-// Action / writer nodes: if one of these sits in a component with no trigger,
-// the rule is silently dead. (deviceInputSetVar is intentionally NOT here —
-// see classification note above.)
+// Action / writer nodes: each must have an upstream independent event source.
+// deviceInputSetVar is intentionally not a sink: it is itself an independent
+// device source which also writes a variable.
 const SINK_TYPES = new Set<string>([
   'deviceOutput',
   'deviceGetSetVar',
@@ -51,14 +31,15 @@ const SINK_TYPES = new Set<string>([
 interface ParsedNode {
   id: string;
   type: string;
+  idx: number;
   raw: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }
 
 function parseNodes(rawNodes: unknown[]): ParsedNode[] {
   const out: ParsedNode[] = [];
-  for (const raw of rawNodes) {
-    const result = NodeUnion.safeParse(raw);
+  for (let idx = 0; idx < rawNodes.length; idx += 1) {
+    const result = NodeUnion.safeParse(rawNodes[idx]);
     if (!result.success) continue;
     const node = result.data as Record<string, unknown>;
     const id = node.id;
@@ -68,47 +49,51 @@ function parseNodes(rawNodes: unknown[]): ParsedNode[] {
       node.outputs && typeof node.outputs === 'object' && !Array.isArray(node.outputs)
         ? (node.outputs as Record<string, unknown>)
         : undefined;
-    out.push(outputs !== undefined ? { id, type, raw: node, outputs } : { id, type, raw: node });
+    out.push(
+      outputs !== undefined ? { id, type, idx, raw: node, outputs } : { id, type, idx, raw: node },
+    );
   }
   return out;
 }
 
-// Union-Find on node ids for weakly-connected components.
-function makeUF(ids: string[]): {
-  find: (x: string) => string;
-  union: (a: string, b: string) => void;
-} {
-  const parent = new Map(ids.map((id) => [id, id]));
-  const find = (x: string): string => {
-    let root = x;
-    while (parent.get(root) !== root) root = parent.get(root) ?? root;
-    let cur = x;
-    while (parent.get(cur) !== root) {
-      const next = parent.get(cur) ?? root;
-      parent.set(cur, root);
-      cur = next;
+function directedTargets(node: ParsedNode, nodesById: ReadonlyMap<string, ParsedNode>): string[] {
+  const targets: string[] = [];
+  if (node.outputs === undefined) return targets;
+
+  for (const arr of Object.values(node.outputs)) {
+    if (!Array.isArray(arr)) continue;
+    for (const entry of arr) {
+      if (typeof entry !== 'string') continue;
+      const dot = entry.indexOf('.');
+      if (dot <= 0 || dot === entry.length - 1 || entry.indexOf('.', dot + 1) !== -1) continue;
+
+      const targetId = entry.slice(0, dot);
+      const targetPin = entry.slice(dot + 1);
+      const targetNode = nodesById.get(targetId);
+      if (targetNode === undefined) continue;
+      if (targetInputPinStatus(targetNode.raw, targetPin) === 'invalid') continue;
+
+      // condition.condition is supporting state rather than an event path;
+      // loop.stop cannot start loop output. Unknown future cards return null
+      // and remain traversable for forward compatibility.
+      if (inputPropagatesEventReachability(targetNode.type, targetPin) === false) continue;
+      targets.push(targetId);
     }
-    return root;
-  };
-  const union = (a: string, b: string) => {
-    const ra = find(a);
-    const rb = find(b);
-    if (ra !== rb) parent.set(ra, rb);
-  };
-  return { find, union };
+  }
+  return targets;
 }
 
 /**
- * Reachability check: every weakly-connected component that contains a sink
- * must also contain at least one trigger. Emits one error per dangling sink.
+ * Check that every action/writer sink is reachable from an independent event
+ * source by following valid edges in their source -> target direction.
  *
- * Edges are extracted from `node.outputs[pin][i]` strings of form
- * `targetId.targetPin`. Edges with malformed strings, dangling targets, or
- * unparseable target nodes are skipped — those failure modes are surfaced
- * elsewhere (lint-graph phase-2 / per-card schema checks).
+ * Malformed edges, dangling targets, invalid modeled target pins, and edges
+ * that only update non-emitting control/state inputs do not participate. Those
+ * edge-shape failures are diagnosed by lintGraph; excluding them here prevents
+ * a second bug from manufacturing a false reachability proof.
  *
- * Unknown node types (forward-compat UnknownNode fallback) are skipped from
- * sink classification so we never false-flag a future node type.
+ * Unknown future node types may be intermediate vertices once reached from a
+ * known source, but are never guessed to be a source or sink themselves.
  */
 export function checkReachability(rawNodes: unknown[]): LintIssue[] {
   if (!Array.isArray(rawNodes) || rawNodes.length === 0) return [];
@@ -118,67 +103,37 @@ export function checkReachability(rawNodes: unknown[]): LintIssue[] {
   const parsed = parseNodes(rawNodes);
   if (parsed.length === 0) return [];
 
-  const ids = parsed.map((n) => n.id);
-  const idSet = new Set(ids);
   const nodesById = new Map(parsed.map((node) => [node.id, node]));
-  const uf = makeUF(ids);
+  const adjacency = new Map<string, string[]>();
+  for (const node of parsed) adjacency.set(node.id, directedTargets(node, nodesById));
 
+  const reachable = new Set<string>();
+  const queue: string[] = [];
   for (const node of parsed) {
-    const outputs = node.outputs;
-    if (outputs === undefined) continue;
-    for (const arr of Object.values(outputs)) {
-      if (!Array.isArray(arr)) continue;
-      for (const entry of arr) {
-        if (typeof entry !== 'string') continue;
-        const dot = entry.indexOf('.');
-        if (dot === -1) continue;
-        const targetId = entry.slice(0, dot);
-        if (!idSet.has(targetId)) continue;
-        const targetNode = nodesById.get(targetId);
-        if (targetNode === undefined) continue;
-        const targetPin = entry.slice(dot + 1);
-        if (targetInputPinStatus(targetNode.raw, targetPin) === 'invalid') continue;
-        uf.union(node.id, targetId);
-      }
+    if (!isIndependentEventSourceType(node.type)) continue;
+    reachable.add(node.id);
+    queue.push(node.id);
+  }
+
+  for (let head = 0; head < queue.length; head += 1) {
+    const sourceId = queue[head];
+    if (sourceId === undefined) continue;
+    for (const targetId of adjacency.get(sourceId) ?? []) {
+      if (reachable.has(targetId)) continue;
+      reachable.add(targetId);
+      queue.push(targetId);
     }
   }
 
-  // Bucket nodes by component root.
-  const triggersByRoot = new Map<string, number>();
-  const sinksByRoot = new Map<string, Array<{ idx: number; node: ParsedNode }>>();
-  // Original index for path reporting. We need to map the parsed node back to
-  // its index in the raw `rawNodes` array — keep aligned by walking both.
-  const parsedIndexById = new Map<string, number>();
-  for (let i = 0; i < rawNodes.length; i += 1) {
-    const result = NodeUnion.safeParse(rawNodes[i]);
-    if (!result.success) continue;
-    const id = (result.data as Record<string, unknown>).id;
-    if (typeof id === 'string') parsedIndexById.set(id, i);
-  }
-
-  for (const node of parsed) {
-    const root = uf.find(node.id);
-    if (TRIGGER_TYPES.has(node.type)) {
-      triggersByRoot.set(root, (triggersByRoot.get(root) ?? 0) + 1);
-    }
-    if (SINK_TYPES.has(node.type)) {
-      const list = sinksByRoot.get(root) ?? [];
-      const idx = parsedIndexById.get(node.id) ?? -1;
-      list.push({ idx, node });
-      sinksByRoot.set(root, list);
-    }
-  }
-
+  const sourceList = INDEPENDENT_EVENT_SOURCE_TYPES.join('/');
   const issues: LintIssue[] = [];
-  for (const [root, sinks] of sinksByRoot.entries()) {
-    if ((triggersByRoot.get(root) ?? 0) > 0) continue;
-    for (const { idx, node } of sinks) {
-      issues.push({
-        severity: 'error',
-        path: idx >= 0 ? `nodes[${idx}]` : `nodes.${node.id}`,
-        message: `卡片不可达: ${node.type} sink "${node.id}" has no upstream trigger (onLoad/alarmClock/deviceInput/varChange/timeRange/loop/register/deviceInputSetVar) — rule will never fire this action`,
-      });
-    }
+  for (const node of parsed) {
+    if (!SINK_TYPES.has(node.type) || reachable.has(node.id)) continue;
+    issues.push({
+      severity: 'error',
+      path: `nodes[${node.idx}]`,
+      message: `卡片不可达: ${node.type} sink "${node.id}" has no upstream independent event source (${sourceList}) along directed edges — rule will never fire this action`,
+    });
   }
   return issues;
 }

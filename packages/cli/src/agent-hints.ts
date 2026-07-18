@@ -26,6 +26,7 @@
  *   5. Add a positive + negative test case to agent-hints.test.ts
  */
 
+import { INDEPENDENT_EVENT_SOURCE_TYPES } from '@eyaeya/xgg-core';
 import { type Command, Option } from 'commander';
 import { ttyBoldYellow } from './tty.js';
 
@@ -124,14 +125,14 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
     command: 'rule.new',
     match: (_r, opts) => !(has(opts, 'enable') && opts.enable === true),
     cmd: (r) => `xgg rule node add --rule-id ${readId(r)} --type <trigger>`,
-    why: "every automation needs a trigger card. Pick the trigger type matching the user's requirement (deviceInput for a device event/property, alarmClock for time-of-day, varChange for variable observation, timeRange/loop/register/others). NOTE: during early agent self-test or smoke-checking, onLoad is a useful optional trigger because `xgg rule disable <id> && xgg rule enable <id>` re-fires it deterministically without physical interaction — but it is not the default for real automations, choose by intent",
+    why: "every automation needs an independent event source. Pick the source matching the user's requirement (deviceInput for a device event/property, alarmClock for time-of-day, varChange for variable observation, or deviceInputSetVar). timeRange is supporting state, while loop/register need an upstream control signal. NOTE: during early agent self-test or smoke-checking, onLoad is a useful optional source because `xgg rule disable <id> && xgg rule enable <id>` re-fires it deterministically without physical interaction — but it is not the default for real automations, choose by intent",
     lifecycle: 'created → drafting',
   },
   {
     command: 'rule.new',
     match: (_r, opts) => has(opts, 'enable') && opts.enable === true,
     cmd: (r) => `xgg rule node add --rule-id ${readId(r)} --type <trigger>`,
-    why: 'rule was created already-enabled; add a trigger node next (see #4 trigger-type guidance). The enable state is already on, so each node add immediately becomes part of the live rule',
+    why: 'rule was created already-enabled; add an independent event source next. The enable state is already on, so each node add immediately becomes part of the live rule',
     lifecycle: 'created → enabled',
   },
   {
@@ -344,21 +345,12 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
 ];
 
 /**
- * Trigger cards — these *cause* a rule to fire. Predicates use this to
- * decide whether a freshly added node needs a downstream action.
- * `deviceInputSetVar` is both a trigger AND a variable writer (legacy
- * fusion of two semantics in one card type).
+ * Independent event sources — shared with core reachability/pin semantics.
+ * Predicates use this to decide whether a freshly added source needs a
+ * downstream action. `deviceInputSetVar` is both a source and a variable
+ * writer (legacy fusion of two semantics in one card type).
  */
-export const TRIGGER_TYPES = new Set<string>([
-  'onLoad',
-  'deviceInput',
-  'alarmClock',
-  'varChange',
-  'timeRange',
-  'loop',
-  'register',
-  'deviceInputSetVar',
-]);
+export const TRIGGER_TYPES = new Set<string>(INDEPENDENT_EVENT_SOURCE_TYPES);
 
 /**
  * Action cards — the write-side leaves of a rule graph. After adding one,

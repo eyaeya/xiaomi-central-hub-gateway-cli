@@ -94,8 +94,8 @@ export function attachLint(cmd: Command): void {
                 listAvailVars: (rid) => listAvailVarsForRule(rid, deps),
               })),
             );
-            // F63b — reachability is enable-only in the resource layer, but
-            // --strict surfaces it here so authors see it before flipping enable.
+            // F63b / GitHub #25 — the same directed reachability predicate used
+            // by enable is surfaced here before authors flip the enable bit.
             if (Array.isArray(ruleResp.nodes)) {
               issues.push(...checkReachability(ruleResp.nodes));
             }
