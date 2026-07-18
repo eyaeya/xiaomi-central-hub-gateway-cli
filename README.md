@@ -202,6 +202,7 @@ xgg rule logs <rule-id> --tail 20
 要点：
 
 - 先跑 `xgg device spec <did>`，再选择属性、动作或事件，不要凭设备名猜字段。
+- `deviceOutput --value '$scope.id'` 表示变量引用；字符串字面值若以 `$` 开头，需要把第一个 `$` 写两次，例如 `--value '$$hello'` 实际写入 `$hello`。`rule export` 会自动添加这一层转义。
 - 连线完成后跑 `xgg rule layout <rule-id>`，让网页画布中的卡片按数据流排布。
 - 启用前跑 `xgg rule validate --rule-id <rule-id>` 和 `xgg rule lint --rule-id <rule-id> --strict`；启用后用 `xgg rule logs` 看真实触发日志。
 - 对 Agent 自测场景，可用 `onLoad` 作为触发节点，再通过 `rule disable` + `rule enable` 重放，不需要人类物理按按钮。

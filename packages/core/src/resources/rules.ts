@@ -1734,10 +1734,19 @@ function synthesizeNodeFromShortcut(
           { property: shortcut.deviceProperty, access: property.access },
         );
       }
-      const varRef = shortcut.value.startsWith('$')
-        ? parseVariableReference(shortcut.value, mapFormatToVariableDtype(property.format))
-        : null;
-      const coerced = varRef === null ? coercePropertyValue(shortcut.value, property.format) : null;
+      // A single leading dollar keeps the established variable-reference
+      // grammar. Doubling it escapes exactly one dollar so string literals
+      // such as "$hello" and "$global.foo" can round-trip without being
+      // rejected or silently reinterpreted as variables.
+      const escapedLiteral = shortcut.value.startsWith('$$') ? shortcut.value.slice(1) : null;
+      const varRef =
+        escapedLiteral === null && shortcut.value.startsWith('$')
+          ? parseVariableReference(shortcut.value, mapFormatToVariableDtype(property.format))
+          : null;
+      const coerced =
+        varRef === null
+          ? coercePropertyValue(escapedLiteral ?? shortcut.value, property.format)
+          : null;
       return {
         id,
         type: 'deviceOutput',

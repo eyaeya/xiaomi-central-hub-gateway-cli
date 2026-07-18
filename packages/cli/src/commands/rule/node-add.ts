@@ -243,7 +243,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--value <V>',
-      'property write value (deviceOutput property-write); use $global.varId for a variable ref; literals are coerced per MIoT format',
+      'property write value (deviceOutput property-write); use $global.varId for a variable ref, or escape a literal leading $ as $$ (for example $$hello writes $hello); literals are coerced per MIoT format',
     )
     .option(
       '--force-out-of-range',
