@@ -206,6 +206,24 @@ xgg rule logs <rule-id> --tail 20
 - 启用前跑 `xgg rule validate --rule-id <rule-id>`；启用后用 `xgg rule logs` 看真实触发日志。
 - 对 Agent 自测场景，可用 `onLoad` 作为触发节点，再通过 `rule disable` + `rule enable` 重放，不需要人类物理按按钮。
 
+### 离线校验候选规则
+
+`rule validate --body` 和 `--stdin` 默认是确定性的纯本地检查：不会读取 session、连接 daemon/网关，也不会访问公网 MIoT spec 服务。适合 CI、预提交检查和尚未登录网关时验证卡片 schema、字段与表达式：
+
+```bash
+xgg rule validate --body candidate.json
+jq '.' candidate.json | xgg rule validate --stdin
+```
+
+需要额外核对设备 property/event 参数与 dtype 时，显式加 `--spec-aware`。该选项会访问公网 MIoT spec registry；404 会作为 warning 告知该 URN 的 spec 检查已跳过，超时、5xx 或无效 spec 会作为独立 error issue 返回，同时保留同一次运行已发现的本地结构/表达式问题：
+
+```bash
+xgg rule validate --body candidate.json --spec-aware
+xgg rule validate --rule-id <rule-id> --spec-aware
+```
+
+`--rule-id` 模式本身会从已登录 daemon 读取网关规则与可用变量；是否访问公网 spec 仍只由 `--spec-aware` 决定。
+
 ## 常用命令
 
 ```bash
@@ -223,7 +241,7 @@ xgg rule new --name "<name>" [--id <id>]
 xgg rule node add --rule-id <rule-id> --type <type> ...
 xgg rule edge add --rule-id <rule-id> --from <node:pin> --to <node:pin>
 xgg rule layout <rule-id>
-xgg rule validate --rule-id <rule-id>
+xgg rule validate (--rule-id <rule-id> | --body <file> | --stdin) [--spec-aware]
 xgg rule lint --rule-id <rule-id> [--strict]
 xgg rule enable <rule-id>
 xgg rule disable <rule-id>

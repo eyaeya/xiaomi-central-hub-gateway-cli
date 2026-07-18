@@ -3,6 +3,7 @@ import {
   type AvailableVariable,
   ConfigError,
   type LintIssue,
+  getDeviceSpec,
   getRule,
   listAvailVarsForRule,
   validateGraph,
@@ -23,6 +24,7 @@ interface ValidateOpts extends RuleOpts {
   body?: string;
   ruleId?: string;
   stdin?: boolean;
+  specAware?: boolean;
   nextHint?: boolean;
 }
 
@@ -78,9 +80,13 @@ export function attachValidate(cmd: Command): void {
     .description(
       'Dry-run the web-UI save-button validator against a graph (read-only, no setGraph)',
     )
-    .option('--body <path>', 'path to JSON file with {id, nodes, cfg?}')
+    .option('--body <path>', 'offline: path to JSON file with {id, nodes, cfg?}')
     .option('--rule-id <id>', 'fetch a rule from the gateway and validate it')
-    .option('--stdin', 'read graph JSON from stdin')
+    .option('--stdin', 'offline: read graph JSON from stdin')
+    .option(
+      '--spec-aware',
+      'query the public MIoT spec registry for device property/dtype checks (external network I/O)',
+    )
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
     .option('--timeout <ms>', 'request timeout in milliseconds', '10000')
@@ -99,7 +105,10 @@ Exit codes:
   1  warnings only
   2  at least one error
 
-Note: spec-aware bool dtype check requires daemon access (--rule-id always; --body/--stdin opportunistically). With no daemon, structural checks still run.`,
+Local input contract:
+  --body/--stdin perform deterministic local validation only: no session, daemon, or spec fetch.
+  --spec-aware explicitly enables public MIoT registry I/O for any input mode.
+  --rule-id always reads the gateway graph and available variables from the daemon.`,
     )
     .action(
       wrap('rule.validate', async (opts: ValidateOpts) => {
@@ -121,30 +130,9 @@ Note: spec-aware bool dtype check requires daemon access (--rule-id always; --bo
         if (opts.body !== undefined) {
           const raw = await readFile(opts.body, 'utf8');
           graph = parseGraph(raw, opts.body);
-          // F23: opportunistic — if daemon is up, fetch the avail-vars list
-          // so 卡片变量丢失 / 卡片变量有误 surface for --body mode too.
-          // F47 (2026-05-30): narrow the swallow to the "no base-url" path
-          // that makeDeps throws (ConfigError). Anything else (e.g. a
-          // unexpected runtime error inside makeDeps) should surface so
-          // the user knows why the var-existence check silently dropped.
-          try {
-            const deps = makeDeps(opts);
-            listAvailVars = (ruleId: string) => listAvailVarsForRule(ruleId, deps);
-          } catch (e) {
-            if (!(e instanceof ConfigError)) throw e;
-            // No daemon / no base-url → skip var-existence check
-            // (validateGraph degrades; user can still validate shape).
-          }
         } else if (opts.stdin === true) {
           const raw = await readStdin();
           graph = parseGraph(raw, '<stdin>');
-          try {
-            const deps = makeDeps(opts);
-            listAvailVars = (ruleId: string) => listAvailVarsForRule(ruleId, deps);
-          } catch (e) {
-            if (!(e instanceof ConfigError)) throw e;
-            // No daemon / no base-url → skip var-existence check.
-          }
         } else {
           const deps = makeDeps(opts);
           const ruleResp = await getRule(opts.ruleId as string, deps);
@@ -155,10 +143,14 @@ Note: spec-aware bool dtype check requires daemon access (--rule-id always; --bo
         const issues = await validateGraph({
           graph,
           ...(listAvailVars !== undefined && { listAvailVars }),
+          ...(opts.specAware === true && {
+            getDeviceSpec: (urn: string) => getDeviceSpec(urn, { timeoutMs: Number(opts.timeout) }),
+          }),
         });
         const payload = {
           ok: !issues.some((i) => i.severity === 'error'),
           ruleId: graph.id,
+          specAware: opts.specAware === true,
           issues,
           summary: summarise(issues),
         };
