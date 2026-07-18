@@ -1,6 +1,12 @@
 import { getDevice } from '../resources/devices.js';
 import type { ResourceDeps } from '../resources/index.js';
-import { type RuleView, getRule, listRules } from '../resources/rules.js';
+import {
+  type RuleView,
+  type VarSetExprElement,
+  getRule,
+  listRules,
+  parseVarSetExpr,
+} from '../resources/rules.js';
 import type { DeviceSpec, MiotAction, MiotProperty, MiotService } from '../schemas/device-spec.js';
 import {
   type MiotComparisonDtype,
@@ -845,17 +851,43 @@ function renderVarSet(
 ): ExportedCommand {
   const props = n.props ?? {};
   const elements = Array.isArray(props.elements) ? props.elements : [];
+  const canonicalElements: VarSetExprElement[] = [];
   let exprStr = '';
-  for (const raw of elements) {
-    if (raw === null || typeof raw !== 'object') continue;
+  for (const [index, raw] of elements.entries()) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new ConfigError(
+        `cannot export ${type} node ${n.id}: props.elements[${index}] is not a const or variable element`,
+        { nodeId: n.id, nodeType: type, elementIndex: index },
+      );
+    }
     const el = raw as Record<string, unknown>;
     if (el.type === 'const' && typeof el.value === 'string') {
       // Escape any literal '$' so the round-trip parse doesn't mistake it
       // for a var-ref prefix.
       exprStr += el.value.replace(/\$/g, '$$$$');
+      if (el.value.length > 0) {
+        const previous = canonicalElements[canonicalElements.length - 1];
+        if (previous?.type === 'const') previous.value += el.value;
+        else canonicalElements.push({ type: 'const', value: el.value });
+      }
     } else if (el.type === 'var' && typeof el.scope === 'string' && typeof el.id === 'string') {
       exprStr += `$${el.scope}.${el.id}`;
+      canonicalElements.push({ type: 'var', scope: el.scope, id: el.id });
+    } else {
+      throw new ConfigError(
+        `cannot export ${type} node ${n.id}: props.elements[${index}] is not a valid const or variable element`,
+        { nodeId: n.id, nodeType: type, elementIndex: index },
+      );
     }
+  }
+  let reparsed: VarSetExprElement[];
+  try {
+    reparsed = parseVarSetExpr(exprStr);
+  } catch {
+    throw losslessVarSetExportError(n.id, type);
+  }
+  if (!sameVarSetElements(canonicalElements, reparsed)) {
+    throw losslessVarSetExportError(n.id, type);
   }
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
@@ -866,6 +898,32 @@ function renderVarSet(
     { name: '--expr', value: exprStr },
   ];
   return { kind: 'node-add', nodeId: n.id, type, flags, comment: type };
+}
+
+function sameVarSetElements(
+  expected: readonly VarSetExprElement[],
+  actual: readonly VarSetExprElement[],
+): boolean {
+  return (
+    expected.length === actual.length &&
+    expected.every((element, index) => {
+      const other = actual[index];
+      if (element.type === 'const') {
+        return other?.type === 'const' && other.value === element.value;
+      }
+      return other?.type === 'var' && other.scope === element.scope && other.id === element.id;
+    })
+  );
+}
+
+function losslessVarSetExportError(
+  nodeId: string,
+  nodeType: 'varSetNumber' | 'varSetString',
+): ConfigError {
+  return new ConfigError(
+    `cannot export ${nodeType} node ${nodeId} losslessly: its variable and constant element boundaries are ambiguous in --expr; add an explicit separator in the source rule before exporting`,
+    { nodeId, nodeType },
+  );
 }
 
 // M14 task E — varGet exporter mirror. Same prop projection as varChange,

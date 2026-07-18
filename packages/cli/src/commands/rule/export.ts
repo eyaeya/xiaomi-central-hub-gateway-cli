@@ -72,6 +72,10 @@ Examples:
       # Clone with an explicit name.
 
 Limitations:
+  - varSetNumber / varSetString elements must be losslessly expressible in
+    the current --expr DSL. Export fails before returning a script when a
+    variable/constant boundary would be absorbed or rejected; add an explicit
+    separator in the source expression or use rule view JSON round-trip.
   - deviceInput / deviceOutput nodes require the source gateway to be
     online so the spec for the referenced device can be fetched (used
     to reverse siid+piid into property/action/event names).
