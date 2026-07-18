@@ -14,7 +14,11 @@ import {
   RuleListResponse,
   type RuleSummary,
 } from '../schemas/rule.js';
-import { type VarEntry, isValidVariableScopeName } from '../schemas/variable.js';
+import {
+  type AvailableVariable,
+  type VarEntry,
+  isValidVariableScopeName,
+} from '../schemas/variable.js';
 import { ConfigError, GatewayError, NotFoundError, parseOrThrow } from '../transport/errors.js';
 import { agentCall } from '../usecases/agent-call.js';
 import { inputPinNames, targetInputPinStatus } from '../usecases/edge-integrity.js';
@@ -31,6 +35,7 @@ import type { ResourceDeps } from './index.js';
 import {
   createVariable,
   deleteVariable,
+  isMissingScopeError,
   listAvailVarsForRule,
   listVariables,
 } from './variables.js';
@@ -256,7 +261,7 @@ export async function setRuleTags(id: string, tags: string[], deps: ResourceDeps
 export interface SetGraphOptions {
   validate?: boolean;
   getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
-  listAvailVars?: (ruleId: string) => Promise<string[]>;
+  listAvailVars?: (ruleId: string) => Promise<AvailableVariable[]>;
   // F66a (2026-05-31) — skip ONLY the lintGraph canvas-predicate gate while
   // keeping validateGraphOrThrow active. Subtractive internal mutators
   // (removeNode no-cascade, removeEdge, …) may write a graph whose edges the
@@ -403,8 +408,8 @@ export async function upsertGraph(
 // fresh `rule new` produces a rule whose `R<ruleId>` scope is absent; if the
 // user later wires a var card pointing at that scope, `rule enable`'s var-
 // existence gate (see validate-graph.ts:430 "卡片变量丢失") trips because
-// `listAvailVarsForRule` silently swallows the gateway's "Invalid scope" error
-// for missing scopes. Same root cause blocks any rule referencing a `global`
+// `listAvailVarsForRule` treats the gateway's known missing-scope responses as
+// an empty scope. Same root cause blocks any rule referencing a `global`
 // var on a fresh gateway with no globals defined (B11).
 //
 // ensureScopeBootstrapped is the single private helper both call sites share.
@@ -432,9 +437,7 @@ async function ensureScopeBootstrapped(scope: string, deps: ResourceDeps): Promi
     const existing = await listVariables(scope, deps);
     if (Object.keys(existing).length > 0) return;
   } catch (err) {
-    if (!(err instanceof GatewayError) || !/Invalid scope|does not exist/i.test(err.message)) {
-      throw err;
-    }
+    if (!isMissingScopeError(err)) throw err;
     // Missing scope → fall through to createVar (which materialises it).
   }
 
@@ -519,8 +522,8 @@ export async function deleteGraph(id: string, deps: ResourceDeps): Promise<void>
   // auto-create (B1 lifecycle pair) or by hand survive as ghost data the UI
   // can't surface — there is no rule to attach them to. The cleanup must
   // live on the write path itself (not just CLI lint) so every funnel — CLI delete,
-  // future bulk delete, programmatic SDK use — inherits it. "Invalid scope"
-  // (rule never had a local scope) is swallowed and logged to stderr,
+  // future bulk delete, programmatic SDK use — inherits it. A known missing-
+  // scope response (rule never had a local scope) is swallowed and logged,
   // matching the existing `listAvailVarsForRule` swallow precedent in
   // variables.ts; other GatewayErrors propagate so an unexpected cascade
   // failure isn't silently dropped. Runs ONLY after the primary delete
@@ -530,7 +533,7 @@ export async function deleteGraph(id: string, deps: ResourceDeps): Promise<void>
   try {
     await deleteVariable({ scope, all: true }, deps);
   } catch (e) {
-    if (e instanceof GatewayError && /Invalid scope/i.test(e.message)) {
+    if (isMissingScopeError(e)) {
       process.stderr.write(
         `[rule.delete] cascade: R-scope ${scope} absent (no local vars to clean up)\n`,
       );
