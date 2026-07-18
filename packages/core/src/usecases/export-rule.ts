@@ -826,8 +826,19 @@ async function renderDeviceOutput(
     } else {
       flags.push({ name: '--device-property', value: propertyName });
     }
-    if (props.value !== undefined) flags.push({ name: '--value', value: String(props.value) });
-    else if (isDeviceOutputVariableRef(props)) {
+    if (props.value !== undefined) {
+      const literal = String(props.value);
+      flags.push({
+        name: '--value',
+        // `rule node add` reserves one leading dollar for variable refs. Escape
+        // stored string literals by doubling only that leading character;
+        // numbers, booleans, and ordinary strings retain their old rendering.
+        value: typeof props.value === 'string' && literal.startsWith('$') ? `$${literal}` : literal,
+        ...(typeof props.value === 'string' && literal.startsWith('$')
+          ? { needsQuoting: true }
+          : {}),
+      });
+    } else if (isDeviceOutputVariableRef(props)) {
       flags.push({ name: '--value', value: `$${props.scope}.${props.id}`, needsQuoting: true });
     }
   } else {
@@ -1633,6 +1644,10 @@ function parseEventArgumentVariable(
 
 function parseDollarVariableReference(value: string): { scope: string; id: string } | null {
   if (!value.startsWith('$')) return null;
+  // deviceOutput --value uses a doubled leading dollar for a literal. Keep the
+  // encoded flag byte-for-byte stable while cloning; it is neither a variable
+  // dependency nor a candidate for scope remapping.
+  if (value.startsWith('$$')) return null;
   const token = scanVariableReference(value, 0);
   if (
     token.kind !== 'reference' ||

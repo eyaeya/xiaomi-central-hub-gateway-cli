@@ -233,7 +233,7 @@ CONFIG (exit 5): cross-color edge: event output "<a>.output" → state input "<b
 |---|---|---|---|
 | `deviceInput` | 设备属性变化(状态)或设备事件(事件)触发 | 属性：`--device-did <did> --device-property <p> --op <op> --threshold <n>`；事件：`--device-event <e> [--event-filter <piid>=<v1>]` | 属性模式监听 push notify，`pushAvailable=false` 设备收不到（用 `deviceGet` 代替）；事件模式不受影响 |
 | `deviceGet` | 输入事件到来时读设备属性并分支 | `--device-did <did> --device-property <p> --op <op> --threshold <n>` | 满足 `output`，不满足 `output2` |
-| `deviceOutput` | 写设备属性或调用设备动作 | 属性：`--device-property <p> --value <v>`；动作：`--device-action <a> --params '<json>'` | bool 属性 `--value true/false` 均可 |
+| `deviceOutput` | 写设备属性或调用设备动作 | 属性：`--device-property <p> --value <v>`；动作：`--device-action <a> --params '<json>'` | bool 属性 `--value true/false` 均可；`$scope.id` 是变量引用，字面前导 `$` 要写成 `$$`（如 `$$hello` 写入 `$hello`） |
 | `deviceInputSetVar` | 设备属性变化/事件参数写入变量 | 属性：`--device-property <p> --var-scope <s> --var-id <id>`；事件多参：`--device-event <e> --event-arg-var <piid>=<scope>.<id>`(可重复) | 设备无直接读 RPC，靠它把属性导进变量再读 |
 | `deviceGetSetVar` | 输入事件到来时读设备属性并写入变量 | `--device-property <p> --var-scope <s> --var-id <id>` | 按需读取版（vs `deviceInputSetVar` 的变化推送版） |
 | `alarmClock` | 定时 / 日出 / 日落触发 | 定时：`--at HH:MM[:SS] [--days 0,1..6 \| --weekday-only \| --holiday-only]`；日出日落：`--sunrise\|--sunset --latitude <n> --longitude <n> [--offset-min <±N>]` | 输出 event；日出日落**必须**给经纬度；`--offset-min` 负=之前 |
