@@ -2,6 +2,7 @@ import { getDevice } from '../resources/devices.js';
 import type { ResourceDeps } from '../resources/index.js';
 import { type RuleView, getRule, listRules } from '../resources/rules.js';
 import type { DeviceSpec, MiotAction, MiotProperty, MiotService } from '../schemas/device-spec.js';
+import { durationToMilliseconds, isDurationUnit } from '../schemas/nodes/duration.js';
 import { ConfigError, NotFoundError } from '../transport/errors.js';
 import { getDeviceSpec } from './get-device-spec.js';
 
@@ -704,12 +705,13 @@ function renderDurationFromCfgAndProps(
   cfg: Record<string, unknown> | undefined,
   rawMs: unknown,
 ): string | null {
-  const ms = typeof rawMs === 'number' && Number.isFinite(rawMs) && rawMs > 0 ? rawMs : null;
+  const ms =
+    typeof rawMs === 'number' && Number.isFinite(rawMs) && Number.isInteger(rawMs) ? rawMs : null;
   const cfgDuration = durationLiteralFromCfg(cfg);
   if (ms !== null && cfgDuration !== null && cfgDuration.ms === ms) {
     return cfgDuration.literal;
   }
-  if (ms !== null && Number.isInteger(ms)) return `${ms}ms`;
+  if (ms !== null) return `${ms}ms`;
   if (cfgDuration !== null) return cfgDuration.literal;
   return null;
 }
@@ -721,15 +723,16 @@ function durationLiteralFromCfg(
   const unit = cfg.unit;
   const value = cfg.value;
   if (
-    (unit !== 'ms' && unit !== 's' && unit !== 'm') ||
+    !isDurationUnit(unit) ||
     typeof value !== 'number' ||
-    !Number.isInteger(value) ||
-    value <= 0
+    !Number.isFinite(value) ||
+    !Number.isInteger(value)
   ) {
     return null;
   }
-  const multiplier = unit === 'ms' ? 1 : unit === 's' ? 1000 : 60_000;
-  return { literal: `${value}${unit}`, ms: value * multiplier };
+  const ms = durationToMilliseconds(value, unit);
+  if (!Number.isFinite(ms) || !Number.isInteger(ms)) return null;
+  return { literal: `${value}${unit}`, ms };
 }
 
 function renderTimeRange(n: {

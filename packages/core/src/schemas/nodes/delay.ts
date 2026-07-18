@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Connection, NodeId, Position } from './common.js';
+import { DurationUnitSchema, DurationValueSchema, refineDurationConsistency } from './duration.js';
 
 export const DelayCfg = z
   .object({
@@ -7,8 +8,8 @@ export const DelayCfg = z
     pos: Position,
     name: z.string(),
     version: z.number(),
-    unit: z.string(),
-    value: z.number(),
+    unit: DurationUnitSchema,
+    value: DurationValueSchema,
   })
   .strict();
 export type DelayCfg = z.infer<typeof DelayCfg>;
@@ -47,5 +48,8 @@ export const DelayNode = z
     outputs: DelayOutputs,
     props: DelayProps,
   })
-  .strict();
+  .strict()
+  .superRefine((node, ctx) => {
+    refineDurationConsistency(node.cfg, 'timeout', node.props.timeout, ctx);
+  });
 export type DelayNode = z.infer<typeof DelayNode>;

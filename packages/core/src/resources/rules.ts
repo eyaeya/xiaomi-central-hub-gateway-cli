@@ -5,6 +5,7 @@ import type {
   MiotProperty,
   MiotService,
 } from '../schemas/device-spec.js';
+import { type DurationRange, parseDurationLiteral } from '../schemas/nodes/duration.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
 import {
   GraphSetRequest,
@@ -628,7 +629,8 @@ export interface AddNodeShortcut {
   // ---- non-device-side fields (M10 F17) ----
   // logicAnd / logicOr: number of inputs (default 2 → input0..inputN-1).
   inputs?: number;
-  // delay/statusLast/loop: human duration string, e.g. "500ms" | "5s" | "2m".
+  // Duration-card display value. delay/loop retain the gateway-compatible
+  // integer domain; statusLast/eventSequence require a positive integer.
   duration?: string;
   interval?: string;
   // timeRange: "HH:MM" or "HH:MM:SS" window. Plus weekday filter below.
@@ -2034,24 +2036,22 @@ function parseHmsOrThrow(
   return { hour, minute, second };
 }
 
-const DURATION_REGEX = /^([1-9]\d*)(ms|s|m)$/;
-
 function parseDurationOrThrow(
   raw: string | undefined,
   flag: string,
+  range: DurationRange = 'positive',
 ): { unit: 'ms' | 's' | 'm'; value: number; ms: number } {
   if (raw === undefined) {
     throw new ConfigError(`${flag} is required (examples: 500ms, 5s, 2m)`);
   }
-  const trimmed = raw.trim();
-  const m = DURATION_REGEX.exec(trimmed);
-  if (!m) {
-    throw new ConfigError(`${flag} must be a positive integer duration ending in ms, s, or m`);
+  const duration = parseDurationLiteral(raw, range);
+  if (duration === null) {
+    const rangeDescription = range === 'integer' ? 'an' : 'a positive';
+    throw new ConfigError(
+      `${flag} must be ${rangeDescription} integer duration ending in ms, s, or m`,
+    );
   }
-  const value = Number.parseInt(m[1] as string, 10);
-  const unit = m[2] as 'ms' | 's' | 'm';
-  const multiplier = unit === 'ms' ? 1 : unit === 's' ? 1000 : 60_000;
-  return { unit, value, ms: value * multiplier };
+  return { unit: duration.unit, value: duration.value, ms: duration.milliseconds };
 }
 
 // Mirrors timeRange + alarmClock filter union: `{}` (every day),
@@ -2159,7 +2159,11 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
 
     case 'delay':
     case 'statusLast': {
-      const duration = parseDurationOrThrow(shortcut.duration, '--duration');
+      const duration = parseDurationOrThrow(
+        shortcut.duration,
+        '--duration',
+        shortcut.type === 'delay' ? 'integer' : 'positive',
+      );
       return {
         id,
         type: shortcut.type,
@@ -2175,7 +2179,7 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
     }
 
     case 'loop': {
-      const interval = parseDurationOrThrow(shortcut.interval, '--interval');
+      const interval = parseDurationOrThrow(shortcut.interval, '--interval', 'integer');
       return {
         id,
         type: 'loop',

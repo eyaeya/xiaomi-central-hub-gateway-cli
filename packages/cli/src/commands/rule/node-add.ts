@@ -226,9 +226,12 @@ export function attachNodeAdd(cmd: Command): void {
     .option('--inputs <N>', 'logicAnd/logicOr/signalOr input count (default 2)', Number.parseInt)
     .option(
       '--duration <S>',
-      'delay/statusLast duration (positive integer + ms|s|m, e.g. 500ms, 5s, 2m)',
+      'delay/statusLast/eventSequence duration (delay: integer; others: positive integer; unit ms|s|m)',
     )
-    .option('--interval <S>', 'loop interval (positive integer + ms|s|m, e.g. 500ms, 30s, 1m)')
+    .option(
+      '--interval <S>',
+      'loop interval (gateway-compatible integer + ms|s|m, e.g. 0ms, 30s, 1m)',
+    )
     .option('--start <HH:MM[:SS]>', 'timeRange start time')
     .option('--end <HH:MM[:SS]>', 'timeRange end time')
     .option('--weekday-only', 'timeRange/alarmClock fires only on legal workdays')
