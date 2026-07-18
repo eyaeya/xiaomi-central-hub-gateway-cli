@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-export const VERSION = '0.0.0';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const packageMetadata = require('../package.json') as { version: string };
+
+/** Runtime version of the installed `@eyaeya/xgg-core` package. */
+export const VERSION = packageMetadata.version;
 
 export * from './agent/index.js';
 export * from './resources/index.js';
