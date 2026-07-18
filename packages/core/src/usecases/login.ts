@@ -35,10 +35,22 @@ export async function login(input: LoginInputs): Promise<LoginResult> {
   if (!/^\d{6,8}$/.test(input.passcode)) {
     throw new ConfigError('passcode must be 6–8 digits');
   }
-  if (!/^https?:\/\//.test(input.baseUrl)) {
+
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(input.baseUrl);
+  } catch {
     throw new ConfigError('base-url must be an http(s) URL');
   }
-  const args = [...input.agentBinary.args, 'agent', 'serve', '--host', input.baseUrl];
+  if (baseUrl.protocol !== 'http:' && baseUrl.protocol !== 'https:') {
+    throw new ConfigError('base-url must be an http(s) URL');
+  }
+  if (baseUrl.username !== '' || baseUrl.password !== '') {
+    throw new ConfigError('base-url must not include username or password');
+  }
+  const canonicalBaseUrl = baseUrl.origin;
+
+  const args = [...input.agentBinary.args, 'agent', 'serve', '--host', canonicalBaseUrl];
   if (input.sessionFile) args.push('--session-file', input.sessionFile);
   const fn = input.spawn ?? spawnAgent;
   const childEnv: NodeJS.ProcessEnv = { ...process.env, XGG_LOGIN_CODE: input.passcode };
@@ -50,7 +62,7 @@ export async function login(input: LoginInputs): Promise<LoginResult> {
   });
   return {
     ok: true,
-    host: input.baseUrl,
+    host: canonicalBaseUrl,
     pid: result.pid,
     socketPath: result.socketPath,
     agentStartedAt: result.agentStartedAt,
