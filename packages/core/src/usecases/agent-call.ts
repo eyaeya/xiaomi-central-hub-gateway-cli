@@ -1,3 +1,4 @@
+import { assertAgentIdentity } from '../agent/identity.js';
 import type { IpcClient } from '../agent/ipc-client.js';
 import { createIpcClient } from '../agent/ipc-client.js';
 import type { SessionStore } from '../session/index.js';
@@ -36,24 +37,28 @@ export async function agentCall(input: AgentCallInputs): Promise<unknown> {
   const client = factory(entry.socketPath);
   const timeoutMs = input.timeoutMs ?? 10_000;
   const kind = input.kind ?? 'read';
-  let timerId: ReturnType<typeof setTimeout> | undefined;
   try {
+    const ping = await withTimeout(
+      client.request('$ping', null, { timeoutMs, kind: 'read' }),
+      timeoutMs,
+      () => new NetworkError(`agent identity probe timed out after ${timeoutMs}ms`),
+    );
+    assertAgentIdentity(ping, entry);
+
     // Forward the deadline + kind to the daemon so its router applies the same
     // timeout (not its 10s default) and classifies a write timeout as
     // NotConfirmedError. The local timer below is a backstop for a wedged
     // daemon that never replies; both layers agree on the error class.
-    const call = client.request(input.method, input.params, { timeoutMs, kind });
-    const timer = new Promise<never>((_, reject) => {
-      timerId = setTimeout(() => {
+    return await withTimeout(
+      client.request(input.method, input.params, { timeoutMs, kind }),
+      timeoutMs,
+      () => {
         const msg = `agent IPC call ${input.method} timed out after ${timeoutMs}ms`;
-        reject(
-          kind === 'write'
-            ? new NotConfirmedError(msg, { method: input.method })
-            : new NetworkError(msg),
-        );
-      }, timeoutMs);
-    });
-    return await Promise.race([call, timer]);
+        return kind === 'write'
+          ? new NotConfirmedError(msg, { method: input.method })
+          : new NetworkError(msg);
+      },
+    );
   } catch (e) {
     if (
       e instanceof NetworkError &&
@@ -65,8 +70,23 @@ export async function agentCall(input: AgentCallInputs): Promise<unknown> {
     }
     throw e;
   } finally {
-    if (timerId !== undefined) clearTimeout(timerId);
     client.close();
+  }
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutError: () => Error,
+): Promise<T> {
+  let timerId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timer = new Promise<never>((_, reject) => {
+      timerId = setTimeout(() => reject(timeoutError()), timeoutMs);
+    });
+    return await Promise.race([promise, timer]);
+  } finally {
+    if (timerId !== undefined) clearTimeout(timerId);
   }
 }
 

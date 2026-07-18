@@ -2,7 +2,13 @@ export { createIpcClient } from './ipc-client.js';
 export type { IpcClient, IpcClientOptions } from './ipc-client.js';
 export { createIpcServer } from './ipc-server.js';
 export type { IpcServerHandle, IpcServerOptions } from './ipc-server.js';
-export { resolveAgentEndpoint } from './ipc-path.js';
+export { assertAgentIdentity } from './identity.js';
+export type { AgentPingIdentity } from './identity.js';
+export {
+  canonicalGatewayKey,
+  defaultAgentRuntimeDir,
+  resolveAgentEndpoint,
+} from './ipc-path.js';
 export type {
   AgentEndpoint,
   AgentEndpointKind,
