@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -46,6 +46,10 @@ async function startFakeAgent(t) {
           return [];
         case '/api/getVarScopeList':
           return { scopes: [] };
+        case '/api/getBackupList':
+          return { list: [] };
+        case '/api/getBackupConfig':
+          return { autoBackup: false };
         case '/api/getBackupProgress':
           await new Promise((resolve) => setTimeout(resolve, 5));
           return { progress: 42 };
@@ -90,7 +94,7 @@ function runCli(args, sessionFile) {
         XGG_NO_NEXT_HINT: '1',
         XGG_NO_REFRESH_HINT: '1',
         XGG_SESSION_FILE: sessionFile,
-        XGG_SNAPSHOTS_DIR: '',
+        XGG_SNAPSHOTS_DIR: join(dirname(sessionFile), 'snapshots'),
       },
     });
     let stdout = '';
@@ -204,7 +208,15 @@ test('backup polling timeout is NotConfirmed with actionable details and exit 2'
   });
   assert.deepEqual(
     fake.calls.filter(({ method }) => method !== '$ping').map(({ method }) => method),
-    ['/api/createBackup', '/api/getBackupProgress'],
+    [
+      '/api/getDevList',
+      '/api/getGraphList',
+      '/api/getVarScopeList',
+      '/api/getBackupList',
+      '/api/getBackupConfig',
+      '/api/createBackup',
+      '/api/getBackupProgress',
+    ],
   );
 });
 
