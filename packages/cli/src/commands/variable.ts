@@ -29,6 +29,7 @@ import {
 } from '../agent-hints.js';
 import { type TableColumn, emit, emitList } from '../output.js';
 import {
+  type ResolvedMutationGuard,
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
@@ -57,10 +58,9 @@ function makeDeps(opts: VariableOpts) {
 }
 
 async function maybeSnapshot(
-  opts: MutationOpts,
+  guard: ResolvedMutationGuard,
   deps: ReturnType<typeof makeDeps>,
 ): Promise<{ snapshotPath: string | null }> {
-  const guard = assertAgentModeOrSnapshotsDir(opts);
   if (!guard.snapshotEnabled) return { snapshotPath: null };
   const snapshotPath = await dumpBeforeWrite({
     baseUrl: deps.baseUrl,
@@ -260,10 +260,11 @@ export function variableCommand(): Command {
     )
     .action(
       wrap('variable.create', async (opts: CreateOpts) => {
+        const value = parseScalar(opts.type, opts.value);
+        const guard = assertAgentModeOrSnapshotsDir(opts);
         warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         const deps = makeDeps(opts);
-        const value = parseScalar(opts.type, opts.value);
-        const { snapshotPath } = await maybeSnapshot(opts, deps);
+        const { snapshotPath } = await maybeSnapshot(guard, deps);
         await createVariable(
           {
             scope: opts.scope,
@@ -324,12 +325,16 @@ export function variableCommand(): Command {
     )
     .action(
       wrap('variable.delete', async (opts: DeleteOpts) => {
-        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
-        const deps = makeDeps(opts);
         if (opts.all && opts.id) {
           throw new ConfigError('--id and --all are mutually exclusive');
         }
-        const { snapshotPath } = await maybeSnapshot(opts, deps);
+        if (!opts.all && !opts.id) {
+          throw new ConfigError('variable delete requires either --id <id> or --all');
+        }
+        const guard = assertAgentModeOrSnapshotsDir(opts);
+        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
+        const deps = makeDeps(opts);
+        const { snapshotPath } = await maybeSnapshot(guard, deps);
         if (opts.all) {
           await deleteVariable({ scope: opts.scope, all: true }, deps);
           const payload = {
@@ -369,8 +374,6 @@ export function variableCommand(): Command {
           printNextStepHintLine(hints, opts, {
             contextLabel: `variable ${opts.scope}/${opts.id} (deleted)`,
           });
-        } else {
-          throw new ConfigError('variable delete requires either --id <id> or --all');
         }
       }),
     );
@@ -422,6 +425,12 @@ to intentionally re-type a variable in place.`,
     )
     .action(
       wrap('variable.set-value', async (opts: SetValueOpts) => {
+        const explicitlyTypedValue =
+          opts.type !== undefined ? parseScalar(opts.type, opts.value) : undefined;
+        // Resolve the Agent-mode contract before constructing session deps,
+        // reading stored type, or emitting scope/type notes. A failed guard is
+        // a single local CONFIG result with zero IPC traffic.
+        const guard = assertAgentModeOrSnapshotsDir(opts);
         warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         const deps = makeDeps(opts);
         // F66d: fetch the stored type FIRST so we can reject a --type
@@ -456,8 +465,8 @@ to intentionally re-type a variable in place.`,
             );
           }
         }
-        const value = parseScalar(effectiveType, opts.value);
-        const { snapshotPath } = await maybeSnapshot(opts, deps);
+        const value = explicitlyTypedValue ?? parseScalar(effectiveType, opts.value);
+        const { snapshotPath } = await maybeSnapshot(guard, deps);
         await setVariableValue({ scope: opts.scope, id: opts.id, value }, deps);
         const payload = {
           ok: true,
@@ -505,9 +514,10 @@ to intentionally re-type a variable in place.`,
     )
     .action(
       wrap('variable.set-config', async (opts: SetConfigOpts) => {
+        const guard = assertAgentModeOrSnapshotsDir(opts);
         warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         const deps = makeDeps(opts);
-        const { snapshotPath } = await maybeSnapshot(opts, deps);
+        const { snapshotPath } = await maybeSnapshot(guard, deps);
         await setVariableConfig(
           {
             scope: opts.scope,

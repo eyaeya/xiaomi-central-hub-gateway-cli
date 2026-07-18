@@ -161,7 +161,7 @@ export XGG_AGENT_MODE=1
 export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 ```
 
-`XGG_AGENT_MODE=1` 会拒绝无快照写入，避免 Agent 修改规则图或变量后没有可回滚证据。写前 rollback artifact 会完整保存规则节点与边、各 scope 的变量配置和值；backup load/delete 还会记录 backup list、config 与目标引用。任一必需读取失败时 mutation 会 fail closed，不会留下可误认的快照或继续写入。建议把快照目录建在当前项目目录下（上面的 `$PWD/snapshots`），让快照随项目留存、便于回溯。
+`XGG_AGENT_MODE=1` 会拒绝无快照写入，避免 Agent 修改规则图、变量或备份配置后没有可回滚证据。写前 rollback artifact 会完整保存规则节点与边、各 scope 的变量配置和值；所有 backup 写命令还会记录 backup list 与 config，download/load/delete 会额外记录目标引用。任一必需读取失败时 mutation 会 fail closed，不会留下可误认的快照或继续写入。建议把快照目录建在当前项目目录下（上面的 `$PWD/snapshots`），让快照随项目留存、便于回溯。
 
 `xgg dump` 只用于 best-effort 资源索引，不是 rollback artifact；若任一资源读取失败，它会输出 `partial:true`、`ok:false` 并返回非零状态。
 
@@ -238,8 +238,9 @@ xgg variable set-value --scope global --id <id> --value <value>
 xgg variable watch [--pretty]
 
 xgg backup list --from fds [--pretty]
-xgg backup create --from fds --file-name <name> [--wait]
-xgg backup download --from fds --did <did> --ts <ts> --file-name <name> [--wait]
+xgg backup create --from fds --file-name <name> [--snapshots-dir <dir>] [--wait]
+xgg backup download --from fds --did <did> --ts <ts> --file-name <name> [--snapshots-dir <dir>] [--wait]
+xgg backup config set --from fds --auto-backup <true|false> [--snapshots-dir <dir>]
 ```
 
 默认 stdout 输出 JSON，适合 Agent 解析；需要人读表格时加 `--pretty`。例外：`xgg rule logs` 默认输出人类表格，需要 JSON 时显式加 `--json`。

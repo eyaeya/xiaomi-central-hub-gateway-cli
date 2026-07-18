@@ -18,7 +18,7 @@ import {
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
 import { type TableColumn, emit, emitList } from '../output.js';
-import { assertAgentModeOrSnapshotsDir } from './_mutation-guard.js';
+import { type ResolvedMutationGuard, assertAgentModeOrSnapshotsDir } from './_mutation-guard.js';
 
 interface BackupOpts {
   baseUrl?: string;
@@ -41,12 +41,14 @@ interface BackupTargetOpts extends BackupOpts {
   self?: boolean;
 }
 
-interface SnapshotOpts extends BackupTargetOpts {
+interface MutationOpts extends BackupOpts {
   snapshot?: boolean;
   snapshotsDir?: string;
 }
 
-interface CreateOpts extends BackupOpts {
+type SnapshotOpts = BackupTargetOpts & MutationOpts;
+
+interface CreateOpts extends MutationOpts {
   fileName: string;
 }
 
@@ -54,7 +56,7 @@ interface ProgressOpts extends BackupOpts {
   progressId: string;
 }
 
-interface SetConfigOpts extends BackupOpts {
+interface SetConfigOpts extends MutationOpts {
   autoBackup: string;
   autoBackupLimit?: string;
 }
@@ -203,18 +205,18 @@ function backupRef(opts: BackupTargetOpts): BackupItem {
 }
 
 async function snapshotBeforeBackupWrite(
-  opts: { snapshot?: boolean; snapshotsDir?: string; from: string },
+  guard: ResolvedMutationGuard,
+  opts: { from: string },
   deps: ReturnType<typeof makeDeps>,
-  target: BackupItem,
+  target?: BackupItem,
 ): Promise<string | null> {
-  const guard = assertAgentModeOrSnapshotsDir(opts);
   if (!guard.snapshotEnabled) return null;
   return dumpBeforeWrite({
     baseUrl: deps.baseUrl,
     store: deps.store,
     ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
     ...(guard.snapshotsDir !== undefined && { snapshotsDir: guard.snapshotsDir }),
-    backup: { from: opts.from, target },
+    backup: { from: opts.from, ...(target !== undefined && { target }) },
   });
 }
 
@@ -245,20 +247,24 @@ export function backupCommand(): Command {
   );
 
   addWaitOptions(
-    addCommonOptions(
-      cmd
-        .command('create')
-        .description('Create a cloud backup')
-        .requiredOption('--file-name <name>', 'backup filename')
-        .addHelpText(
-          'after',
-          '\nExample:\n  $ xgg backup create --from fds --file-name probe.bak\n  $ xgg backup create --file-name probe.bak --wait   # poll to 100% before returning',
-        ),
+    addSnapshotOptions(
+      addCommonOptions(
+        cmd
+          .command('create')
+          .description('Create a cloud backup (writes snapshot first)')
+          .requiredOption('--file-name <name>', 'backup filename')
+          .addHelpText(
+            'after',
+            '\nExample:\n  $ xgg backup create --from fds --file-name probe.bak --snapshots-dir ./snapshots/\n  $ xgg backup create --file-name probe.bak --wait   # poll to 100% before returning',
+          ),
+      ),
     ),
   ).action(
     wrap('backup.create', async (opts: CreateOpts) => {
       const waitOpts = parseWaitOptions(opts);
+      const guard = assertAgentModeOrSnapshotsDir(opts);
       const deps = makeDeps(opts);
+      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps);
       const result = await createBackup({ from: opts.from, fileName: opts.fileName }, deps);
       const progress = await maybeWaitForProgress(
         opts.from,
@@ -267,7 +273,10 @@ export function backupCommand(): Command {
         result,
         deps,
       );
-      emit({ ok: true, result, ...(progress && { progress }) }, { pretty: opts.pretty === true });
+      emit(
+        { ok: true, snapshot, result, ...(progress && { progress }) },
+        { pretty: opts.pretty === true },
+      );
     }),
   );
 
@@ -287,20 +296,25 @@ export function backupCommand(): Command {
   );
 
   addWaitOptions(
-    addTargetOptions(
-      cmd
-        .command('download')
-        .description('Request a cloud backup download')
-        .addHelpText(
-          'after',
-          '\nExample:\n  $ xgg backup download --from fds --did <DID> --ts <TS> --file-name <NAME> --wait\n  # download is a prerequisite for `backup generate` / `backup load` of the same\n  # {did,ts,file-name}; result 0 means the file is already in the gateway cache.',
-        ),
+    addSnapshotOptions(
+      addTargetOptions(
+        cmd
+          .command('download')
+          .description('Request a cloud backup download (writes snapshot first)')
+          .addHelpText(
+            'after',
+            '\nExample:\n  $ xgg backup download --from fds --did <DID> --ts <TS> --file-name <NAME> --snapshots-dir ./snapshots/ --wait\n  # download is a prerequisite for `backup generate` / `backup load` of the same\n  # {did,ts,file-name}; result 0 means the file is already in the gateway cache.',
+          ),
+      ),
     ),
   ).action(
-    wrap('backup.download', async (opts: BackupTargetOpts) => {
+    wrap('backup.download', async (opts: SnapshotOpts) => {
       const waitOpts = parseWaitOptions(opts);
+      const guard = assertAgentModeOrSnapshotsDir(opts);
+      const target = backupRef(opts);
       const deps = makeDeps(opts);
-      const result = await downloadBackup({ from: opts.from, backup: backupRef(opts) }, deps);
+      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
+      const result = await downloadBackup({ from: opts.from, backup: target }, deps);
       const progress = await maybeWaitForProgress(
         opts.from,
         'backup.download',
@@ -308,7 +322,10 @@ export function backupCommand(): Command {
         result,
         deps,
       );
-      emit({ ok: true, result, ...(progress && { progress }) }, { pretty: opts.pretty === true });
+      emit(
+        { ok: true, snapshot, result, ...(progress && { progress }) },
+        { pretty: opts.pretty === true },
+      );
     }),
   );
 
@@ -343,9 +360,10 @@ export function backupCommand(): Command {
   ).action(
     wrap('backup.load', async (opts: SnapshotOpts) => {
       const waitOpts = parseWaitOptions(opts);
-      const deps = makeDeps(opts);
+      const guard = assertAgentModeOrSnapshotsDir(opts);
       const target = backupRef(opts);
-      const snapshot = await snapshotBeforeBackupWrite(opts, deps, target);
+      const deps = makeDeps(opts);
+      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
       const result = await loadBackup({ from: opts.from, backup: target }, deps);
       const progress = await maybeWaitForProgress(opts.from, 'backup.load', waitOpts, result, deps);
       emit(
@@ -367,9 +385,10 @@ export function backupCommand(): Command {
     ),
   ).action(
     wrap('backup.delete', async (opts: SnapshotOpts) => {
-      const deps = makeDeps(opts);
+      const guard = assertAgentModeOrSnapshotsDir(opts);
       const target = backupRef(opts);
-      const snapshot = await snapshotBeforeBackupWrite(opts, deps, target);
+      const deps = makeDeps(opts);
+      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
       const result = await deleteBackup({ from: opts.from, backup: target }, deps);
       emit({ ok: true, snapshot, result }, { pretty: opts.pretty === true });
     }),
@@ -390,18 +409,25 @@ export function backupCommand(): Command {
     }),
   );
 
-  addCommonOptions(
-    config
-      .command('set')
-      .description('Set backup configuration')
-      .requiredOption('--auto-backup <true|false>', 'enable or disable automatic cloud backup')
-      .option('--auto-backup-limit <n>', 'optional automatic backup retention limit')
-      .addHelpText('after', '\nExample:\n  $ xgg backup config set --from fds --auto-backup true'),
+  addSnapshotOptions(
+    addCommonOptions(
+      config
+        .command('set')
+        .description('Set backup configuration (writes snapshot first)')
+        .requiredOption('--auto-backup <true|false>', 'enable or disable automatic cloud backup')
+        .option('--auto-backup-limit <n>', 'optional automatic backup retention limit')
+        .addHelpText(
+          'after',
+          '\nExample:\n  $ xgg backup config set --from fds --auto-backup true --snapshots-dir ./snapshots/',
+        ),
+    ),
   ).action(
     wrap('backup.config.set', async (opts: SetConfigOpts) => {
-      const deps = makeDeps(opts);
       const autoBackup = parseBoolean(opts.autoBackup, '--auto-backup');
       const autoBackupLimit = parseOptionalNumber(opts.autoBackupLimit, '--auto-backup-limit');
+      const guard = assertAgentModeOrSnapshotsDir(opts);
+      const deps = makeDeps(opts);
+      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps);
       const result = await setBackupConfig(
         {
           from: opts.from,
@@ -410,7 +436,7 @@ export function backupCommand(): Command {
         },
         deps,
       );
-      emit({ ok: true, result }, { pretty: opts.pretty === true });
+      emit({ ok: true, snapshot, result }, { pretty: opts.pretty === true });
     }),
   );
 
