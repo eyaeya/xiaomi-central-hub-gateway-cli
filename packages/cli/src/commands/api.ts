@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import {
   type AgentCallKind,
   type BackupItem,
@@ -10,6 +9,7 @@ import {
 } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
+import { parseJsonInput, parsePositiveTimerMs, readJsonInput } from '../local-input.js';
 import { emit } from '../output.js';
 import { assertAgentModeOrSnapshotsDir } from './_mutation-guard.js';
 
@@ -110,22 +110,25 @@ export function apiCommand(): Command {
     )
     .action(
       wrap('api', async (method: string, opts: ApiOpts) => {
-        const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
-        if (!baseUrl) throw new ConfigError('missing --base-url or XGG_BASE_URL');
-        let params: unknown = null;
-        if (opts.paramsFile) {
-          params = JSON.parse(readFileSync(opts.paramsFile, 'utf8'));
-        } else if (opts.params) {
-          params = JSON.parse(opts.params);
+        if (opts.params !== undefined && opts.paramsFile !== undefined) {
+          throw new ConfigError('--params and --params-file are mutually exclusive');
         }
+        let params: unknown = null;
+        if (opts.paramsFile !== undefined) {
+          params = await readJsonInput(opts.paramsFile, '--params-file');
+        } else if (opts.params !== undefined) {
+          params = parseJsonInput(opts.params, '--params');
+        }
+        const timeoutMs = parsePositiveTimerMs(opts.timeout, '--timeout');
         const kind = resolveAgentCallKind(method, parseKind(opts.kind));
         const guard = kind === 'write' ? assertAgentModeOrSnapshotsDir(opts) : undefined;
         const backup =
           kind === 'write' && guard?.snapshotEnabled === true
             ? backupContextForRawWrite(method, params)
             : undefined;
+        const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
+        if (!baseUrl) throw new ConfigError('missing --base-url or XGG_BASE_URL');
         const store = createStore(opts.sessionFile ? { sessionFile: opts.sessionFile } : {});
-        const timeoutMs = Number(opts.timeout);
         const snapshot =
           kind === 'write' && guard?.snapshotEnabled === true
             ? await dumpBeforeWrite({

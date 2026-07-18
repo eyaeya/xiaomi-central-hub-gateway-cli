@@ -27,6 +27,7 @@ import {
   printNextStepHintLine,
   withNextSteps,
 } from '../agent-hints.js';
+import { parsePositiveTimerMs } from '../local-input.js';
 import { type TableColumn, emit, emitList } from '../output.js';
 import {
   type ResolvedMutationGuard,
@@ -53,8 +54,9 @@ interface MutationOpts extends VariableOpts {
 function makeDeps(opts: VariableOpts) {
   const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
   if (!baseUrl) throw new ConfigError('missing --base-url or XGG_BASE_URL');
+  const timeoutMs = parsePositiveTimerMs(opts.timeout, '--timeout');
   const store = createStore(opts.sessionFile ? { sessionFile: opts.sessionFile } : {});
-  return { baseUrl, store, timeoutMs: Number(opts.timeout) };
+  return { baseUrl, store, timeoutMs };
 }
 
 async function maybeSnapshot(
@@ -262,8 +264,8 @@ export function variableCommand(): Command {
       wrap('variable.create', async (opts: CreateOpts) => {
         const value = parseScalar(opts.type, opts.value);
         const guard = assertAgentModeOrSnapshotsDir(opts);
-        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         const deps = makeDeps(opts);
+        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         const { snapshotPath } = await maybeSnapshot(guard, deps);
         await createVariable(
           {
@@ -332,8 +334,8 @@ export function variableCommand(): Command {
           throw new ConfigError('variable delete requires either --id <id> or --all');
         }
         const guard = assertAgentModeOrSnapshotsDir(opts);
-        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         const deps = makeDeps(opts);
+        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         const { snapshotPath } = await maybeSnapshot(guard, deps);
         if (opts.all) {
           await deleteVariable({ scope: opts.scope, all: true }, deps);
@@ -431,8 +433,8 @@ to intentionally re-type a variable in place.`,
         // reading stored type, or emitting scope/type notes. A failed guard is
         // a single local CONFIG result with zero IPC traffic.
         const guard = assertAgentModeOrSnapshotsDir(opts);
-        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         const deps = makeDeps(opts);
+        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         // F66d: fetch the stored type FIRST so we can reject a --type
         // mismatch or auto-coerce when --type is omitted. Any error
         // (NotFoundError, AuthExpiredError, …) bubbles unchanged — we do
@@ -515,8 +517,8 @@ to intentionally re-type a variable in place.`,
     .action(
       wrap('variable.set-config', async (opts: SetConfigOpts) => {
         const guard = assertAgentModeOrSnapshotsDir(opts);
-        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         const deps = makeDeps(opts);
+        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
         const { snapshotPath } = await maybeSnapshot(guard, deps);
         await setVariableConfig(
           {
@@ -625,7 +627,7 @@ deviceGet → varSet) and watch the variable.`,
         }
         const intervalMs =
           opts.intervalMs !== undefined
-            ? parsePositiveIntOrThrow(opts.intervalMs, '--interval-ms')
+            ? parsePositiveTimerMs(opts.intervalMs, '--interval-ms')
             : DEFAULT_WATCH_INTERVAL_MS;
         const maxEvents =
           opts.maxEvents !== undefined
@@ -762,17 +764,6 @@ function parseNonnegativeIntOrThrow(raw: string, flag: string): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
     throw new ConfigError(`${flag} must be a nonnegative integer (got '${raw}')`);
-  }
-  return n;
-}
-
-function parsePositiveIntOrThrow(raw: string, flag: string): number {
-  if (!/^[0-9]+$/.test(raw)) {
-    throw new ConfigError(`${flag} must be a positive integer (got '${raw}')`);
-  }
-  const n = Number(raw);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
-    throw new ConfigError(`${flag} must be a positive integer (got '${raw}')`);
   }
   return n;
 }

@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises';
-import { dumpBeforeWrite, upsertGraph } from '@eyaeya/xgg-core';
+import { ConfigError, dumpBeforeWrite, upsertGraph } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {
@@ -9,6 +8,7 @@ import {
   printNextStepHintLine,
   withNextSteps,
 } from '../../agent-hints.js';
+import { readJsonInput } from '../../local-input.js';
 import { emit } from '../../output.js';
 import {
   addRefreshHintFlag,
@@ -50,10 +50,19 @@ export function attachSet(cmd: Command): void {
     )
     .action(
       wrap('rule.set', async (opts: SetOpts) => {
+        const parsedBody = await readJsonInput<unknown>(opts.body, '--body');
+        if (
+          parsedBody === null ||
+          typeof parsedBody !== 'object' ||
+          Array.isArray(parsedBody) ||
+          typeof (parsedBody as Record<string, unknown>).id !== 'string'
+        ) {
+          throw new ConfigError('--body file must contain a JSON object with a string id');
+        }
+        const body = parsedBody as Parameters<typeof upsertGraph>[0];
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
-        const body = JSON.parse(await readFile(opts.body, 'utf8'));
         const snapshotPath = !guard.snapshotEnabled
           ? null
           : await dumpBeforeWrite({

@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import {
   ConfigError,
   type ExportedRule,
@@ -8,6 +7,7 @@ import {
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import { addNextHintFlag, buildNextSteps, printNextStepHintLine } from '../../agent-hints.js';
+import { readJsonInput } from '../../local-input.js';
 
 // `xgg rule import` is a pure text transformer (read JSON → optionally
 // rename → render shell). It does NOT need a gateway connection to render
@@ -67,15 +67,7 @@ Notes:
     )
     .action(
       wrap('rule.import', async (opts: ImportOpts) => {
-        const raw = await readFile(opts.fromFile, 'utf8');
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(raw);
-        } catch (err) {
-          throw new ConfigError(
-            `--from-file does not contain valid JSON: ${(err as Error).message}`,
-          );
-        }
+        const parsed = await readJsonInput(opts.fromFile, '--from-file');
         const exported = parseExportedRule(parsed, opts.fromFile);
 
         const rename: { targetId?: string; targetName?: string } = {};
