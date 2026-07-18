@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidVariableIdentifier, variableIdentifierMessage } from './variable-identifier.js';
 
 export const VarScopeListResponse = z.object({
   scopes: z.array(z.string()),
@@ -126,23 +127,14 @@ const VarScalar = z
 // `xggGlobalInit` / `xggRuleInit` and the scopes `global` / `R<digits>`
 // (e.g. `R123`); all four are pure alphanumeric and pass this regex
 // (regression test covers them).
-const ALNUM_RE = /^[A-Za-z0-9]+$/;
 const VarScopeName = z
   .string()
-  .regex(
-    ALNUM_RE,
-    'scope must be alphanumeric (A-Za-z0-9 only, non-empty — gateway rejects hyphen/underscore/dot/whitespace with "Invalid id format")',
-  );
+  .refine(isValidVariableIdentifier, variableIdentifierMessage('scope'));
 export function isValidVariableScopeName(scope: string): boolean {
-  return VarScopeName.safeParse(scope).success;
+  return isValidVariableIdentifier(scope);
 }
 
-const VarId = z
-  .string()
-  .regex(
-    ALNUM_RE,
-    'id must be alphanumeric (A-Za-z0-9 only, non-empty — gateway rejects hyphen/underscore/dot/whitespace with "Invalid id format")',
-  );
+const VarId = z.string().refine(isValidVariableIdentifier, variableIdentifierMessage('id'));
 
 export const VariableCreateRequest = z
   .object({

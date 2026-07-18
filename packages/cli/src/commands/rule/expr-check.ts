@@ -10,8 +10,10 @@ interface ExprCheckOpts {
 // Local-only: no gateway connection. Validates a varSetNumber arithmetic
 // expression string against the faithful port of the gateway's `Lr.check`
 // parser, so an agent can verify one expression before wiring it into a graph.
-// `$id` / `$scope.id` collapse to the gateway's `$` operand, matching what
-// `--expr` produces, so the verdict equals what `rule set` would give.
+// `$id` / `$scope.id` (identifier grammar `[A-Za-z0-9]+`) collapse to the
+// gateway's `$` operand, matching what `--expr` produces, so the verdict
+// equals what `rule set` would give. Invalid unescaped `$` references fail in
+// the local DSL pre-check before the gateway arithmetic parser runs.
 export function attachExprCheck(cmd: Command): void {
   cmd
     .command('expr-check <expr>')
@@ -24,6 +26,7 @@ export function attachExprCheck(cmd: Command): void {
       [
         '',
         'Use single quotes so the shell does not expand $vars.',
+        'Variable scope/id are non-empty [A-Za-z0-9]+ and may start with a digit; use $$ for a literal $.',
         '',
         'Examples:',
         "  $ xgg rule expr-check '$global.count + 1'",

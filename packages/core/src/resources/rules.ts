@@ -15,6 +15,10 @@ import {
   type RuleSummary,
 } from '../schemas/rule.js';
 import {
+  isValidVariableIdentifier,
+  variableIdentifierMessage,
+} from '../schemas/variable-identifier.js';
+import {
   type AvailableVariable,
   type VarEntry,
   isValidVariableScopeName,
@@ -28,6 +32,7 @@ import { lintGraph } from '../usecases/lint-graph.js';
 import { arePinColorsCompatible, resolvePinColor } from '../usecases/pin-colors.js';
 import { checkReachability } from '../usecases/reachability.js';
 import { validateGraphOrThrow } from '../usecases/validate-graph.js';
+import { scanVariableReference } from '../usecases/variable-reference.js';
 import { nextCardPosition, sizedPos } from './card-geometry.js';
 import { annotateServiceDescription } from './device-partitions.js';
 import { getDevice } from './devices.js';
@@ -716,6 +721,32 @@ export interface AddNodeInput {
   varCheck?: boolean;
 }
 
+function assertShortcutVariableIdentifiers(shortcut: AddNodeShortcut): void {
+  if (shortcut.varScope !== undefined && !isValidVariableIdentifier(shortcut.varScope)) {
+    throw new ConfigError(
+      `--var-scope "${shortcut.varScope}" ${variableIdentifierMessage('scope')}`,
+      { scope: shortcut.varScope },
+    );
+  }
+  if (shortcut.varId !== undefined && !isValidVariableIdentifier(shortcut.varId)) {
+    throw new ConfigError(`--var-id "${shortcut.varId}" ${variableIdentifierMessage('id')}`, {
+      id: shortcut.varId,
+    });
+  }
+  if (
+    shortcut.defaultExprScope !== undefined &&
+    !isValidVariableIdentifier(shortcut.defaultExprScope)
+  ) {
+    throw new ConfigError(
+      `--default-expr-scope "${shortcut.defaultExprScope}" ${variableIdentifierMessage('scope')}`,
+      { scope: shortcut.defaultExprScope },
+    );
+  }
+  if (shortcut.type === 'deviceInputSetVar' && Array.isArray(shortcut.deviceEventArgVars)) {
+    for (const raw of shortcut.deviceEventArgVars) parseEventArgVarTarget(raw);
+  }
+}
+
 // Append a node to a rule's graph. Two reads (getGraph + listRules) feed one
 // write (setGraph): getGraph supplies the current nodes[], listRules supplies
 // the cfg/RuleSummary that setGraph requires (cf. M4 Task 11 e2e finding that
@@ -733,6 +764,9 @@ export async function addNode(
   let rawNode: unknown;
 
   if (input.shortcut) {
+    // Variable grammar is entirely local. Run it before any device/session/
+    // MIoT lookup so malformed authoring flags never reach a gateway path.
+    assertShortcutVariableIdentifiers(input.shortcut);
     if (isNonDeviceShortcut(input.shortcut)) {
       // M10 F17: non-device shortcuts (onLoad / condition / logic gates /
       // timeRange / varChange / alarmClock) build a node entirely from
@@ -826,13 +860,7 @@ export async function addNode(
           // depending on the device spec; full validation happens inside
           // synthesizeNodeFromShortcut (parseEventArgVar) so this only
           // catches the well-formed-but-target-missing case.
-          const m = /^(\d+)=(.+)$/.exec(raw);
-          if (!m) continue; // surfaces via the synth error path
-          const rhs = m[2] as string;
-          const dot = rhs.indexOf('.');
-          if (dot <= 0 || dot === rhs.length - 1) continue;
-          const scope = rhs.slice(0, dot);
-          const id = rhs.slice(dot + 1);
+          const { scope, id } = parseEventArgVarTarget(raw);
           let variables = scopeCache.get(scope);
           if (variables === undefined) {
             variables = await listVariables(scope, deps);
@@ -1068,10 +1096,10 @@ function parseDeviceEventArg(
 
 // B4 / F65a (2026-05-30) — parse a single `--event-arg-var <piid>=<scope>.<id>`
 // expression into one DeviceInputSetVarArgument element. The RHS is split on
-// the FIRST `.` so scope must be alphanumeric (or a rule scope `R<digits>`)
-// and `id` may contain further dots if needed. Mirrors the parse / validate
-// surface of parseDeviceEventArg (B9).
-interface ParsedEventArgVar {
+// the FIRST `.` and both sides use the same non-empty alphanumeric grammar as
+// variable create; any further dot therefore makes the id invalid. Mirrors
+// the parse / validate surface of parseDeviceEventArg (B9).
+export interface ParsedEventArgVar {
   piid: number;
   scope: string;
   id: string;
@@ -1079,23 +1107,12 @@ interface ParsedEventArgVar {
 
 // piid must be a non-negative integer; the rest is split on the first '.'.
 const EVENT_ARG_VAR_REGEX = /^(\d+)=(.+)$/;
-// scope vocab mirrors `variable create --scope` (alphanumeric or R<digits>);
-// id vocab matches the gateway variable-key surface (alphanumeric only on
-// new authoring; older fixtures may carry dotted ids but the c-shortcut
-// surface stays strict to flush typos out).
-const SCOPE_REGEX = /^([A-Za-z][A-Za-z0-9]*|R\d+)$/;
-const ID_REGEX = /^[A-Za-z0-9_]+$/;
 
-function parseEventArgVar(
-  raw: string,
-  event: MiotEvent,
-  service: MiotService,
-  specType: string,
-): ParsedEventArgVar {
+export function parseEventArgVarTarget(raw: string): ParsedEventArgVar {
   const m = EVENT_ARG_VAR_REGEX.exec(raw);
   if (!m) {
     throw new ConfigError(
-      `--event-arg-var "${raw}" must be <piid>=<scope>.<id> (e.g. "1=global.lockOpId")`,
+      `--event-arg-var "${raw}" must be <piid>=<scope>.<id>; ${variableIdentifierMessage('id')}`,
       { raw },
     );
   }
@@ -1104,24 +1121,34 @@ function parseEventArgVar(
   const dot = rhs.indexOf('.');
   if (dot <= 0 || dot === rhs.length - 1) {
     throw new ConfigError(
-      `--event-arg-var "${raw}" RHS must be <scope>.<id> with non-empty scope and id (got "${rhs}")`,
+      `--event-arg-var "${raw}" must contain non-empty <scope>.<id>; ${variableIdentifierMessage('id')}`,
       { raw, rhs },
     );
   }
   const scope = rhs.slice(0, dot);
   const id = rhs.slice(dot + 1);
-  if (!SCOPE_REGEX.test(scope)) {
+  if (!isValidVariableIdentifier(scope)) {
     throw new ConfigError(
-      `--event-arg-var "${raw}" scope "${scope}" must be alphanumeric (start with a letter) or "R<digits>"`,
+      `--event-arg-var "${raw}" scope "${scope}" ${variableIdentifierMessage('scope')}`,
       { raw, scope },
     );
   }
-  if (!ID_REGEX.test(id)) {
+  if (!isValidVariableIdentifier(id)) {
     throw new ConfigError(
-      `--event-arg-var "${raw}" id "${id}" must be alphanumeric / underscore only`,
+      `--event-arg-var "${raw}" id "${id}" ${variableIdentifierMessage('id')}`,
       { raw, id },
     );
   }
+  return { piid, scope, id };
+}
+
+function parseEventArgVar(
+  raw: string,
+  event: MiotEvent,
+  service: MiotService,
+  specType: string,
+): ParsedEventArgVar {
+  const { piid, scope, id } = parseEventArgVarTarget(raw);
   const eventArgs = event.arguments ?? [];
   if (!eventArgs.includes(piid)) {
     throw new ConfigError(
@@ -1210,7 +1237,24 @@ function parseVariableReference(
       { raw },
     );
   }
-  return { scope: ref.slice(0, dot), id: ref.slice(dot + 1), dtype };
+  const scope = ref.slice(0, dot);
+  const id = ref.slice(dot + 1);
+  if (!isValidVariableIdentifier(scope)) {
+    throw new ConfigError(
+      `variable reference scope "${scope}" ${variableIdentifierMessage('scope')}`,
+      {
+        raw,
+        scope,
+      },
+    );
+  }
+  if (!isValidVariableIdentifier(id)) {
+    throw new ConfigError(`variable reference id "${id}" ${variableIdentifierMessage('id')}`, {
+      raw,
+      id,
+    });
+  }
+  return { scope, id, dtype };
 }
 
 function parseVariableParamObject(
@@ -2573,7 +2617,7 @@ function varChangeOpSymbol(op: string): string {
 //   expr   = (literal | varref | escape)*
 //   varref = "$" <ident> ("." <ident>)?
 //   escape = "$$"                  literal '$'
-//   ident  = [A-Za-z][A-Za-z0-9]*  gateway scope/id vocab (alphanumeric)
+//   ident  = [A-Za-z0-9]+           gateway scope/id vocab (alphanumeric)
 //   literal= anything else (incl. Chinese, math operators, function calls)
 //
 // `$id` form defaults the scope to `defaultScope` (caller-provided, "global"
@@ -2588,20 +2632,25 @@ function varChangeOpSymbol(op: string): string {
 //   parseVarSetExpr("cost: $$10")
 //     → [{type:"const",value:"cost: $10"}]
 //
-// Parser is gateway-agnostic on identifier vocab — the gateway's strict
-// alphanumeric rule is checked at setGraph / validator stages, not here.
+// Every unescaped `$` must start a valid reference. This makes the string-card
+// path fail early too: `$bad_id` cannot silently become var `bad` + const
+// `_id`. Use `$$` for a literal dollar.
 
 export type VarSetExprElement =
   | { type: 'const'; value: string }
   | { type: 'var'; scope: string; id: string };
-
-const IDENT_RE = /^([A-Za-z][A-Za-z0-9]*)(?:\.([A-Za-z][A-Za-z0-9]*))?/;
 
 export function parseVarSetExpr(
   input: string,
   opts: { defaultScope?: string } = {},
 ): VarSetExprElement[] {
   const defaultScope = opts.defaultScope ?? 'global';
+  if (!isValidVariableIdentifier(defaultScope)) {
+    throw new ConfigError(
+      `default expression scope "${defaultScope}" ${variableIdentifierMessage('scope')}`,
+      { scope: defaultScope },
+    );
+  }
   const out: VarSetExprElement[] = [];
   let buf = '';
   let i = 0;
@@ -2625,28 +2674,21 @@ export function parseVarSetExpr(
       i += 1;
       continue;
     }
-    const next = input[i + 1];
-    if (next === '$') {
+    const token = scanVariableReference(input, i, defaultScope);
+    if (token.kind === 'escape') {
       buf += '$';
-      i += 2;
+      i += token.consumed;
       continue;
     }
-    const tail = input.slice(i + 1);
-    const m = tail.match(IDENT_RE);
-    if (m === null) {
-      buf += '$';
-      i += 1;
-      continue;
+    if (token.kind === 'invalid') {
+      throw new ConfigError(token.message, {
+        offset: i,
+        reference: token.raw,
+      });
     }
     flushConst();
-    const first = m[1] as string;
-    const second = m[2];
-    if (second !== undefined) {
-      out.push({ type: 'var', scope: first, id: second });
-    } else {
-      out.push({ type: 'var', scope: defaultScope, id: first });
-    }
-    i += 1 + m[0].length;
+    out.push({ type: 'var', scope: token.scope, id: token.id });
+    i += token.consumed;
   }
   flushConst();
   return out;

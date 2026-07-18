@@ -32,7 +32,11 @@ export {
   checkVarSetNumberExprString,
   isValidVarSetNumberExpr,
 } from './var-expr-check.js';
-export type { ExprCheckResult, ExprErrorKind } from './var-expr-check.js';
+export type {
+  ExprCheckFailureKind,
+  ExprCheckResult,
+  ExprErrorKind,
+} from './var-expr-check.js';
 export { login } from './login.js';
 export type { LoginInputs, LoginResult, SpawnFn } from './login.js';
 export { logout } from './logout.js';
