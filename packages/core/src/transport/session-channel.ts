@@ -1,10 +1,12 @@
-import { packInnerJson, unpackInnerJson } from '../crypto/deflate.js';
+import { type InnerJsonLimits, packInnerJson, unpackInnerJson } from '../crypto/deflate.js';
 import type { GcmStream } from '../crypto/gcm.js';
 import { DATA_TYPE, decodeFrame, encodeRawFrame } from './frames.js';
 
 export interface SessionChannelOptions {
   send: GcmStream;
   recv: GcmStream;
+  /** Optional DATA-frame receive ceilings. Defaults are exported from the core package. */
+  receiveLimits?: InnerJsonLimits;
 }
 
 export class SessionChannel {
@@ -28,7 +30,7 @@ export class SessionChannel {
       );
     }
     const inner = this.opts.recv.decrypt(payload);
-    return unpackInnerJson(inner);
+    return unpackInnerJson(inner, this.opts.receiveLimits);
   }
 
   /** Encrypt a raw byte payload (used by 0x03 SESSION_KEY_EXCHANGE — no deflate, no JSON). */
