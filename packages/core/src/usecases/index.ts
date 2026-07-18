@@ -1,5 +1,10 @@
-export { agentCall } from './agent-call.js';
-export type { AgentCallInputs, IpcClientFactory } from './agent-call.js';
+export {
+  KNOWN_GATEWAY_WRITE_METHODS,
+  agentCall,
+  isKnownGatewayWriteMethod,
+  resolveAgentCallKind,
+} from './agent-call.js';
+export type { AgentCallInputs, AgentCallKind, IpcClientFactory } from './agent-call.js';
 export { dumpAll } from './dump-all.js';
 export type { DumpAllResult } from './dump-all.js';
 export { dumpBeforeWrite } from './dump-before-write.js';

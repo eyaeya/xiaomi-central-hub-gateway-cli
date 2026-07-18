@@ -2,9 +2,65 @@ import { assertAgentIdentity } from '../agent/identity.js';
 import type { IpcClient } from '../agent/ipc-client.js';
 import { createIpcClient } from '../agent/ipc-client.js';
 import type { SessionStore } from '../session/index.js';
-import { AuthExpiredError, NetworkError, NotConfirmedError } from '../transport/errors.js';
+import {
+  AuthExpiredError,
+  ConfigError,
+  NetworkError,
+  NotConfirmedError,
+} from '../transport/errors.js';
 
 export type IpcClientFactory = (socketPath: string) => IpcClient;
+export type AgentCallKind = 'read' | 'write';
+
+/**
+ * Gateway methods already proven to mutate state by a typed core call site.
+ *
+ * This is a conflict detector, not an allowlist: unknown/future methods remain
+ * usable with either explicit intent. Keeping the known set here prevents a
+ * low-level caller from silently downgrading an established write to the
+ * default read timeout semantics.
+ */
+export const KNOWN_GATEWAY_WRITE_METHODS: readonly string[] = Object.freeze([
+  '/api/changeGraphConfig',
+  '/api/createBackup',
+  '/api/createVar',
+  '/api/deleteBackup',
+  '/api/deleteGraph',
+  '/api/deleteVar',
+  '/api/downloadBackup',
+  '/api/loadBackup',
+  '/api/setBackupConfig',
+  '/api/setGraph',
+  '/api/setVarConfig',
+  '/api/setVarValue',
+]);
+
+export function isKnownGatewayWriteMethod(method: string): boolean {
+  return KNOWN_GATEWAY_WRITE_METHODS.includes(method);
+}
+
+export function resolveAgentCallKind(method: string, requestedKind?: AgentCallKind): AgentCallKind {
+  // Keep the public JavaScript entry point honest too: TypeScript callers are
+  // narrowed by AgentCallKind, but runtime consumers can still pass arbitrary
+  // strings. Reject them before session access instead of forwarding an
+  // invalid IPC frame or applying the wrong timeout classification.
+  if (requestedKind !== undefined && requestedKind !== 'read' && requestedKind !== 'write') {
+    throw new ConfigError('agent call kind must be either "read" or "write"', {
+      requestedKind,
+    });
+  }
+  if (isKnownGatewayWriteMethod(method) && requestedKind !== 'write') {
+    throw new ConfigError(
+      `known gateway write method "${method}" requires explicit write intent (use kind "write")`,
+      {
+        method,
+        requestedKind: requestedKind ?? null,
+        requiredKind: 'write',
+      },
+    );
+  }
+  return requestedKind ?? 'read';
+}
 
 export interface AgentCallInputs {
   baseUrl: string;
@@ -15,8 +71,12 @@ export interface AgentCallInputs {
   ipcClient?: IpcClientFactory;
   /** Per-call deadline (ms) applied client-side. Default 10_000. */
   timeoutMs?: number;
-  /** Whether the call mutates gateway state. Timeout error class depends on this. */
-  kind?: 'read' | 'write';
+  /**
+   * Whether the call mutates gateway state. Known writes require explicit
+   * `write`; unknown methods default to `read`. Timeout error class depends on
+   * the resolved value.
+   */
+  kind?: AgentCallKind;
 }
 
 /**
@@ -29,14 +89,15 @@ export interface AgentCallInputs {
  *   - IPC connect fails (ECONNREFUSED, socket missing) → `AuthExpiredError`
  *     with a hint to re-login (the agent died; session metadata is stale).
  *   - IPC connects but the call rejects → original error propagates
- *     (`GatewayError` from the gateway, `NetworkError` for timeouts).
+ *     (`GatewayError` from the gateway, `NetworkError` for read timeouts,
+ *     `NotConfirmedError` for write timeouts).
  */
 export async function agentCall(input: AgentCallInputs): Promise<unknown> {
+  const kind = resolveAgentCallKind(input.method, input.kind);
   const entry = await input.store.read(input.baseUrl);
   const factory = input.ipcClient ?? defaultIpcClient;
   const client = factory(entry.socketPath);
   const timeoutMs = input.timeoutMs ?? 10_000;
-  const kind = input.kind ?? 'read';
   try {
     const ping = await withTimeout(
       client.request('$ping', null, { timeoutMs, kind: 'read' }),

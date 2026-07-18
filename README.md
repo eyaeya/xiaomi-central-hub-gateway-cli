@@ -241,6 +241,9 @@ xgg backup list --from fds [--pretty]
 xgg backup create --from fds --file-name <name> [--snapshots-dir <dir>] [--wait]
 xgg backup download --from fds --did <did> --ts <ts> --file-name <name> [--snapshots-dir <dir>] [--wait]
 xgg backup config set --from fds --auto-backup <true|false> [--snapshots-dir <dir>]
+
+xgg api <method> [--kind read] [--params '<json>']
+xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 ```
 
 默认 stdout 输出 JSON，适合 Agent 解析；需要人读表格时加 `--pretty`。例外：`xgg rule logs` 默认输出人类表格，需要 JSON 时显式加 `--json`。
@@ -253,7 +256,7 @@ xgg backup config set --from fds --auto-backup <true|false> [--snapshots-dir <di
 - 变量类型只有 `number` 和 `string`。开关状态建议用数字 `1/0` 或字符串表示。
 - 变量 scope 默认用 `global`。规则本地变量使用 `R<rule-id>` 约定；如果 rule id 含连字符，本地变量 scope 无法按该约定合法创建，建议改用 `global` 或使用纯字母数字 rule id。
 - 网关没有直接读取任意设备实时属性的通用 RPC。需要观测设备属性时，创建规则把属性写入变量，再用 `xgg variable watch` 观察。
-- `xgg api` 是低层逃生口，不建议把它作为常规自动化编辑路径。
+- `xgg api` 是低层逃生口，不建议把它作为常规自动化编辑路径。read 是普通/未知方法的默认 intent；当前已知写接口必须显式传 `--kind write`，并进入与 typed 写命令相同的 Agent guard、完整写前 rollback snapshot 与 `NOT_CONFIRMED` 超时分类。未知的新接口仍可显式选择 read 或 write，JSON 输出会回显最终 `kind`。
 
 ## GitHub 与 npm 内容边界
 
