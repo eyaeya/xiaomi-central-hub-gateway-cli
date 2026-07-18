@@ -50,6 +50,8 @@ export {
   enableRule,
   getRule,
   listRules,
+  parseEventArgVarTarget,
+  parseVarSetExpr,
   relayoutGraph,
   removeEdge,
   removeNode,
@@ -66,6 +68,7 @@ export type {
   AddNodeShortcut,
   CreateRuleOptions,
   EdgeRef,
+  ParsedEventArgVar,
   RelayoutGraphResult,
   RemoveEdgeInput,
   RemoveNodeInput,
@@ -74,6 +77,7 @@ export type {
   UpdateNodeInput,
   UpsertGraphOptions,
   UpsertGraphResult,
+  VarSetExprElement,
 } from './rules.js';
 export type { GraphSetRequest } from '../schemas/rule.js';
 export {

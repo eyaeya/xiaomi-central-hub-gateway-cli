@@ -242,11 +242,11 @@ export function variableCommand(): Command {
       .description('Create a variable in a scope')
       .requiredOption(
         '--scope <name>',
-        'scope name (auto-created if absent; alphanumeric A-Za-z0-9 only — no hyphen / underscore / dot)',
+        'scope name (auto-created if absent; non-empty [A-Za-z0-9]+, may start with a digit)',
       )
       .requiredOption(
         '--id <id>',
-        'variable id within scope (alphanumeric A-Za-z0-9 only — no hyphen / underscore / dot)',
+        'variable id within scope (non-empty [A-Za-z0-9]+, may start with a digit)',
       )
       .requiredOption('--type <type>', 'number|string')
       .requiredOption('--value <value>', 'initial value (JSON-parsed)')
@@ -258,7 +258,7 @@ export function variableCommand(): Command {
     .option('--pretty', 'pretty-print JSON output')
     .addHelpText(
       'after',
-      '\nExample:\n  $ xgg variable create --scope my --id temp --type number --value 0 --name "Temp"\n\nNote: --scope and --id must be alphanumeric (A-Za-z0-9 only — no hyphen / underscore / dot).\nThe gateway rejects other characters with "Invalid id format"; xgg pre-flights this (F65b).',
+      '\nExample:\n  $ xgg variable create --scope my --id temp --type number --value 0 --name "Temp"\n\nNote: --scope and --id must be non-empty ASCII alphanumeric [A-Za-z0-9]+ (digit-leading values are valid; no hyphen / underscore / dot).\nThe gateway rejects other characters with "Invalid id format"; xgg pre-flights this (F65b).',
     )
     .action(
       wrap('variable.create', async (opts: CreateOpts) => {
@@ -313,8 +313,8 @@ export function variableCommand(): Command {
     cmd
       .command('delete')
       .description('Delete a variable, or a whole scope with --all')
-      .requiredOption('--scope <name>', 'scope name (alphanumeric A-Za-z0-9 only)')
-      .option('--id <id>', 'variable id (omit with --all; alphanumeric A-Za-z0-9 only)')
+      .requiredOption('--scope <name>', 'scope name (non-empty [A-Za-z0-9]+)')
+      .option('--id <id>', 'variable id (omit with --all; non-empty [A-Za-z0-9]+)')
       .option('--all', 'delete every variable in the scope'),
   )
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
@@ -392,8 +392,8 @@ export function variableCommand(): Command {
     cmd
       .command('set-value')
       .description('Update a variable value')
-      .requiredOption('--scope <name>', 'scope name (alphanumeric A-Za-z0-9 only)')
-      .requiredOption('--id <id>', 'variable id (alphanumeric A-Za-z0-9 only)')
+      .requiredOption('--scope <name>', 'scope name (non-empty [A-Za-z0-9]+)')
+      .requiredOption('--id <id>', 'variable id (non-empty [A-Za-z0-9]+)')
       .requiredOption('--value <value>', 'new value (JSON-parsed)')
       // F66d (2026-05-31): --type semantics changed. Pre-F66d --type was a
       // parser hint defaulting to "string" — passing the wrong --type on a
@@ -502,8 +502,8 @@ to intentionally re-type a variable in place.`,
     cmd
       .command('set-config')
       .description('Update a variable display name')
-      .requiredOption('--scope <name>', 'scope name (alphanumeric A-Za-z0-9 only)')
-      .requiredOption('--id <id>', 'variable id (alphanumeric A-Za-z0-9 only)')
+      .requiredOption('--scope <name>', 'scope name (non-empty [A-Za-z0-9]+)')
+      .requiredOption('--id <id>', 'variable id (non-empty [A-Za-z0-9]+)')
       .requiredOption('--name <name>', 'new display name'),
   )
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')

@@ -16,6 +16,8 @@
 //     comma list does NOT throw, matching the gateway (the per-card check only
 //     cares whether it throws, never inspects the returned count).
 
+import { scanVariableReference } from './variable-reference.js';
+
 // Distinct failure modes the parser can report. Mirrors the gateway's throw
 // sites 1:1 — every `throw new Error(...)` in checkExpr maps to one kind. The
 // two `'Impossible'` defensive branches map to `internal` (they cannot fire
@@ -27,6 +29,12 @@ export type ExprErrorKind =
   | 'argCount' // wrong number of arguments for a function
   | 'number' // an operand is empty or not a number / `$`
   | 'internal'; // defensive branch (should be unreachable)
+
+// The raw-string DSL has one additional pre-parser failure that the gateway's
+// already-tokenized element template cannot see: an invalid `$scope.id`
+// identifier. Keep it separate from ExprErrorKind so the gateway-parser parity
+// contract above remains exactly six kinds.
+export type ExprCheckFailureKind = ExprErrorKind | 'identifier';
 
 // Thrown by checkExpr. Carries the failure kind so callers can render a
 // specific, localized diagnostic instead of a generic "运算式不合法".
@@ -219,12 +227,13 @@ function assembleExprTemplate(elements: unknown[]): string {
 // Localized, actionable diagnostic per failure kind. The gateway only ever
 // shows the blanket `运算式不合法`; the CLI can do better because it owns the
 // faithful parser. Kept terse so it fits one stderr line + the JSON `message`.
-const DIAGNOSTICS: Record<ExprErrorKind, string> = {
+const DIAGNOSTICS: Record<ExprCheckFailureKind, string> = {
   bracket: '括号不匹配（检查 ( 与 ) 是否成对）',
   expression: '运算符两侧的操作数不合法（每个 + - * / % 左右须各是一个值）',
   function: '未知函数（检查拼写与大小写；无参函数也要带括号，如 rand()）',
   argCount: '函数参数个数不对（用 ASCII 逗号分隔；固定参数函数参数数须精确匹配）',
   number: '存在空操作数或非数字 token（变量请用 $id / $scope.id 引用）',
+  identifier: '变量引用格式不合法（scope/id 必须为非空 [A-Za-z0-9]+；字面 $ 请写 $$）',
   internal: '表达式解析内部错误',
 };
 
@@ -232,7 +241,7 @@ export interface ExprCheckResult {
   /** true when the gateway parser would accept this expression. */
   ok: boolean;
   /** failure kind (only present when `ok` is false). */
-  kind?: ExprErrorKind;
+  kind?: ExprCheckFailureKind;
   /** localized, actionable diagnostic (only present when `ok` is false). */
   message?: string;
   /** the raw gateway error message preserved verbatim (only when `ok` false). */
@@ -289,21 +298,23 @@ export function checkVarSetNumberExprString(input: string): ExprCheckResult {
       i += 1;
       continue;
     }
-    if (input[i + 1] === '$') {
+    const token = scanVariableReference(input, i);
+    if (token.kind === 'escape') {
       template += '$';
-      i += 2;
+      i += token.consumed;
       continue;
     }
-    const m = input.slice(i + 1).match(/^([A-Za-z][A-Za-z0-9]*)(?:\.([A-Za-z][A-Za-z0-9]*))?/);
-    if (m === null) {
-      // bare `$` not followed by an identifier → keep it; the parser accepts a
-      // lone `$` as a number-placeholder operand.
-      template += '$';
-      i += 1;
-      continue;
+    if (token.kind === 'invalid') {
+      return {
+        ok: false,
+        kind: 'identifier',
+        message: DIAGNOSTICS.identifier,
+        rawMessage: token.message,
+        template: input,
+      };
     }
     template += '$';
-    i += 1 + m[0].length;
+    i += token.consumed;
   }
   return runCheck(template);
 }

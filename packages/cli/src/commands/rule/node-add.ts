@@ -182,7 +182,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--event-arg-var <piid>=<scope>.<id>',
-      'deviceInputSetVar event-mode per-arg variable routing (repeatable). Each captured event-argument flows into its own destination variable. Mutually exclusive with --var-scope/--var-id (whole-event single target) and with --cfg. Example: --event-arg-var 1=global.lockOpId --event-arg-var 3=global.lockAction --event-arg-var 5=global.lockMethod (B4/F65a).',
+      'deviceInputSetVar event-mode per-arg variable routing (repeatable). scope/id are non-empty ASCII alphanumeric [A-Za-z0-9]+. Mutually exclusive with --var-scope/--var-id and --cfg. Example: --event-arg-var 1=global.lockOpId',
       (v: string, acc: string[] = []) => acc.concat(v),
       [] as string[],
     )
@@ -242,8 +242,14 @@ export function attachNodeAdd(cmd: Command): void {
       'timeRange/alarmClock fires only on these weekdays (Sun=0..Sat=6, comma-separated)',
       (raw) => raw.split(',').map((s) => Number.parseInt(s, 10)),
     )
-    .option('--var-scope <S>', 'variable scope for varChange/device*SetVar')
-    .option('--var-id <I>', 'variable id for varChange/device*SetVar')
+    .option(
+      '--var-scope <S>',
+      'variable scope for varChange/device*SetVar (non-empty [A-Za-z0-9]+)',
+    )
+    .option(
+      '--var-id <I>',
+      'variable id for varChange/device*SetVar (non-empty [A-Za-z0-9]+; may start with a digit)',
+    )
     .option(
       '--var-type <T>',
       'varChange variable type: number|string (gateway-supported vocab — F16)',
@@ -269,11 +275,11 @@ export function attachNodeAdd(cmd: Command): void {
     .option('--longitude <DEG>', 'alarmClock sunrise/sunset longitude', Number.parseFloat)
     .option(
       '--expr <S>',
-      'varSetNumber/varSetString expression. Use $id (default scope) or $scope.id; $$ for literal $. e.g. "$global.count + 1" or "当前温度: $temp 度"',
+      'varSetNumber/varSetString expression. Variable scope/id use [A-Za-z0-9]+ and may start with a digit. Use $id or $scope.id; $$ for literal $. Invalid unescaped $ references fail locally.',
     )
     .option(
       '--default-expr-scope <S>',
-      'default scope for unqualified $id in --expr (default: global)',
+      'default scope for unqualified $id in --expr (default: global; non-empty [A-Za-z0-9]+)',
     )
     .option(
       '--outputs <N>',

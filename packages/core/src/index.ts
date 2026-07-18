@@ -19,6 +19,11 @@ export * from './transport/errors.js';
 export * from './usecases/index.js';
 export { nodeSchemaForType } from './schemas/nodes/registry.js';
 export {
+  VARIABLE_IDENTIFIER_CONSTRAINT,
+  VARIABLE_IDENTIFIER_PATTERN,
+  isValidVariableIdentifier,
+} from './schemas/variable-identifier.js';
+export {
   JsonRpcRouter,
   SessionChannel,
   StubGatewayServer,
