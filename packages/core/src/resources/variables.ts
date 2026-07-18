@@ -1,4 +1,5 @@
 import {
+  type AvailableVariable,
   type VarConfigResponse,
   VarConfigResponse as VarConfigResponseSchema,
   type VarEntry,
@@ -49,27 +50,37 @@ export async function listVariables(
   return parseOrThrow(VarListResponse, raw, 'VarListResponse');
 }
 
-// F23 (2026-05-30): the UI save() flow calls `varTool.listAvailVars(graphId)`
-// which returns the UNION of local-rule vars (`scope = "R" + graphId`) and
-// global vars; that union is what the variable-existence check uses. Mirror
-// that here so the CLI's `validateGraph` callback can match UI behavior.
+const MISSING_SCOPE_MESSAGES = [/^Invalid scope$/i, /^Scope\s+\S+\s+does not exist$/i];
+
+/** Whether a gateway error means that a variable scope has not been materialised yet. */
+export function isMissingScopeError(error: unknown): error is GatewayError {
+  return (
+    error instanceof GatewayError &&
+    MISSING_SCOPE_MESSAGES.some((pattern) => pattern.test(error.message.trim()))
+  );
+}
+
+// F23 (2026-05-30): the UI save() flow calls `varTool.listAvailVars(graphId)`.
+// Preserve each local-rule/global variable's exact scope and id so a same-named
+// variable in the other scope cannot satisfy the graph's existence check.
 // Missing scopes are tolerated — neither `R<graphId>` nor `global` is required
 // to exist (a rule with no local vars / a fresh gateway with no globals still
 // lints cleanly).
-export async function listAvailVarsForRule(ruleId: string, deps: ResourceDeps): Promise<string[]> {
-  const ids = new Set<string>();
+export async function listAvailVarsForRule(
+  ruleId: string,
+  deps: ResourceDeps,
+): Promise<AvailableVariable[]> {
+  const variables: AvailableVariable[] = [];
   for (const scope of [`R${ruleId}`, 'global']) {
     try {
       const map = await listVariables(scope, deps);
-      for (const id of Object.keys(map)) ids.add(id);
+      for (const id of Object.keys(map)) variables.push({ scope, id });
     } catch (e) {
       // Scope doesn't exist (gateway throws on unknown scope); skip silently.
-      if (!(e instanceof GatewayError) || !/Invalid scope/i.test(e.message)) {
-        throw e;
-      }
+      if (!isMissingScopeError(e)) throw e;
     }
   }
-  return [...ids];
+  return variables;
 }
 
 // F66-VarEntry-strict (2026-05-31): the gateway exposes

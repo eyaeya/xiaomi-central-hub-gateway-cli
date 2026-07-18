@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import {
+  type AvailableVariable,
   ConfigError,
   type LintIssue,
   getRule,
@@ -116,7 +117,7 @@ Note: spec-aware bool dtype check requires daemon access (--rule-id always; --bo
         }
 
         let graph: GraphForValidator;
-        let listAvailVars: ((ruleId: string) => Promise<string[]>) | undefined;
+        let listAvailVars: ((ruleId: string) => Promise<AvailableVariable[]>) | undefined;
         if (opts.body !== undefined) {
           const raw = await readFile(opts.body, 'utf8');
           graph = parseGraph(raw, opts.body);

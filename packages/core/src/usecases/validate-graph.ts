@@ -1,6 +1,7 @@
 import { MiotSpecFetchError } from '../http-client.js';
 import type { DeviceSpec, MiotProperty } from '../schemas/device-spec.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
+import type { AvailableVariable } from '../schemas/variable.js';
 import { ConfigError, NotFoundError } from '../transport/errors.js';
 import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
 import { duplicateNodeIdIssues, findDuplicateNodeIds } from './graph-invariants.js';
@@ -20,7 +21,7 @@ export interface ValidateGraphInput {
   // "卡片变量丢失") and uses scope "global" / "R<graphId>" (else
   // "卡片变量有误"). When this callback is absent, the existence check is
   // skipped — the structural validate-graph still runs.
-  listAvailVars?: (ruleId: string) => Promise<string[]>;
+  listAvailVars?: (ruleId: string) => Promise<AvailableVariable[]>;
 }
 
 const INT_OPERATORS = new Set(['>=', '<=', '=', '!=', '>', '<', 'between', 'include']);
@@ -381,8 +382,9 @@ function checkAlarmClockProps(props: Record<string, unknown>, path: string): Lin
 // var card, walk every {scope,id} the card references and verify:
 //   1. scope is "global" or "R<ruleId>" (the local-rule convention from F21),
 //      else "卡片变量有误";
-//   2. id is in `listAvailVars(ruleId)` (union of local-rule + global vars),
-//      else "卡片变量丢失".
+//   2. the exact (scope,id) tuple is in `listAvailVars(ruleId)`, else
+//      "卡片变量丢失". Same-named variables in the other legal scope do not
+//      satisfy this check.
 // This catches a class of authoring bugs that the per-card `nodeCheckTool`
 // port did not — e.g., a varSetNumber whose target variable was deleted
 // after the rule was authored.
@@ -453,7 +455,7 @@ function checkVarRefs(
   node: Record<string, unknown>,
   idx: number,
   ruleId: string,
-  availVarIds: Set<string>,
+  availableByScope: Map<string, Set<string>>,
 ): LintIssue[] {
   const out: LintIssue[] = [];
   const localScope = `R${ruleId}`;
@@ -468,7 +470,7 @@ function checkVarRefs(
       );
       continue; // matches UI: scope error short-circuits this ref
     }
-    if (!availVarIds.has(ref.id)) {
+    if (availableByScope.get(ref.scope)?.has(ref.id) !== true) {
       out.push(issue(base, `卡片变量丢失: ${ref.scope}.${ref.id}`));
     }
   }
@@ -774,14 +776,21 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
   };
 
   // F23 — fetch the available-vars list once for the whole graph if a
-  // callback is provided. Mirrors the UI save() flow: `o = await
-  // r.listAvailVars(t); i = o.map(e => e.id)`. Falls back gracefully if
-  // the daemon is unreachable.
-  let availVarIds: Set<string> | null = null;
+  // callback is provided. Keep the two legal scopes separate so global.foo
+  // cannot stand in for R<ruleId>.foo (or vice versa).
+  let availableByScope: Map<string, Set<string>> | null = null;
   if (input.listAvailVars !== undefined) {
     try {
-      const ids = await input.listAvailVars(input.graph.id);
-      availVarIds = new Set(ids);
+      const variables = await input.listAvailVars(input.graph.id);
+      availableByScope = new Map<string, Set<string>>();
+      for (const variable of variables) {
+        let ids = availableByScope.get(variable.scope);
+        if (ids === undefined) {
+          ids = new Set<string>();
+          availableByScope.set(variable.scope, ids);
+        }
+        ids.add(variable.id);
+      }
     } catch (e) {
       // F39 (2026-05-30) — narrow the catch. Mirrors
       // listAvailVarsForRule (variables.ts:54-58) and the specForUrn
@@ -790,7 +799,7 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
       // rule ids but transport/schema/auth failures surface instead
       // of silently disabling the var-existence check.
       if (!(e instanceof NotFoundError)) throw e;
-      availVarIds = null;
+      availableByScope = null;
     }
   }
 
@@ -811,8 +820,8 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
     const perCard: LintIssue[] = [];
     perCard.push(...checkKnownWebShape(node, idx));
     perCard.push(...(await checkAgainstSpec(node, idx, specForUrn)));
-    if (availVarIds !== null) {
-      perCard.push(...checkVarRefs(node, idx, input.graph.id, availVarIds));
+    if (availableByScope !== null) {
+      perCard.push(...checkVarRefs(node, idx, input.graph.id, availableByScope));
     }
     issues.push(...perCard);
     // F24 KEYSTONE backstop: only when the precise checks found nothing, run

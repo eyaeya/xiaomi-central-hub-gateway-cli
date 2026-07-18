@@ -5,6 +5,12 @@ export const VarScopeListResponse = z.object({
 });
 export type VarScopeListResponse = z.infer<typeof VarScopeListResponse>;
 
+/** A variable identity as exposed to rule-graph validation. */
+export interface AvailableVariable {
+  scope: string;
+  id: string;
+}
+
 // F66-VarEntry-strict (2026-05-31) — read-side schema. Bundle ground
 // truth (ai-config-v5.28b650.js):
 //   - The UI maps listVar via `Object.keys(e).map(n => ({...e[n], scope,

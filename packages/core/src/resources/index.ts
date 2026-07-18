@@ -88,6 +88,7 @@ export {
   setVariableValue,
 } from './variables.js';
 export type {
+  AvailableVariable,
   VarConfigResponse,
   VarEntry,
   VarValueResponse,
