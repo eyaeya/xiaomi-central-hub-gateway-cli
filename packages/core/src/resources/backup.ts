@@ -17,7 +17,7 @@ import {
   BackupTargetInput,
   BackupTargetRequest,
 } from '../schemas/backup.js';
-import { parseOrThrow } from '../transport/errors.js';
+import { NotConfirmedError, parseOrThrow } from '../transport/errors.js';
 import { agentCall } from '../usecases/agent-call.js';
 import type { ResourceDeps } from './index.js';
 
@@ -162,7 +162,7 @@ export interface WaitForBackupOptions {
 // downloadBackup found the file already in its local cache), so there is nothing
 // to poll — return done immediately.
 export async function waitForBackupProgress(
-  input: { from: string; progressId: number },
+  input: { from: string; progressId: number; operation?: string },
   deps: ResourceDeps,
   opts: WaitForBackupOptions = {},
 ): Promise<BackupProgressResponse> {
@@ -175,8 +175,15 @@ export async function waitForBackupProgress(
     const p = await poll({ from: input.from, progressId: input.progressId }, deps);
     if (p.progress >= 100) return p;
     if (Date.now() >= deadline) {
-      throw new Error(
+      throw new NotConfirmedError(
         `backup progress polling timed out after ${pollTimeoutMs}ms (progressId=${input.progressId}, last=${p.progress})`,
+        {
+          operation: input.operation ?? 'backup.operation',
+          from: input.from,
+          progressId: input.progressId,
+          lastProgress: p.progress,
+          pollTimeoutMs,
+        },
       );
     }
     await sleep(pollIntervalMs);
