@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MIOT_COMPARISON_CONTRACT } from '../miot-comparison.js';
 import { Connection, NodeId, Position } from './common.js';
 
 // F40 (2026-05-30) — props are now a dtype-discriminated union mirroring
@@ -29,7 +30,7 @@ const DeviceGetBoolProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('boolean'),
-    operator: z.literal('='),
+    operator: z.literal(MIOT_COMPARISON_CONTRACT.boolean.equalityWireOperator),
     v1: z.boolean(),
   })
   .strict();
@@ -38,8 +39,8 @@ const DeviceGetStringProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('string'),
-    operator: z.literal('='),
-    v1: z.string(),
+    operator: z.literal(MIOT_COMPARISON_CONTRACT.string.equalityWireOperator),
+    v1: z.string().min(1),
   })
   .strict();
 
@@ -47,7 +48,7 @@ const DeviceGetIntIncludeProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('int'),
-    operator: z.literal('include'),
+    operator: z.literal(MIOT_COMPARISON_CONTRACT.int.equalityWireOperator),
     v1: z.array(z.number().int()),
   })
   .strict();
@@ -66,7 +67,7 @@ const DeviceGetIntScalarProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('int'),
-    operator: z.enum(['>=', '<=', '=', '!=', '>', '<']),
+    operator: z.enum(MIOT_COMPARISON_CONTRACT.int.scalarWireOperators),
     v1: z.number().int(),
   })
   .strict();
@@ -85,7 +86,7 @@ const DeviceGetFloatScalarProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('float'),
-    operator: z.enum(['>', '<']),
+    operator: z.enum(MIOT_COMPARISON_CONTRACT.float.scalarWireOperators),
     v1: z.number(),
   })
   .strict();

@@ -270,7 +270,9 @@ CONFIG (exit 5): cross-color edge: event output "<a>.output" → state input "<b
 | `int`（所有整型 int8..int64/uint*） | `gt lt gte lte eq ne between` | `operator:"include"` + 数组 `v1:[n]` |
 | `float` | **仅 `gt lt between`**（`gte/lte/eq/ne` 被网关拒 `Invalid operator`） | —（float 不做等值） |
 | `bool` | 仅 `eq` | `operator:"="` + 标量 `v1:true/false`（`--threshold 1`=真，`0`=假） |
-| `string` | 仅 `eq` | `operator:"include"` + 字符串数组 |
+| `string` | 仅 `eq` | `operator:"="` + 标量 `v1:"open"`（用 `--property-value open`） |
+
+设备 string 属性比较必须用 `--property-value <S>`，不能用数值 `--threshold`；例如 `--device-property mode --op eq --property-value open`。`--property-value` 不经 `parseFloat`，空字符串会在本地被拒绝。
 
 变量比较（`varChange`/`varGet`）规则不同：
 
@@ -686,7 +688,7 @@ xgg rule enable <规则id>            # 单独启用
 
 要点：设备卡整型等值 = `include` + 数组 `v1:[n]`；变量 number 等值 = `"="` + 标量（不是数组）。float 只支持 `> < between`；bool/string 只支持 `=`。`varChange` 的 props 还要带 `"preload": true|false`（变化即比较 / 仅被读时比较），`varGet` 不带 `preload`。shortcut 的 `--op eq/gt/lt/gte/lte/ne/between` 会自动选对 operator 与编码。
 
-> **value-list（枚举）属性按 `int` 处理。** 当 MIoT format 是 `float` 但该属性带 `value-list`（离散枚举值）时，`xgg rule node add` 合成卡片时会把 dtype 降级为 `int`，于是可用 `eq/ne/include` 对具体枚举值做等值/集合匹配——枚举值是离散的，纯 `float` 只给 `gt lt between` 无法命中某个枚举值。所以上表「float 仅 gt lt between」只适用于**非枚举**的连续 float 属性；带 value-list 的 float 属性走 `int` 那一行（`deviceInput`/`deviceGet` 的属性模式，以及 `deviceInputSetVar`/`deviceGetSetVar` 的事件参数同此规则）。不确定某属性是否带枚举，先 `xgg device spec <did> --pretty` 看它有没有 value-list。
+> **value-list（枚举）属性的比较 dtype 按 `int` 处理。** 当 MIoT format 是 `float` 但该属性带非空 `value-list`（离散枚举值）时，共享 dtype projector 会把比较 dtype 投影为 `int`。`deviceInput`/`deviceGet` 属性比较因此可用 `eq/ne`（其中 shortcut `eq` 编码为 wire `include` 数组）；`deviceInput` 事件参数过滤则使用 `int` 的标量 `= != > < >= <=` 算子。**非枚举**的连续 float 仍保持 `float`：属性 shortcut 仅支持 `gt lt between`，事件过滤仅支持 `> <`。写变量类卡使用下文的 `number / string` 词表，不使用此比较 dtype。不确定某属性是否带枚举，先 `xgg device spec <did> --pretty` 看它有没有 value-list。
 
 > **两套 dtype 词表别混。** 比较卡（deviceInput/deviceGet 的 `props.dtype`）用 **MIoT 格式**：`int / float / boolean / string`（决定能用哪些算子，见第六节）。而**写变量类卡**（deviceInputSetVar 的属性 `dtype` 与事件 arg 的 `dtype`、deviceGetSetVar 的 `dtype`、deviceOutput 变量入参的 `dtype`）用**变量类型词表**：`number / boolean / string`（**没有 `int`/`float`**——写 `int` 会被 strict schema 拒）。
 

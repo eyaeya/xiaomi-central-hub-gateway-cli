@@ -81,6 +81,7 @@ export type {
   ExportedCommand,
   ExportedRule,
   ExportFlag,
+  ExportRuleDeps,
   ExportRuleInputs,
   RenameOptions,
 } from './export-rule.js';

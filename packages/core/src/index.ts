@@ -24,6 +24,20 @@ export {
   isValidVariableIdentifier,
 } from './schemas/variable-identifier.js';
 export {
+  MIOT_COMPARISON_CONTRACT,
+  hasMiotValueList,
+  isMiotEventWireOperator,
+  isMiotWireOperator,
+  miotShortcutOperatorToWire,
+  parseFiniteDecimalLiteral,
+  projectMiotComparisonDtype,
+} from './schemas/miot-comparison.js';
+export type {
+  MiotComparisonDtype,
+  MiotComparisonShortcutOperator,
+  MiotComparisonWireOperator,
+} from './schemas/miot-comparison.js';
+export {
   JsonRpcRouter,
   SessionChannel,
   StubGatewayServer,

@@ -124,6 +124,95 @@ test('Commander failures use one CONFIG JSON line while help and version stay su
   }
 });
 
+test('property comparison flag misuse fails before Agent guards, snapshots, or IPC', async (t) => {
+  const agent = await startFakeAgent(t);
+  const scenarios = [
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'counter',
+      '--threshold',
+      '1',
+      '--property-value',
+      'open',
+    ],
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'deviceInput',
+      '--device-did',
+      'd',
+      '--device-event',
+      'click',
+      '--property-value',
+      'open',
+    ],
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'deviceGet',
+      '--device-did',
+      'd',
+      '--device-property',
+      'mode',
+      '--property-value',
+      '',
+    ],
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'deviceGet',
+      '--device-did',
+      'd',
+      '--device-property',
+      'mode',
+      '--property-value',
+      'open',
+      '--threshold',
+      '1',
+    ],
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'deviceGet',
+      '--device-did',
+      'd',
+      '--device-property',
+      'mode',
+      '--property-value',
+      'open',
+      '--cfg',
+      '{}',
+    ],
+  ];
+
+  for (const args of scenarios) {
+    agent.frames.length = 0;
+    assertSingleConfig(await runCli(args, agent));
+    assert.deepEqual(agent.frames, []);
+  }
+});
+
 test('every user JSON surface reports CONFIG without echoing malformed payloads or using IPC', async (t) => {
   const agent = await startFakeAgent(t);
   const secret = 'issue31-sensitive-payload';
