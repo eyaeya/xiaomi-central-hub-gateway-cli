@@ -123,7 +123,12 @@ export type BackupSetConfigRequest = z.infer<typeof BackupSetConfigRequest>;
 export const BackupOperationResponse = z.union([
   z.object({ progress_id: z.number() }).passthrough(),
   z.object({ progressId: z.number() }).passthrough(),
-  z.object({}).passthrough(),
+  // The gateway uses exact `{}` for synchronous completion with no async
+  // progress to poll. Keep this branch strict so malformed/unknown objects do
+  // not fall through after the named progress variants reject them.
+  z
+    .object({})
+    .strict(),
   z.boolean(),
   z.number(),
   z.string(),
