@@ -60,11 +60,24 @@ export async function createIpcServer(opts: IpcServerOptions): Promise<IpcServer
     liveSockets.add(socket);
     const rl = createInterface({ input: socket, crlfDelay: Number.POSITIVE_INFINITY });
     socket.on('error', () => {
-      // Client-side aborts surface here; keep the server alive.
+      // Client-side aborts are scoped to this connection; keep the server alive.
+      socket.destroy();
     });
-    socket.on('close', () => liveSockets.delete(socket));
+    socket.on('close', () => {
+      liveSockets.delete(socket);
+      rl.close();
+    });
+    rl.on('error', () => {
+      // readline forwards input stream errors on its own EventEmitter. Without
+      // this listener an ordinary peer reset can become an uncaught exception.
+      socket.destroy();
+    });
     rl.on('line', (line) => {
-      void handleLine(line, socket, opts.handler);
+      void handleLine(line, socket, opts.handler).catch(() => {
+        // handleLine serialises normal handler failures. Any remaining failure
+        // belongs to this connection and must not escape to the daemon process.
+        socket.destroy();
+      });
     });
   });
 
@@ -116,16 +129,46 @@ async function handleLine(line: string, socket: Socket, handler: IpcHandler): Pr
       ...(parsed.timeoutMs !== undefined && { timeoutMs: parsed.timeoutMs }),
       ...(parsed.kind !== undefined && { kind: parsed.kind }),
     });
-    writeLine(socket, { id, result });
+    await writeLine(socket, { id, result });
   } catch (e) {
     const env = errorEnvelope(e);
-    writeLine(socket, id === undefined ? { id: 0, error: env } : { id, error: env });
+    await writeLine(socket, id === undefined ? { id: 0, error: env } : { id, error: env });
   }
 }
 
-function writeLine(socket: Socket, payload: unknown): void {
-  if (socket.destroyed) return;
-  socket.write(`${JSON.stringify(payload)}\n`);
+/**
+ * Write one response without allowing peer disconnects to reject handleLine.
+ *
+ * `socket.destroyed` is only a snapshot: the peer can close between that check
+ * and the asynchronous write. The callback plus error/close listeners contain
+ * that race within this connection and report `false` instead of throwing.
+ */
+function writeLine(socket: Socket, payload: unknown): Promise<boolean> {
+  if (socket.destroyed || socket.writableEnded || !socket.writable) {
+    return Promise.resolve(false);
+  }
+  const line = `${JSON.stringify(payload)}\n`;
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (written: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.off('close', onClose);
+      socket.off('error', onError);
+      resolve(written);
+    };
+    const onClose = (): void => finish(false);
+    const onError = (): void => finish(false);
+
+    socket.once('close', onClose);
+    socket.once('error', onError);
+    try {
+      socket.write(line, (error) => finish(error === undefined || error === null));
+    } catch {
+      // A close can race synchronously with socket.write as well.
+      finish(false);
+    }
+  });
 }
 
 function errorEnvelope(e: unknown): ErrorEnvelope {
