@@ -21,6 +21,7 @@
 
 import { NodeUnion } from '../schemas/nodes/index.js';
 import { targetInputPinStatus } from './edge-integrity.js';
+import { duplicateNodeIdIssues, findDuplicateNodeIds } from './graph-invariants.js';
 import type { LintIssue } from './lint-graph.js';
 
 // Self-firing nodes: their `inputs` schema is empty, or they are bootstrapped
@@ -111,6 +112,8 @@ function makeUF(ids: string[]): {
  */
 export function checkReachability(rawNodes: unknown[]): LintIssue[] {
   if (!Array.isArray(rawNodes) || rawNodes.length === 0) return [];
+  const identityIssues = duplicateNodeIdIssues(findDuplicateNodeIds(rawNodes));
+  if (identityIssues.length > 0) return identityIssues;
 
   const parsed = parseNodes(rawNodes);
   if (parsed.length === 0) return [];

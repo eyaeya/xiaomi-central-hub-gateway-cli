@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Connection, NodeId, Position } from './common.js';
+import { Connection, NodeId, Position, hasContiguousNumberedPins } from './common.js';
 
 export const LogicOrCfg = z
   .object({
@@ -18,8 +18,8 @@ export type LogicOrProps = z.infer<typeof LogicOrProps>;
 // `--inputs N` c-shortcut emits them. See signal-or.ts.
 export const LogicOrInputs = z
   .record(z.string().regex(/^input\d+$/), z.null())
-  .refine((obj) => 'input0' in obj && 'input1' in obj, {
-    message: 'logicOr inputs must include at least input0 and input1',
+  .refine((obj) => hasContiguousNumberedPins(obj, 'input', 2), {
+    message: 'logicOr inputs must form the contiguous range input0..input(N-1), with N >= 2',
   });
 export type LogicOrInputs = z.infer<typeof LogicOrInputs>;
 
