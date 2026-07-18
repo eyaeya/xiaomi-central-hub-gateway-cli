@@ -58,9 +58,12 @@ xgg rule layout <rule-id>
 xgg rule validate --rule-id <rule-id>
 xgg rule enable <rule-id>
 xgg rule logs <rule-id> --tail 20
+xgg rule export <rule-id> --target-id <new-rule-id>
 ```
 
 本地候选图可直接用 `xgg rule validate --body candidate.json` 或管道到 `--stdin`。这两种模式默认不读取 session、不连接 daemon/网关，也不访问公网；只有显式添加 `--spec-aware` 才会查询公网 MIoT spec registry。`--rule-id` 会读取已登录网关的规则和变量，但同样只在添加 `--spec-aware` 后查询公网 spec。
+
+克隆规则时，CLI 只把 `R<source-id>` 规则内变量迁移到 `R<target-id>`，先只读预检完整变量计划，再在空规则、节点、边和 enable 之前准备被引用的本地变量。已有目标变量只有在类型、当前值和显示名完全兼容时才保留；稳定目标上的任何既有冲突都在首次创建前停止，且永不覆盖。真实创建仍会重新检查以防竞态；网关没有跨变量事务，并发修改仍可能让脚本中途停止，可用每次写前生成的 snapshot 恢复。`global` 变量作为明确的外部依赖保留，必须由目标网关预先提供。
 
 默认 stdout 输出 JSON，适合脚本和 Agent 解析；加 `--pretty` 输出人读表格。
 

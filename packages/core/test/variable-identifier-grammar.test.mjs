@@ -175,7 +175,7 @@ test('varSet export reparses digit-leading IDs without changing elements', async
   const elements = [
     { type: 'var', scope: 'global', id: '123' },
     { type: 'const', value: '|' },
-    { type: 'var', scope: 'R456', id: '789' },
+    { type: 'var', scope: 'global', id: '789' },
     { type: 'const', value: '|$' },
   ];
   const exported = await exportRuleFromView(
@@ -212,6 +212,6 @@ test('varSet export reparses digit-leading IDs without changing elements', async
   assert.ok(nodeAdd);
   assert.equal(nodeAdd.flags.find((flag) => flag.name === '--var-id')?.value, '123');
   const expr = nodeAdd.flags.find((flag) => flag.name === '--expr')?.value;
-  assert.equal(expr, '$global.123|$R456.789|$$');
+  assert.equal(expr, '$global.123|$global.789|$$');
   assert.deepEqual(parseVarSetExpr(expr), elements);
 });

@@ -1,20 +1,25 @@
 import { getDevice } from '../resources/devices.js';
-import type { ResourceDeps } from '../resources/index.js';
+import type { AvailableVariable, ResourceDeps } from '../resources/index.js';
 import {
   type RuleView,
   type VarSetExprElement,
   getRule,
   listRules,
+  parseEventArgVarTarget,
   parseVarSetExpr,
 } from '../resources/rules.js';
+import { isMissingScopeError, listVariables } from '../resources/variables.js';
 import type { DeviceSpec, MiotAction, MiotProperty, MiotService } from '../schemas/device-spec.js';
 import {
   type MiotComparisonDtype,
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { durationToMilliseconds, isDurationUnit } from '../schemas/nodes/duration.js';
+import { isValidVariableIdentifier } from '../schemas/variable-identifier.js';
+import { isValidVariableScopeName } from '../schemas/variable.js';
 import { ConfigError, NotFoundError } from '../transport/errors.js';
 import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
+import { scanVariableReference } from './variable-reference.js';
 
 /**
  * One CLI invocation the exporter emits (in order). The shape is structured
@@ -23,6 +28,15 @@ import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
  */
 export type ExportedCommand =
   | { kind: 'shell-prelude'; comment: string }
+  | { kind: 'external-variable-dependency'; scope: 'global'; id: string }
+  | {
+      kind: 'variable-create';
+      scope: string;
+      id: string;
+      type: 'number' | 'string';
+      value: number | string;
+      userData: { name: string; [key: string]: unknown };
+    }
   | { kind: 'rule-set-body'; bodyJson: string; description: string }
   | { kind: 'node-add'; nodeId: string; type: string; flags: ExportFlag[]; comment: string }
   | { kind: 'edge-add'; from: string; to: string }
@@ -43,6 +57,8 @@ export interface ExportedRule {
   /** Whether the source rule was enabled (affects whether we append rule enable). */
   enable: boolean;
   commands: ExportedCommand[];
+  /** Global variables remain external dependencies and are never recreated. */
+  externalVariables: Array<{ scope: 'global'; id: string }>;
   /** Warnings that should be surfaced to the user but don't block emission. */
   warnings: string[];
 }
@@ -115,32 +131,31 @@ export async function exportRuleFromView(
   strictRoundtrip = false,
 ): Promise<ExportedRule> {
   const commands: ExportedCommand[] = [];
-  const warnings: string[] = [];
+  const nodeWarnings: string[] = [];
+  const variablePlan = await prepareVariablePlan(view, deps);
 
-  // Resolve final id + name from rename options. Auto-prepend "[Cloned] " is
-  // a friendliness layer: if the caller provided a new id but no new name,
-  // we change the name too so the clone is distinguishable on the gateway UI.
-  const finalId = rename?.targetId ?? view.id;
-  const finalName =
-    rename?.targetName !== undefined
-      ? rename.targetName
-      : rename?.targetId !== undefined
-        ? `[Cloned] ${view.cfg.userData.name}`
-        : view.cfg.userData.name;
-
-  // 1. Prelude + shell rule body so the script is self-contained.
+  // Always build the source-id representation first. applyRename() is the
+  // single rename/remap funnel for both live export --target-id and the
+  // offline `rule import --target-id` path, so the two cannot drift apart.
   commands.push({
     kind: 'shell-prelude',
-    comment: `Recreate rule ${finalId} ("${finalName}") from a gateway snapshot.`,
+    comment: `Recreate rule ${view.id} ("${view.cfg.userData.name}") from a gateway snapshot.`,
   });
+  commands.push(...variablePlan.dependencyCommands);
+  commands.push(...variablePlan.createCommands);
+
+  // Variable preparation deliberately precedes even the empty graph write.
+  // Replay-safe variable creation retains an exact compatible target but
+  // rejects every mismatch without overwriting it, so a conflict aborts
+  // before this script can touch the rule body.
   const shellCfg = {
-    id: finalId,
+    id: view.id,
     nodes: [] as unknown[],
     cfg: {
-      id: finalId,
+      id: view.id,
       uiType: view.cfg.uiType,
       enable: false,
-      userData: { ...view.cfg.userData, name: finalName },
+      userData: { ...view.cfg.userData },
     },
   };
   commands.push({
@@ -156,7 +171,7 @@ export async function exportRuleFromView(
   //    only fetches once.
   const specCache = new Map<string, DeviceSpec>();
   for (const node of view.nodes) {
-    const result = await renderNode(node, deps, specCache, warnings);
+    const result = await renderNode(node, deps, specCache, nodeWarnings);
     if (result) commands.push(result);
     // F54 (2026-05-30) — diff the node's cfg against the renderer's
     // known keys. Anything else (e.g. UI-saved cfg.simplified, cfg.urn
@@ -174,7 +189,7 @@ export async function exportRuleFromView(
             { nodeId: n.id, nodeType: n.type, dropped },
           );
         }
-        warnings.push(msg);
+        nodeWarnings.push(msg);
       }
     }
   }
@@ -200,15 +215,171 @@ export async function exportRuleFromView(
 
   // 5. Bubble up any per-node warnings (e.g. unknown node types we passed
   //    through as raw cfg) so the CLI can stderr them.
-  for (const w of warnings) commands.push({ kind: 'warning', message: w });
+  for (const w of nodeWarnings) commands.push({ kind: 'warning', message: w });
 
-  return {
-    ruleId: finalId,
-    ruleName: finalName,
+  const exported: ExportedRule = {
+    ruleId: view.id,
+    ruleName: view.cfg.userData.name,
     enable: view.cfg.enable,
     commands,
-    warnings,
+    externalVariables: variablePlan.externalVariables,
+    warnings: [...variablePlan.warnings, ...nodeWarnings],
   };
+  return rename === undefined ? exported : applyRename(exported, rename);
+}
+
+interface VariableReference extends AvailableVariable {
+  paths: string[];
+}
+
+interface VariablePlan {
+  dependencyCommands: ExportedCommand[];
+  createCommands: ExportedCommand[];
+  externalVariables: Array<{ scope: 'global'; id: string }>;
+  warnings: string[];
+}
+
+async function prepareVariablePlan(view: RuleView, deps: ResourceDeps): Promise<VariablePlan> {
+  const sourceScope = `R${view.id}`;
+  const references = collectVariableReferences(view.nodes);
+  const unknown = references.filter((ref) => ref.scope !== sourceScope && ref.scope !== 'global');
+  if (unknown.length > 0) {
+    throw new ConfigError(
+      `rule ${view.id} references unsupported external variable scope(s): ${unknown
+        .map((ref) => `${ref.scope}.${ref.id}`)
+        .join(
+          ', ',
+        )}. Export only recognizes "global" as external and "${sourceScope}" as rule-local; refusing to guess or rewrite another scope.`,
+      { references: unknown },
+    );
+  }
+
+  const externalVariables = references
+    .filter((ref) => ref.scope === 'global')
+    .map((ref) => ({ scope: 'global' as const, id: ref.id }));
+  const warnings = externalVariables.map(
+    ({ scope, id }) =>
+      `external variable dependency ${scope}.${id} is not recreated; it must already exist with a compatible type/value before replay`,
+  );
+  const dependencyCommands: ExportedCommand[] = externalVariables.map(({ scope, id }) => ({
+    kind: 'external-variable-dependency',
+    scope,
+    id,
+  }));
+
+  const localReferences = references.filter((ref) => ref.scope === sourceScope);
+  if (localReferences.length === 0) {
+    return { dependencyCommands, createCommands: [], externalVariables, warnings };
+  }
+  if (!isValidVariableScopeName(sourceScope)) {
+    throw new ConfigError(
+      `rule-local variable scope "${sourceScope}" cannot be recreated because gateway variable scopes must be alphanumeric`,
+      { ruleId: view.id, scope: sourceScope },
+    );
+  }
+
+  let sourceVariables: Awaited<ReturnType<typeof listVariables>>;
+  try {
+    sourceVariables = await listVariables(sourceScope, deps);
+  } catch (error) {
+    if (isMissingScopeError(error)) {
+      throw new ConfigError(
+        `rule ${view.id} references local variables but source scope "${sourceScope}" does not exist`,
+        { ruleId: view.id, scope: sourceScope, variables: localReferences.map((ref) => ref.id) },
+      );
+    }
+    throw error;
+  }
+
+  const createCommands: ExportedCommand[] = [];
+  for (const ref of localReferences) {
+    const entry = Object.hasOwn(sourceVariables, ref.id) ? sourceVariables[ref.id] : undefined;
+    if (entry === undefined) {
+      throw new ConfigError(
+        `rule ${view.id} references missing local variable ${sourceScope}.${ref.id}; refusing to emit a clone that cannot replay`,
+        { ruleId: view.id, scope: sourceScope, id: ref.id, paths: ref.paths },
+      );
+    }
+    if (
+      (entry.type === 'number' && typeof entry.value !== 'number') ||
+      (entry.type === 'string' && typeof entry.value !== 'string')
+    ) {
+      throw new ConfigError(
+        `local variable ${sourceScope}.${ref.id} has type "${entry.type}" but a ${typeof entry.value} value; it cannot be recreated safely`,
+        { scope: sourceScope, id: ref.id, type: entry.type, valueType: typeof entry.value },
+      );
+    }
+    createCommands.push({
+      kind: 'variable-create',
+      scope: sourceScope,
+      id: ref.id,
+      type: entry.type,
+      value: entry.value,
+      userData: { ...entry.userData },
+    });
+  }
+
+  return { dependencyCommands, createCommands, externalVariables, warnings };
+}
+
+function collectVariableReferences(nodes: readonly unknown[]): VariableReference[] {
+  const refs = new Map<string, VariableReference>();
+  const add = (candidate: unknown, path: string): void => {
+    if (!isRecord(candidate)) return;
+    const { scope, id } = candidate;
+    if (typeof scope !== 'string' || typeof id !== 'string') return;
+    const key = `${scope}\u0000${id}`;
+    const prior = refs.get(key);
+    if (prior === undefined) refs.set(key, { scope, id, paths: [path] });
+    else prior.paths.push(path);
+  };
+
+  for (const rawNode of nodes) {
+    if (!isRecord(rawNode) || typeof rawNode.type !== 'string') continue;
+    const props = isRecord(rawNode.props) ? rawNode.props : {};
+    const nodePath = `node ${typeof rawNode.id === 'string' ? rawNode.id : '<unknown>'}`;
+    switch (rawNode.type) {
+      case 'varChange':
+      case 'varGet':
+      case 'varSetNumber':
+      case 'varSetString':
+        add(props, `${nodePath}.props`);
+        if (rawNode.type === 'varSetNumber' || rawNode.type === 'varSetString') {
+          const elements = Array.isArray(props.elements) ? props.elements : [];
+          for (const [index, element] of elements.entries()) {
+            if (isRecord(element) && element.type === 'var') {
+              add(element, `${nodePath}.props.elements[${index}]`);
+            }
+          }
+        }
+        break;
+      case 'deviceInputSetVar': {
+        add(props, `${nodePath}.props`);
+        const args = Array.isArray(props.arguments) ? props.arguments : [];
+        for (const [index, arg] of args.entries()) {
+          add(arg, `${nodePath}.props.arguments[${index}]`);
+        }
+        break;
+      }
+      case 'deviceGetSetVar':
+        add(props, `${nodePath}.props`);
+        break;
+      case 'deviceOutput': {
+        if (isDeviceOutputVariableRef(props)) add(props, `${nodePath}.props`);
+        const ins = Array.isArray(props.ins) ? props.ins : [];
+        for (const [index, arg] of ins.entries()) {
+          if (isRecord(arg) && isDeviceOutputVariableRef(arg)) {
+            add(arg, `${nodePath}.props.ins[${index}]`);
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  return [...refs.values()].sort(
+    (a, b) => a.scope.localeCompare(b.scope) || a.id.localeCompare(b.id),
+  );
 }
 
 async function renderNode(
@@ -1192,6 +1363,13 @@ function reverseVarChangeOp(operator: string): string | null {
 export function applyRename(exported: ExportedRule, rename: RenameOptions): ExportedRule {
   if (rename.targetId === undefined && rename.targetName === undefined) return exported;
 
+  if (rename.targetId === exported.ruleId) {
+    throw new ConfigError(
+      `--target-id "${rename.targetId}" equals the source rule id. Omit --target-id for an in-place replay, or choose a distinct id for a clone; xgg will not silently treat source=target as a clone.`,
+      { sourceId: exported.ruleId, targetId: rename.targetId },
+    );
+  }
+
   const finalId = rename.targetId ?? exported.ruleId;
   const finalName =
     rename.targetName !== undefined
@@ -1199,6 +1377,12 @@ export function applyRename(exported: ExportedRule, rename: RenameOptions): Expo
       : rename.targetId !== undefined
         ? `[Cloned] ${exported.ruleName}`
         : exported.ruleName;
+
+  const sourceScope = `R${exported.ruleId}`;
+  const targetScope = `R${finalId}`;
+  if (rename.targetId !== undefined) {
+    assertRenameHasCompleteVariablePlan(exported, sourceScope, targetScope);
+  }
 
   const commands = exported.commands.map((cmd): ExportedCommand => {
     if (cmd.kind === 'shell-prelude') {
@@ -1218,6 +1402,15 @@ export function applyRename(exported: ExportedRule, rename: RenameOptions): Expo
       body.cfg.userData = { ...body.cfg.userData, name: finalName };
       return { ...cmd, bodyJson: JSON.stringify(body, null, 2) };
     }
+    if (rename.targetId !== undefined && cmd.kind === 'variable-create') {
+      return { ...cmd, scope: cmd.scope === sourceScope ? targetScope : cmd.scope };
+    }
+    if (rename.targetId !== undefined && cmd.kind === 'node-add') {
+      return {
+        ...cmd,
+        flags: cmd.flags.map((flag) => remapVariableFlag(flag, sourceScope, targetScope)),
+      };
+    }
     return cmd;
   });
 
@@ -1227,6 +1420,296 @@ export function applyRename(exported: ExportedRule, rename: RenameOptions): Expo
     ruleName: finalName,
     commands,
   };
+}
+
+function assertRenameHasCompleteVariablePlan(
+  exported: ExportedRule,
+  sourceScope: string,
+  targetScope: string,
+): void {
+  const refs = collectCommandVariableReferences(exported.commands);
+  const unknown = refs.filter((ref) => ref.scope !== sourceScope && ref.scope !== 'global');
+  if (unknown.length > 0) {
+    throw new ConfigError(
+      `cannot clone export for rule ${exported.ruleId}: unsupported external variable scope(s) ${unknown
+        .map((ref) => `${ref.scope}.${ref.id}`)
+        .join(', ')}. Only ${sourceScope} is remapped; global remains external.`,
+      { sourceRuleId: exported.ruleId, references: unknown },
+    );
+  }
+
+  const localDefinitions = new Set(
+    exported.commands
+      .filter(
+        (command): command is Extract<ExportedCommand, { kind: 'variable-create' }> =>
+          command.kind === 'variable-create' && command.scope === sourceScope,
+      )
+      .map((command) => command.id),
+  );
+  const externalDeclarations = new Set(
+    exported.commands
+      .filter(
+        (command): command is Extract<ExportedCommand, { kind: 'external-variable-dependency' }> =>
+          command.kind === 'external-variable-dependency',
+      )
+      .map((command) => command.id),
+  );
+  const missingLocal = refs.filter(
+    (ref) => ref.scope === sourceScope && !localDefinitions.has(ref.id),
+  );
+  if (missingLocal.length > 0) {
+    throw new ConfigError(
+      `cannot clone export for rule ${exported.ruleId}: local variable snapshot(s) are missing for ${missingLocal
+        .map((ref) => `${sourceScope}.${ref.id}`)
+        .join(', ')}. Re-export from the source gateway before using --target-id.`,
+      { sourceRuleId: exported.ruleId, references: missingLocal },
+    );
+  }
+  const undeclaredGlobals = refs.filter(
+    (ref) => ref.scope === 'global' && !externalDeclarations.has(ref.id),
+  );
+  if (undeclaredGlobals.length > 0) {
+    throw new ConfigError(
+      `cannot clone export for rule ${exported.ruleId}: global dependencies are not explicit for ${undeclaredGlobals
+        .map((ref) => `global.${ref.id}`)
+        .join(', ')}. Re-export from the source gateway before using --target-id.`,
+      { sourceRuleId: exported.ruleId, references: undeclaredGlobals },
+    );
+  }
+  if (localDefinitions.size > 0 && !isValidVariableScopeName(targetScope)) {
+    throw new ConfigError(
+      `target rule id "${targetScope.slice(1)}" cannot host cloned local variables because scope "${targetScope}" is not alphanumeric`,
+      { targetRuleId: targetScope.slice(1), targetScope },
+    );
+  }
+}
+
+function collectCommandVariableReferences(
+  commands: readonly ExportedCommand[],
+): VariableReference[] {
+  const refs = new Map<string, VariableReference>();
+  const add = (scope: string, id: string, path: string): void => {
+    const key = `${scope}\u0000${id}`;
+    const prior = refs.get(key);
+    if (prior === undefined) refs.set(key, { scope, id, paths: [path] });
+    else prior.paths.push(path);
+  };
+
+  for (const command of commands) {
+    if (command.kind !== 'node-add') continue;
+    const scopeFlags = command.flags.filter((flag) => flag.name === '--var-scope');
+    const idFlags = command.flags.filter((flag) => flag.name === '--var-id');
+    if (scopeFlags.length > 0 || idFlags.length > 0) {
+      const scope = scopeFlags[0]?.value;
+      const id = idFlags[0]?.value;
+      if (
+        scopeFlags.length !== 1 ||
+        idFlags.length !== 1 ||
+        scope === undefined ||
+        id === undefined
+      ) {
+        throw new ConfigError(
+          `cannot clone exported node ${command.nodeId} safely: --var-scope and --var-id must appear exactly once as a pair`,
+          { nodeId: command.nodeId },
+        );
+      }
+      assertValidCloneVariableReference(scope, id, `node ${command.nodeId}`);
+      add(scope, id, `node ${command.nodeId}`);
+    }
+
+    for (const flag of command.flags) {
+      if (flag.value === undefined) {
+        if (
+          flag.name === '--expr' ||
+          flag.name === '--event-arg-var' ||
+          flag.name === '--value' ||
+          flag.name === '--params'
+        ) {
+          throw new ConfigError(
+            `cannot clone exported node ${command.nodeId} safely: ${flag.name} requires a value`,
+            { nodeId: command.nodeId, flag: flag.name },
+          );
+        }
+        continue;
+      }
+      if (flag.name === '--expr') {
+        for (const ref of qualifiedExpressionReferences(flag.value)) {
+          add(ref.scope, ref.id, `node ${command.nodeId} --expr`);
+        }
+      } else if (flag.name === '--event-arg-var') {
+        const ref = parseEventArgumentVariable(flag.value);
+        if (ref !== null) add(ref.scope, ref.id, `node ${command.nodeId} --event-arg-var`);
+      } else if (flag.name === '--value') {
+        const ref = parseDollarVariableReference(flag.value);
+        if (ref !== null) add(ref.scope, ref.id, `node ${command.nodeId} --value`);
+      } else if (flag.name === '--params') {
+        for (const ref of variableReferencesInParams(flag.value)) {
+          add(ref.scope, ref.id, `node ${command.nodeId} --params`);
+        }
+      }
+    }
+  }
+  return [...refs.values()].sort(
+    (a, b) => a.scope.localeCompare(b.scope) || a.id.localeCompare(b.id),
+  );
+}
+
+function remapVariableFlag(flag: ExportFlag, sourceScope: string, targetScope: string): ExportFlag {
+  if (flag.value === undefined) return flag;
+  if (flag.name === '--var-scope' && flag.value === sourceScope) {
+    return { ...flag, value: targetScope };
+  }
+  if (flag.name === '--expr') {
+    return { ...flag, value: remapExpressionScope(flag.value, sourceScope, targetScope) };
+  }
+  if (flag.name === '--event-arg-var') {
+    const ref = parseEventArgumentVariable(flag.value);
+    if (ref?.scope === sourceScope) {
+      return { ...flag, value: `${ref.prefix}${targetScope}.${ref.id}` };
+    }
+  }
+  if (flag.name === '--value') {
+    const ref = parseDollarVariableReference(flag.value);
+    if (ref?.scope === sourceScope) return { ...flag, value: `$${targetScope}.${ref.id}` };
+  }
+  if (flag.name === '--params') {
+    return { ...flag, value: remapParamsScope(flag.value, sourceScope, targetScope) };
+  }
+  return flag;
+}
+
+function qualifiedExpressionReferences(input: string): Array<{ scope: string; id: string }> {
+  const refs: Array<{ scope: string; id: string }> = [];
+  scanQualifiedExpression(input, (scope, id) => {
+    refs.push({ scope, id });
+    return scope;
+  });
+  return refs;
+}
+
+function remapExpressionScope(input: string, sourceScope: string, targetScope: string): string {
+  return scanQualifiedExpression(input, (scope) => (scope === sourceScope ? targetScope : scope));
+}
+
+function scanQualifiedExpression(
+  input: string,
+  mapScope: (scope: string, id: string) => string,
+): string {
+  let output = '';
+  let index = 0;
+  while (index < input.length) {
+    if (input[index] !== '$') {
+      output += input[index];
+      index += 1;
+      continue;
+    }
+    const token = scanVariableReference(input, index);
+    const raw = input.slice(index, index + token.consumed);
+    if (token.kind === 'invalid') {
+      throw new ConfigError(
+        `cannot clone exported --expr safely: invalid variable reference at offset ${index}; re-export from the current xgg version or replay without --target-id`,
+        { offset: index },
+      );
+    }
+    if (token.kind === 'escape') {
+      output += raw;
+      index += token.consumed;
+      continue;
+    }
+    const mappedScope = mapScope(token.scope, token.id);
+    const wasQualified = raw.slice(1).includes('.');
+    output += mappedScope === token.scope && !wasQualified ? raw : `$${mappedScope}.${token.id}`;
+    index += token.consumed;
+  }
+  return output;
+}
+
+function parseEventArgumentVariable(
+  value: string,
+): { prefix: string; scope: string; id: string } | null {
+  const { piid, scope, id } = parseEventArgVarTarget(value);
+  return { prefix: `${piid}=`, scope, id };
+}
+
+function parseDollarVariableReference(value: string): { scope: string; id: string } | null {
+  if (!value.startsWith('$')) return null;
+  const token = scanVariableReference(value, 0);
+  if (
+    token.kind !== 'reference' ||
+    token.consumed !== value.length ||
+    !value.slice(1).includes('.')
+  ) {
+    throw new ConfigError(
+      'cannot clone exported --value safely: a dollar-prefixed value must be one complete $<scope>.<id> reference',
+    );
+  }
+  return { scope: token.scope, id: token.id };
+}
+
+function variableReferencesInParams(value: string): Array<{ scope: string; id: string }> {
+  const parsed = parseCloneParams(value);
+  const refs: Array<{ scope: string; id: string }> = [];
+  for (const [key, raw] of Object.entries(parsed)) {
+    const ref = parseCloneParamVariable(raw, key);
+    if (ref !== null) refs.push(ref);
+  }
+  return refs;
+}
+
+function remapParamsScope(value: string, sourceScope: string, targetScope: string): string {
+  const parsed = parseCloneParams(value);
+  for (const [key, raw] of Object.entries(parsed)) {
+    const ref = parseCloneParamVariable(raw, key);
+    if (ref !== null) {
+      (raw as Record<string, unknown>).$var =
+        `${ref.scope === sourceScope ? targetScope : ref.scope}.${ref.id}`;
+    }
+  }
+  return JSON.stringify(parsed);
+}
+
+function parseCloneParams(value: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ConfigError('cannot clone exported --params safely: it must contain valid JSON');
+  }
+  if (!isRecord(parsed)) {
+    throw new ConfigError('cannot clone exported --params safely: it must be a JSON object');
+  }
+  return parsed;
+}
+
+function parseCloneParamVariable(
+  value: unknown,
+  key: string,
+): { scope: string; id: string } | null {
+  if (value === null || typeof value !== 'object') return null;
+  if (!isRecord(value) || !Object.hasOwn(value, '$var') || typeof value.$var !== 'string') {
+    throw new ConfigError(
+      `cannot clone exported --params safely: parameter ${key} must be a scalar or a {$var:<scope>.<id>} object`,
+      { parameter: key },
+    );
+  }
+  const marker = value.$var.startsWith('$') ? value.$var : `$${value.$var}`;
+  const ref = parseDollarVariableReference(marker);
+  if (ref === null) {
+    throw new ConfigError(
+      `cannot clone exported --params safely: parameter ${key} has an invalid variable marker`,
+      { parameter: key },
+    );
+  }
+  return ref;
+}
+
+function assertValidCloneVariableReference(scope: string, id: string, path: string): void {
+  if (!isValidVariableIdentifier(scope) || !isValidVariableIdentifier(id)) {
+    throw new ConfigError(
+      `cannot clone exported ${path} safely: variable scope and id must be non-empty ASCII alphanumeric identifiers`,
+      { path },
+    );
+  }
 }
 
 /**
@@ -1255,10 +1738,47 @@ export function renderExportedAsShell(
   let bodyFileInitialized = false;
   lines.push('');
 
+  const variableCreates = exported.commands.filter(
+    (command): command is Extract<ExportedCommand, { kind: 'variable-create' }> =>
+      command.kind === 'variable-create',
+  );
+  for (const command of exported.commands) {
+    if (command.kind === 'shell-prelude') {
+      lines.push(...renderShellComment(command.comment));
+    } else if (command.kind === 'external-variable-dependency') {
+      lines.push(
+        ...renderShellComment(
+          `EXTERNAL VARIABLE: ${command.scope}.${command.id} must already exist with a compatible type/value; this script does not create or modify global variables.`,
+        ),
+      );
+    }
+  }
+  if (variableCreates.length > 0) {
+    lines.push(
+      ...renderShellComment(
+        'Preflight the complete local-variable plan before any createVar call. Stable target conflicts therefore leave both variables and the rule body untouched; each later create repeats the compatibility check to stay safe under races.',
+      ),
+    );
+    for (const command of variableCreates) {
+      lines.push(renderVariableCreateInvocation(command, true));
+    }
+    lines.push('');
+    for (const command of variableCreates) {
+      lines.push(
+        ...renderShellComment(
+          `Prepare rule-local variable ${command.scope}.${command.id} from the source snapshot's current value. A byte-for-value compatible target is retained; any mismatch fails and is never overwritten.`,
+        ),
+      );
+      lines.push(renderVariableCreateInvocation(command, false));
+      lines.push('');
+    }
+  }
+
   for (const cmd of exported.commands) {
     switch (cmd.kind) {
       case 'shell-prelude':
-        lines.push(...renderShellComment(cmd.comment));
+      case 'external-variable-dependency':
+      case 'variable-create':
         break;
       case 'rule-set-body': {
         if (!bodyFileInitialized) {
@@ -1304,6 +1824,13 @@ export function renderExportedAsShell(
   }
 
   return `${lines.join('\n')}\n`;
+}
+
+function renderVariableCreateInvocation(
+  command: Extract<ExportedCommand, { kind: 'variable-create' }>,
+  checkOnly: boolean,
+): string {
+  return `"$XGG" variable create --scope ${shellQuote(command.scope)} --id ${shellQuote(command.id)} --type ${shellQuote(command.type)} --value ${shellQuote(String(command.value))} --name ${shellQuote(command.userData.name)} --if-compatible${checkOnly ? ' --check-only' : ''} --allow-unknown-scope --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`;
 }
 
 function renderFlagsForShell(flags: ExportFlag[]): string {

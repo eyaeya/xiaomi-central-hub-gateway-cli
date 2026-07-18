@@ -85,6 +85,7 @@ export {
   deleteVariable,
   getVariableConfig,
   getVariableValue,
+  isMissingScopeError,
   listAvailVarsForRule,
   listScopes,
   listVariables,

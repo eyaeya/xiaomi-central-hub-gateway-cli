@@ -66,6 +66,8 @@ Examples:
 
   $ xgg rule export 1779888258312 --target-id 9999999999999
       # Clone the rule under a new id; name becomes "[Cloned] <orig>".
+      # R1779888258312 local-variable references become R9999999999999;
+      # referenced local variables are prepared before the empty rule.
 
   $ xgg rule export 1779888258312 --target-id 9999999999999 \\
         --target-name "按钮播报-备份"
@@ -76,6 +78,17 @@ Limitations:
     the current --expr DSL. Export fails before returning a script when a
     variable/constant boundary would be absorbed or rejected; add an explicit
     separator in the source expression or use rule view JSON round-trip.
+  - Rule-local variables are captured with their current value and display
+    name. Replay preflights the complete variable plan before any create,
+    then repeats each compatibility check while writing. A stable
+    type/value/name mismatch therefore aborts before any variable or rule
+    write and is never overwritten. The gateway has no cross-variable
+    transaction, so concurrent changes can still stop a replay after an
+    earlier create; the per-write snapshots remain the recovery path.
+    --target-id must differ from the source id.
+  - global variables are explicit external dependencies: export lists them in
+    JSON/warnings but never creates or modifies them. Any non-global scope
+    other than R<source-id> is rejected instead of guessed.
   - deviceInput / deviceOutput nodes require the source gateway to be
     online so the spec for the referenced device can be fetched (used
     to reverse siid+piid into property/action/event names).

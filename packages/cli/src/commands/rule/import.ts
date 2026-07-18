@@ -61,6 +61,14 @@ Notes:
   - Re-emit is purely a text transformation; no gateway access is needed
     to *render* the script. The replay (\`| bash\`) still talks to the
     gateway and requires \`xgg login\`.
+  - Cloning rewrites only R<source-id> to R<target-id>. Captured local
+    variables are fully preflighted before any create, then prepared first
+    from their exported current values. A stable mismatching target aborts
+    before any variable/rule write and is never overwritten; concurrent
+    changes can still stop replay because the gateway has no transaction.
+    global variables remain declared external dependencies and must exist.
+  - --target-id must differ from the exported rule id. Omit it for same-id
+    replay or use only --target-name for an in-place rename.
   - Device-output / device-input nodes referenced in the export must still
     exist on the target gateway with the same DIDs; otherwise the replay
     fails at the corresponding \`rule node add\` step.`,
@@ -120,5 +128,13 @@ function parseExportedRule(parsed: unknown, sourcePath: string): ExportedRule {
       `--from-file ${sourcePath} is not a valid \`xgg rule export\` payload (missing ruleId / ruleName / enable / commands / warnings)`,
     );
   }
-  return body as unknown as ExportedRule;
+  return {
+    ...(body as unknown as ExportedRule),
+    // Pre-variable-aware exports did not carry this field. Same-id re-render
+    // stays backward compatible; applyRename() separately refuses an unsafe
+    // clone if its command stream references undeclared variables.
+    externalVariables: Array.isArray(body.externalVariables)
+      ? (body.externalVariables as ExportedRule['externalVariables'])
+      : [],
+  };
 }

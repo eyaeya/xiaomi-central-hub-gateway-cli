@@ -1,7 +1,9 @@
 import {
   ConfigError,
+  GatewayError,
   NotFoundError,
   type SnapshotAllVariablesResult,
+  VARIABLE_IDENTIFIER_CONSTRAINT,
   type VariableSnapshot,
   createStore,
   createVariable,
@@ -10,6 +12,8 @@ import {
   dumpBeforeWrite,
   getVariableConfig,
   getVariableValue,
+  isMissingScopeError,
+  isValidVariableIdentifier,
   listScopes,
   listVariables,
   setVariableConfig,
@@ -234,6 +238,8 @@ export function variableCommand(): Command {
     type: 'number' | 'string';
     value: string;
     name: string;
+    ifCompatible?: boolean;
+    checkOnly?: boolean;
   }
 
   addMutationFlags(
@@ -250,7 +256,15 @@ export function variableCommand(): Command {
       )
       .requiredOption('--type <type>', 'number|string')
       .requiredOption('--value <value>', 'initial value (JSON-parsed)')
-      .requiredOption('--name <name>', 'display name'),
+      .requiredOption('--name <name>', 'display name')
+      .option(
+        '--if-compatible',
+        'replay-safe mode: keep an existing variable only when type, value and display name match exactly; otherwise fail without overwriting it',
+      )
+      .option(
+        '--check-only',
+        'with --if-compatible, perform a read-only compatibility preflight; a missing variable is reported but not created',
+      ),
   )
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
@@ -258,35 +272,139 @@ export function variableCommand(): Command {
     .option('--pretty', 'pretty-print JSON output')
     .addHelpText(
       'after',
-      '\nExample:\n  $ xgg variable create --scope my --id temp --type number --value 0 --name "Temp"\n\nNote: --scope and --id must be non-empty ASCII alphanumeric [A-Za-z0-9]+ (digit-leading values are valid; no hyphen / underscore / dot).\nThe gateway rejects other characters with "Invalid id format"; xgg pre-flights this (F65b).',
+      '\nExample:\n  $ xgg variable create --scope my --id temp --type number --value 0 --name "Temp"\n\nNote: --scope and --id must be non-empty ASCII alphanumeric [A-Za-z0-9]+ (digit-leading values are valid; no hyphen / underscore / dot).\nThe gateway rejects other characters with "Invalid id format"; xgg pre-flights this (F65b).\n--check-only requires --if-compatible and performs only the read phase used by multi-variable replay preflight.',
     )
     .action(
       wrap('variable.create', async (opts: CreateOpts) => {
         const value = parseScalar(opts.type, opts.value);
+        if (opts.checkOnly === true && opts.ifCompatible !== true) {
+          throw new ConfigError('--check-only requires --if-compatible');
+        }
+        if (!isValidVariableIdentifier(opts.scope)) {
+          throw new ConfigError(`--scope "${opts.scope}" ${VARIABLE_IDENTIFIER_CONSTRAINT}`, {
+            flag: '--scope',
+            scope: opts.scope,
+          });
+        }
+        if (!isValidVariableIdentifier(opts.id)) {
+          throw new ConfigError(`--id "${opts.id}" ${VARIABLE_IDENTIFIER_CONSTRAINT}`, {
+            flag: '--id',
+            id: opts.id,
+          });
+        }
+        if (opts.name.trim().length < 1) {
+          throw new ConfigError('--name must be non-empty', { flag: '--name' });
+        }
+        // F66-VarUserData-relax (2026-05-31): the Mi-Home UI's createVar
+        // payload sends only userData.name; validate that same final request
+        // locally before --check-only can take its early read-only return.
+        const createInput = {
+          scope: opts.scope,
+          id: opts.id,
+          type: opts.type,
+          value,
+          userData: { name: opts.name },
+        };
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const deps = makeDeps(opts);
         warnIfGhostScope(opts.scope, opts.allowUnknownScope);
+        if (opts.ifCompatible === true) {
+          const existing = await readExistingVariableForReplay(opts.scope, opts.id, deps);
+          if (existing !== undefined) {
+            assertVariableReplayCompatible(existing, {
+              scope: opts.scope,
+              id: opts.id,
+              type: opts.type,
+              value,
+              name: opts.name,
+            });
+            const payload = {
+              ok: true,
+              scope: opts.scope,
+              id: opts.id,
+              type: opts.type,
+              value,
+              created: false,
+              existing: true,
+              ...(opts.checkOnly === true && { checkOnly: true }),
+              snapshot: null,
+            } as Record<string, unknown>;
+            const hints = buildNextSteps('variable.create', payload, opts);
+            emit(nextHintOptedOut(opts) ? payload : withNextSteps(payload, hints), {
+              pretty: opts.pretty === true,
+            });
+            printNextStepHintLine(hints, opts, {
+              contextLabel: `variable ${opts.scope}/${opts.id} (already compatible)`,
+            });
+            return;
+          }
+          if (opts.checkOnly === true) {
+            const payload = {
+              ok: true,
+              scope: opts.scope,
+              id: opts.id,
+              type: opts.type,
+              value,
+              created: false,
+              existing: false,
+              missing: true,
+              checkOnly: true,
+              snapshot: null,
+            } as Record<string, unknown>;
+            const hints = buildNextSteps('variable.create', payload, opts);
+            emit(nextHintOptedOut(opts) ? payload : withNextSteps(payload, hints), {
+              pretty: opts.pretty === true,
+            });
+            printNextStepHintLine(hints, opts, {
+              contextLabel: `variable ${opts.scope}/${opts.id} (preflight: missing)`,
+            });
+            return;
+          }
+        }
         const { snapshotPath } = await maybeSnapshot(guard, deps);
-        await createVariable(
-          {
+        try {
+          await createVariable(createInput, deps);
+        } catch (error) {
+          // A variable can appear after the read-only replay preflight but
+          // before createVar. Re-read only the known duplicate race: retain an
+          // exact compatible winner, reject a mismatch, and never overwrite.
+          if (opts.ifCompatible !== true || !isVariableAlreadyExistsError(error)) throw error;
+          const raced = await readExistingVariableForReplay(opts.scope, opts.id, deps);
+          if (raced === undefined) throw error;
+          assertVariableReplayCompatible(raced, {
             scope: opts.scope,
             id: opts.id,
             type: opts.type,
             value,
-            // F66-VarUserData-relax (2026-05-31): bundle ground truth — the
-            // Mi-Home UI's Da.createVar payload only sends `userData: {name}`;
-            // gateway has no lastUpdateTime / version constraint at all. The
-            // pre-F66 synthesized timestamp / version was xgg-side ghost data.
-            userData: { name: opts.name },
-          },
-          deps,
-        );
+            name: opts.name,
+          });
+          const payload = {
+            ok: true,
+            scope: opts.scope,
+            id: opts.id,
+            type: opts.type,
+            value,
+            created: false,
+            existing: true,
+            raced: true,
+            snapshot: snapshotPath,
+          } as Record<string, unknown>;
+          const hints = buildNextSteps('variable.create', payload, opts);
+          emit(nextHintOptedOut(opts) ? payload : withNextSteps(payload, hints), {
+            pretty: opts.pretty === true,
+          });
+          printNextStepHintLine(hints, opts, {
+            contextLabel: `variable ${opts.scope}/${opts.id} (concurrent compatible create)`,
+          });
+          return;
+        }
         const payload = {
           ok: true,
           scope: opts.scope,
           id: opts.id,
           type: opts.type,
           value,
+          ...(opts.ifCompatible === true && { created: true }),
           snapshot: snapshotPath,
         } as Record<string, unknown>;
         const hints = buildNextSteps('variable.create', payload, opts);
@@ -546,6 +664,61 @@ to intentionally re-type a variable in place.`,
   attachWatch(cmd);
 
   return cmd;
+}
+
+type ReplayVariableEntry = Awaited<ReturnType<typeof listVariables>>[string];
+
+function isVariableAlreadyExistsError(error: unknown): error is GatewayError {
+  return error instanceof GatewayError && /already exists|duplicate/i.test(error.message);
+}
+
+async function readExistingVariableForReplay(
+  scope: string,
+  id: string,
+  deps: ReturnType<typeof makeDeps>,
+): Promise<ReplayVariableEntry | undefined> {
+  try {
+    const variables = await listVariables(scope, deps);
+    return Object.hasOwn(variables, id) ? variables[id] : undefined;
+  } catch (error) {
+    if (isMissingScopeError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function assertVariableReplayCompatible(
+  existing: ReplayVariableEntry,
+  expected: {
+    scope: string;
+    id: string;
+    type: 'number' | 'string';
+    value: number | string;
+    name: string;
+  },
+): void {
+  const actual = {
+    type: existing.type,
+    value: existing.value,
+    name: existing.userData.name,
+  };
+  if (
+    actual.type === expected.type &&
+    Object.is(actual.value, expected.value) &&
+    actual.name === expected.name
+  ) {
+    return;
+  }
+  throw new ConfigError(
+    `variable ${expected.scope}.${expected.id} already exists with different type, value, or display name; replay will not overwrite it`,
+    {
+      scope: expected.scope,
+      id: expected.id,
+      expected: { type: expected.type, value: expected.value, name: expected.name },
+      actual,
+    },
+  );
 }
 
 // ── watch (snapshot + optional --follow polling) ───────────────────────────
