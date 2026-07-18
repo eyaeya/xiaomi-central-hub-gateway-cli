@@ -1,10 +1,10 @@
-import { tmpdir } from 'node:os';
+import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { SessionStore } from '../session/store.js';
 import type { HandshakeResult } from '../transport/handshake.js';
 import type { BinaryTransport } from '../transport/index.js';
 import { connectWs, runPasscodeHandshake, toWsUrl } from '../transport/index.js';
-import { resolveAgentEndpoint } from './ipc-path.js';
+import { defaultAgentRuntimeDir, resolveAgentEndpoint } from './ipc-path.js';
 import { runAgent } from './process.js';
 
 export interface RunAgentMainOptions {
@@ -16,7 +16,7 @@ export interface RunAgentMainOptions {
   agentVersion: string;
   /** Override the v2 session-file path (defaults to env / `~/.xgg/session.json`). */
   sessionFile?: string;
-  /** Directory for the Unix domain socket on POSIX. Defaults to `tmpdir()`. */
+  /** Directory for the Unix domain socket on POSIX. Defaults to a private user runtime dir. */
   socketBaseDir?: string;
   /** Inactivity window after which the agent self-exits. Default 60 min. */
   idleMs?: number;
@@ -49,9 +49,11 @@ interface ReadyPayload {
  * just `await`s `handle.done` and exits.
  */
 export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentMainHandle> {
+  const socketBaseDir = opts.socketBaseDir ?? defaultAgentRuntimeDir();
+  if (process.platform !== 'win32') await ensurePrivateRuntimeDir(socketBaseDir);
   const endpoint = resolveAgentEndpoint({
     host: opts.host,
-    baseDir: opts.socketBaseDir ?? tmpdir(),
+    baseDir: socketBaseDir,
     platform: process.platform,
   });
   const transport = opts.connect
@@ -115,6 +117,19 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
     done,
     stop: agent.stop,
   };
+}
+
+async function ensurePrivateRuntimeDir(path: string): Promise<void> {
+  await fs.mkdir(path, { recursive: true, mode: 0o700 });
+  const stat = await fs.lstat(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`agent runtime path is not a directory: ${path}`);
+  }
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+  if (uid !== undefined && stat.uid !== uid) {
+    throw new Error(`agent runtime directory is not owned by the current user: ${path}`);
+  }
+  await fs.chmod(path, 0o700);
 }
 
 function defaultSessionFilePath(): string {

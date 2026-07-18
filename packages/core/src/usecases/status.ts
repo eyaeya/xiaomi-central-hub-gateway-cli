@@ -1,7 +1,10 @@
+import { assertAgentIdentity } from '../agent/identity.js';
 import { createIpcClient } from '../agent/ipc-client.js';
 import type { SessionStore } from '../session/index.js';
 
 export interface PingPayload {
+  host: string;
+  agentStartedAt: string;
   idleMs?: number;
   idleMsRemaining?: number;
   lastActivityAt?: string;
@@ -45,6 +48,7 @@ export async function status(input: StatusInputs): Promise<StatusResult> {
   const s = await input.store.read(input.baseUrl);
   const probe = input.probe ?? defaultProbe(input.probeTimeoutMs ?? 1000);
   const ping = await probe(s.socketPath);
+  if (ping !== null) assertAgentIdentity(ping, s);
   return {
     ok: true,
     host: s.host,
