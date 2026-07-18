@@ -2,9 +2,13 @@ import { getDevice } from '../resources/devices.js';
 import type { ResourceDeps } from '../resources/index.js';
 import { type RuleView, getRule, listRules } from '../resources/rules.js';
 import type { DeviceSpec, MiotAction, MiotProperty, MiotService } from '../schemas/device-spec.js';
+import {
+  type MiotComparisonDtype,
+  projectMiotComparisonDtype,
+} from '../schemas/miot-comparison.js';
 import { durationToMilliseconds, isDurationUnit } from '../schemas/nodes/duration.js';
 import { ConfigError, NotFoundError } from '../transport/errors.js';
-import { getDeviceSpec } from './get-device-spec.js';
+import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
 
 /**
  * One CLI invocation the exporter emits (in order). The shape is structured
@@ -37,7 +41,12 @@ export interface ExportedRule {
   warnings: string[];
 }
 
-export interface ExportRuleInputs extends ResourceDeps {
+export interface ExportRuleDeps extends ResourceDeps {
+  /** Optional pure fake-spec seam for offline export/replay tests and embedders. */
+  getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
+}
+
+export interface ExportRuleInputs extends ExportRuleDeps {
   ruleId: string;
   /**
    * Optional rename applied to the exported clone. Lets one call clone a rule
@@ -95,7 +104,7 @@ export async function exportRule(input: ExportRuleInputs): Promise<ExportedRule>
  */
 export async function exportRuleFromView(
   view: RuleView,
-  deps: ResourceDeps,
+  deps: ExportRuleDeps,
   rename?: RenameOptions,
   strictRoundtrip = false,
 ): Promise<ExportedRule> {
@@ -198,7 +207,7 @@ export async function exportRuleFromView(
 
 async function renderNode(
   node: unknown,
-  deps: ResourceDeps,
+  deps: ExportRuleDeps,
   specCache: Map<string, DeviceSpec>,
   warnings: string[],
 ): Promise<ExportedCommand | null> {
@@ -273,9 +282,61 @@ async function renderNode(
 // warning rather than silently dropped.
 const EVENT_FILTER_OPS = new Set(['=', '!=', '>', '<', '>=', '<=']);
 
+function asMiotComparisonDtype(value: unknown): MiotComparisonDtype | null {
+  if (value === 'int' || value === 'float' || value === 'boolean' || value === 'string') {
+    return value;
+  }
+  return null;
+}
+
+function appendPropertyComparisonFlags(
+  flags: ExportFlag[],
+  props: Record<string, unknown>,
+  projectedDtype: MiotComparisonDtype,
+  nodeType: 'deviceInput' | 'deviceGet',
+  nodeId: string,
+  warnings: string[],
+): void {
+  if (props.dtype !== projectedDtype) {
+    warnings.push(
+      `${nodeType} node ${nodeId}: source dtype "${String(props.dtype)}" differs from the current MIoT spec projection "${projectedDtype}"; replay uses the current spec projection`,
+    );
+  }
+
+  const reverseOp = reverseOpSymbol(String(props.operator));
+  if (reverseOp !== null) flags.push({ name: '--op', value: reverseOp });
+
+  if (projectedDtype === 'string') {
+    if (typeof props.v1 === 'string' && props.v1.length > 0) {
+      flags.push({ name: '--property-value', value: props.v1 });
+    } else {
+      warnings.push(
+        `${nodeType} node ${nodeId}: string comparison v1 must be a non-empty string; export leaves out --property-value so replay fails instead of changing semantics`,
+      );
+    }
+    return;
+  }
+
+  const v1 = props.v1;
+  const threshold = Array.isArray(v1) ? v1[0] : v1;
+  if (Array.isArray(v1) && v1.length > 1) {
+    warnings.push(
+      `${nodeType} node ${nodeId}: include() v1 has ${v1.length} values [${v1.join(',')}]; --threshold round-trips only the first (${String(v1[0])}). Re-author the rule to preserve the full membership set.`,
+    );
+  }
+  if (typeof threshold === 'number') {
+    flags.push({ name: '--threshold', value: String(threshold) });
+  } else if (typeof threshold === 'boolean') {
+    flags.push({ name: '--threshold', value: threshold ? '1' : '0' });
+  }
+  if (props.operator === 'between' && typeof props.v2 === 'number') {
+    flags.push({ name: '--threshold2', value: String(props.v2) });
+  }
+}
+
 async function renderDeviceInput(
   n: { id: string; cfg?: Record<string, unknown>; props?: Record<string, unknown> },
-  deps: ResourceDeps,
+  deps: ExportRuleDeps,
   specCache: Map<string, DeviceSpec>,
   warnings: string[],
 ): Promise<ExportedCommand> {
@@ -327,8 +388,15 @@ async function renderDeviceInput(
     }
   } else if (isProperty) {
     const spec = await ensureSpec(did, deps, specCache);
-    const propertyName = findPropertyName(spec, Number(props.siid), Number(props.piid));
-    if (propertyName === null) {
+    const sourceSiid = Number(props.siid);
+    const propertyDetails = findPropertyDetails(spec, sourceSiid, Number(props.piid));
+    if (Number.isSafeInteger(sourceSiid) && sourceSiid > 0) {
+      // Property short names may repeat across services. Preserve the source
+      // service even when today's spec happens to be unambiguous so replay
+      // cannot select another service after a spec update.
+      flags.push({ name: '--device-siid', value: String(sourceSiid) });
+    }
+    if (propertyDetails === null) {
       warnings.push(
         `deviceInput node ${n.id}: property siid=${props.siid} piid=${props.piid} not found in device spec`,
       );
@@ -337,33 +405,18 @@ async function renderDeviceInput(
         value: `<UNKNOWN_PROPERTY_siid${props.siid}_piid${props.piid}>`,
       });
     } else {
-      flags.push({ name: '--device-property', value: propertyName });
+      flags.push({ name: '--device-property', value: propertyDetails.propertyName });
     }
-    const reverseOp = reverseOpSymbol(String(props.operator));
-    if (reverseOp !== null) flags.push({ name: '--op', value: reverseOp });
-    // Threshold reverse: scalar number / [v] array (int+include, M7 F14)
-    // OR scalar boolean (bool wire, F14 REWRITTEN 2026-05-28). Boolean
-    // round-trips through the CLI flag as `1`/`0`; the synthesizer
-    // re-coerces via Boolean() to scalar true/false at re-author time.
-    const v1 = props.v1;
-    const threshold = Array.isArray(v1) ? v1[0] : v1;
-    // `include` carries an integer SET in v1; the CLI's single `--threshold` only
-    // round-trips the first element, so a multi-value membership test silently
-    // shrinks on replay. Warn loudly.
-    if (Array.isArray(v1) && v1.length > 1) {
+    const projectedDtype =
+      propertyDetails === null
+        ? asMiotComparisonDtype(props.dtype)
+        : projectMiotComparisonDtype(propertyDetails.property);
+    if (projectedDtype === null) {
       warnings.push(
-        `deviceInput node ${n.id}: include() v1 has ${v1.length} values [${v1.join(',')}]; --threshold round-trips only the first (${String(v1[0])}). Re-author the rule to preserve the full membership set.`,
+        `deviceInput node ${n.id}: comparison dtype "${String(props.dtype)}" is unknown; comparison flags were omitted`,
       );
-    }
-    if (typeof threshold === 'number')
-      flags.push({ name: '--threshold', value: String(threshold) });
-    else if (typeof threshold === 'boolean')
-      flags.push({ name: '--threshold', value: threshold ? '1' : '0' });
-    // F49 (2026-05-30): `between` operator carries v2 on the wire —
-    // round-trip via --threshold2 so the replayed script regenerates
-    // the same range gate.
-    if (props.operator === 'between' && typeof props.v2 === 'number') {
-      flags.push({ name: '--threshold2', value: String(props.v2) });
+    } else {
+      appendPropertyComparisonFlags(flags, props, projectedDtype, 'deviceInput', n.id, warnings);
     }
   } else {
     warnings.push(
@@ -385,7 +438,7 @@ async function renderDeviceInput(
 // (input/output2 pins) lives in the synthesizer, not here.
 async function renderDeviceGet(
   n: { id: string; cfg?: Record<string, unknown>; props?: Record<string, unknown> },
-  deps: ResourceDeps,
+  deps: ExportRuleDeps,
   specCache: Map<string, DeviceSpec>,
   warnings: string[],
 ): Promise<ExportedCommand> {
@@ -401,8 +454,12 @@ async function renderDeviceGet(
   ];
 
   const spec = await ensureSpec(did, deps, specCache);
-  const propertyName = findPropertyName(spec, Number(props.siid), Number(props.piid));
-  if (propertyName === null) {
+  const sourceSiid = Number(props.siid);
+  const propertyDetails = findPropertyDetails(spec, sourceSiid, Number(props.piid));
+  if (Number.isSafeInteger(sourceSiid) && sourceSiid > 0) {
+    flags.push({ name: '--device-siid', value: String(sourceSiid) });
+  }
+  if (propertyDetails === null) {
     warnings.push(
       `deviceGet node ${n.id}: property siid=${props.siid} piid=${props.piid} not found in device spec`,
     );
@@ -411,24 +468,18 @@ async function renderDeviceGet(
       value: `<UNKNOWN_PROPERTY_siid${props.siid}_piid${props.piid}>`,
     });
   } else {
-    flags.push({ name: '--device-property', value: propertyName });
+    flags.push({ name: '--device-property', value: propertyDetails.propertyName });
   }
-  const reverseOp = reverseOpSymbol(String(props.operator));
-  if (reverseOp !== null) flags.push({ name: '--op', value: reverseOp });
-  const v1 = props.v1;
-  const threshold = Array.isArray(v1) ? v1[0] : v1;
-  // Same include() multi-value truncation as deviceInput.
-  if (Array.isArray(v1) && v1.length > 1) {
+  const projectedDtype =
+    propertyDetails === null
+      ? asMiotComparisonDtype(props.dtype)
+      : projectMiotComparisonDtype(propertyDetails.property);
+  if (projectedDtype === null) {
     warnings.push(
-      `deviceGet node ${n.id}: include() v1 has ${v1.length} values [${v1.join(',')}]; --threshold round-trips only the first (${String(v1[0])}). Re-author the rule to preserve the full membership set.`,
+      `deviceGet node ${n.id}: comparison dtype "${String(props.dtype)}" is unknown; comparison flags were omitted`,
     );
-  }
-  if (typeof threshold === 'number') flags.push({ name: '--threshold', value: String(threshold) });
-  else if (typeof threshold === 'boolean')
-    flags.push({ name: '--threshold', value: threshold ? '1' : '0' });
-  // F49 (2026-05-30) — between round-trip mirrors deviceInput above.
-  if (props.operator === 'between' && typeof props.v2 === 'number') {
-    flags.push({ name: '--threshold2', value: String(props.v2) });
+  } else {
+    appendPropertyComparisonFlags(flags, props, projectedDtype, 'deviceGet', n.id, warnings);
   }
 
   return {
@@ -442,7 +493,7 @@ async function renderDeviceGet(
 
 async function renderDeviceSetVar(
   n: { id: string; type: string; cfg?: Record<string, unknown>; props?: Record<string, unknown> },
-  deps: ResourceDeps,
+  deps: ExportRuleDeps,
   specCache: Map<string, DeviceSpec>,
   warnings: string[],
 ): Promise<ExportedCommand> {
@@ -540,7 +591,7 @@ async function renderDeviceSetVar(
 
 async function renderDeviceOutput(
   n: { id: string; cfg?: Record<string, unknown>; props?: Record<string, unknown> },
-  deps: ResourceDeps,
+  deps: ExportRuleDeps,
   specCache: Map<string, DeviceSpec>,
   warnings: string[],
 ): Promise<ExportedCommand> {
@@ -945,30 +996,42 @@ function addDayFilterFlags(flags: ExportFlag[], rawFilter: unknown): void {
 
 async function ensureSpec(
   did: string,
-  deps: ResourceDeps,
+  deps: ExportRuleDeps,
   cache: Map<string, DeviceSpec>,
 ): Promise<DeviceSpec> {
   const cached = cache.get(did);
   if (cached) return cached;
   const device = await getDevice(did, deps);
-  const spec = await getDeviceSpec(device.urn, {
-    ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-  });
+  const spec =
+    deps.getDeviceSpec !== undefined
+      ? await deps.getDeviceSpec(device.urn)
+      : await fetchDeviceSpec(device.urn, {
+          ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+        });
   cache.set(did, spec);
   return spec;
 }
 
-function findPropertyName(spec: DeviceSpec, siid: number, piid: number): string | null {
+function findPropertyDetails(
+  spec: DeviceSpec,
+  siid: number,
+  piid: number,
+): { property: MiotProperty; propertyName: string } | null {
   for (const service of spec.services) {
     if (service.iid !== siid) continue;
     for (const property of service.properties ?? []) {
       if (property.iid === piid) {
         const segments = property.type.split(':');
-        return segments[3] ?? null;
+        const propertyName = segments[3];
+        return propertyName === undefined ? null : { property, propertyName };
       }
     }
   }
   return null;
+}
+
+function findPropertyName(spec: DeviceSpec, siid: number, piid: number): string | null {
+  return findPropertyDetails(spec, siid, piid)?.propertyName ?? null;
 }
 
 function findActionName(

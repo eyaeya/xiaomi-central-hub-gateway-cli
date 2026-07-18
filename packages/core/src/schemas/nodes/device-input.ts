@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MIOT_COMPARISON_CONTRACT } from '../miot-comparison.js';
 import { Connection, NodeId, Position } from './common.js';
 
 // Fields derived from fixtures/responses/nodes/deviceInput/baseline-full.json.
@@ -41,7 +42,7 @@ const DeviceInputBoolProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('boolean'),
-    operator: z.literal('='),
+    operator: z.literal(MIOT_COMPARISON_CONTRACT.boolean.equalityWireOperator),
     v1: z.boolean(),
   })
   .strict();
@@ -50,8 +51,8 @@ const DeviceInputStringProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('string'),
-    operator: z.literal('='),
-    v1: z.string(),
+    operator: z.literal(MIOT_COMPARISON_CONTRACT.string.equalityWireOperator),
+    v1: z.string().min(1),
   })
   .strict();
 
@@ -59,7 +60,7 @@ const DeviceInputIntIncludeProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('int'),
-    operator: z.literal('include'),
+    operator: z.literal(MIOT_COMPARISON_CONTRACT.int.equalityWireOperator),
     v1: z.array(z.number().int()),
   })
   .strict();
@@ -78,7 +79,7 @@ const DeviceInputIntScalarProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('int'),
-    operator: z.enum(['>=', '<=', '=', '!=', '>', '<']),
+    operator: z.enum(MIOT_COMPARISON_CONTRACT.int.scalarWireOperators),
     v1: z.number().int(),
   })
   .strict();
@@ -97,7 +98,7 @@ const DeviceInputFloatScalarProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('float'),
-    operator: z.enum(['>', '<']),
+    operator: z.enum(MIOT_COMPARISON_CONTRACT.float.scalarWireOperators),
     v1: z.number(),
   })
   .strict();
@@ -134,7 +135,7 @@ const DeviceInputEventArgBool = z
   .object({
     ...DeviceInputEventArgBase,
     dtype: z.literal('boolean'),
-    operator: z.literal('='),
+    operator: z.literal(MIOT_COMPARISON_CONTRACT.boolean.equalityWireOperator),
     v1: z.boolean(),
   })
   .strict();
@@ -142,15 +143,15 @@ const DeviceInputEventArgString = z
   .object({
     ...DeviceInputEventArgBase,
     dtype: z.literal('string'),
-    operator: z.literal('='),
-    v1: z.string(),
+    operator: z.literal(MIOT_COMPARISON_CONTRACT.string.equalityWireOperator),
+    v1: z.string().min(1),
   })
   .strict();
 const DeviceInputEventArgIntInclude = z
   .object({
     ...DeviceInputEventArgBase,
     dtype: z.literal('int'),
-    operator: z.literal('include'),
+    operator: z.literal(MIOT_COMPARISON_CONTRACT.int.equalityWireOperator),
     v1: z.array(z.number().int()),
   })
   .strict();
@@ -167,7 +168,7 @@ const DeviceInputEventArgIntScalar = z
   .object({
     ...DeviceInputEventArgBase,
     dtype: z.literal('int'),
-    operator: z.enum(['>=', '<=', '=', '!=', '>', '<']),
+    operator: z.enum(MIOT_COMPARISON_CONTRACT.int.scalarWireOperators),
     v1: z.number().int(),
   })
   .strict();
@@ -184,7 +185,7 @@ const DeviceInputEventArgFloatScalar = z
   .object({
     ...DeviceInputEventArgBase,
     dtype: z.literal('float'),
-    operator: z.enum(['>', '<']),
+    operator: z.enum(MIOT_COMPARISON_CONTRACT.float.scalarWireOperators),
     v1: z.number(),
   })
   .strict();

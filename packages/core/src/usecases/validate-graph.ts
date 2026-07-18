@@ -1,5 +1,12 @@
 import { MiotSpecFetchError } from '../http-client.js';
 import type { DeviceSpec, MiotProperty } from '../schemas/device-spec.js';
+import {
+  MIOT_COMPARISON_CONTRACT,
+  type MiotComparisonDtype,
+  hasMiotValueList,
+  isMiotWireOperator,
+  projectMiotComparisonDtype,
+} from '../schemas/miot-comparison.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
 import type { AvailableVariable } from '../schemas/variable.js';
 import { ConfigError, NotFoundError, XggError } from '../transport/errors.js';
@@ -28,8 +35,6 @@ export interface ValidateGraphInput {
   listAvailVars?: (ruleId: string) => Promise<AvailableVariable[]>;
 }
 
-const INT_OPERATORS = new Set(['>=', '<=', '=', '!=', '>', '<', 'between', 'include']);
-const FLOAT_OPERATORS = new Set(['>', '<', 'between']);
 const NUMBER_VAR_OPERATORS = new Set(['>=', '<=', '=', '!=', '>', '<', 'between']);
 // F38 (2026-05-29) — bundle Pr.varChange / Pr.varGet hard-require
 // `operator === '='` for `varType === 'string'`. Save-flow parity:
@@ -98,13 +103,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function uiDtypeFromFormat(format: string): 'int' | 'float' | 'boolean' | 'string' {
-  if (format === 'float') return 'float';
-  if (format === 'string') return 'string';
-  if (format === 'bool') return 'boolean';
-  return 'int';
-}
-
 function uiVarDtypeFromFormat(format: string): 'number' | 'string' {
   return format === 'string' ? 'string' : 'number';
 }
@@ -144,7 +142,7 @@ function checkComparisonWire(
   const v2 = props.v2;
 
   if (dtype === 'int') {
-    if (typeof operator !== 'string' || !INT_OPERATORS.has(operator)) {
+    if (typeof operator !== 'string' || !isMiotWireOperator(dtype, operator)) {
       issues.push(issue(`${path}.operator`, '卡片配置有误: Invalid operator'));
     }
     if (operator === 'include') {
@@ -158,7 +156,7 @@ function checkComparisonWire(
       issues.push(issue(`${path}.v2`, '卡片配置有误: Invalid v2'));
     }
   } else if (dtype === 'float') {
-    if (typeof operator !== 'string' || !FLOAT_OPERATORS.has(operator)) {
+    if (typeof operator !== 'string' || !isMiotWireOperator(dtype, operator)) {
       issues.push(issue(`${path}.operator`, '卡片配置有误: Invalid operator'));
     }
     if (typeof v1 !== 'number' || Number.isNaN(v1)) {
@@ -168,17 +166,17 @@ function checkComparisonWire(
       issues.push(issue(`${path}.v2`, '卡片配置有误: Invalid v2'));
     }
   } else if (dtype === 'boolean') {
-    if (operator !== '=') {
+    if (operator !== MIOT_COMPARISON_CONTRACT.boolean.equalityWireOperator) {
       issues.push(issue(`${path}.operator`, '卡片配置有误: Invalid operator'));
     }
     if (typeof v1 !== 'boolean') {
       issues.push(issue(`${path}.v1`, '卡片配置有误: Invalid v1'));
     }
   } else if (dtype === 'string') {
-    if (operator !== '=') {
+    if (operator !== MIOT_COMPARISON_CONTRACT.string.equalityWireOperator) {
       issues.push(issue(`${path}.operator`, '卡片配置有误: Invalid operator'));
     }
-    if (typeof v1 !== 'string') {
+    if (typeof v1 !== 'string' || v1.length === 0) {
       issues.push(issue(`${path}.v1`, '卡片配置有误: Invalid v1'));
     }
   } else {
@@ -687,7 +685,9 @@ async function checkAgainstSpec(
       node,
       spec,
       base,
-      isSetVarEvent ? uiVarDtypeFromFormat : uiDtypeFromFormat,
+      isSetVarEvent
+        ? (property) => uiVarDtypeFromFormat(property.format)
+        : projectMiotComparisonDtype,
     );
   }
 
@@ -739,7 +739,7 @@ function checkEventArgsAgainstSpec(
   node: Record<string, unknown>,
   spec: DeviceSpec,
   base: string,
-  formatToDtype: (format: string) => string,
+  propertyToDtype: (property: MiotProperty) => MiotComparisonDtype | 'number' | 'string',
 ): LintIssue[] {
   const issues: LintIssue[] = [];
   if (!isRecord(node.props)) return issues;
@@ -759,12 +759,16 @@ function checkEventArgsAgainstSpec(
     const argPath = `${base}.arguments[${i}]`;
     const property = findEventArgProperty(spec, siid, eiid, a.piid as number);
     if (property === undefined) continue; // bundle skips piids absent from the event
-    const expected = formatToDtype(property.format);
+    const expected = propertyToDtype(property);
     if (a.dtype !== expected) {
+      const source =
+        property.format === 'float' && hasMiotValueList(property)
+          ? 'format float with a non-empty value-list'
+          : `format ${property.format}`;
       issues.push(
         issue(
           argPath,
-          `卡片配置有误: 变量类型不匹配: MIoT property piid=${a.piid} uses format ${property.format}, so web UI expects dtype "${expected}" (got "${String(a.dtype)}")`,
+          `卡片配置有误: 变量类型不匹配: MIoT property piid=${a.piid} uses ${source}, so web UI expects dtype "${expected}" (got "${String(a.dtype)}")`,
         ),
       );
     }

@@ -5,6 +5,13 @@ import type {
   MiotProperty,
   MiotService,
 } from '../schemas/device-spec.js';
+import {
+  MIOT_COMPARISON_CONTRACT,
+  isMiotEventWireOperator,
+  miotShortcutOperatorToWire,
+  parseFiniteDecimalLiteral,
+  projectMiotComparisonDtype,
+} from '../schemas/miot-comparison.js';
 import { type DurationRange, parseDurationLiteral } from '../schemas/nodes/duration.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
 import {
@@ -621,6 +628,10 @@ export interface AddNodeShortcut {
   // service.properties[piid].format → SetVarDtype.
   deviceEventArgVars?: string[];
   threshold?: number;
+  // String property comparison literal for deviceInput/deviceGet. Kept
+  // separate from numeric `threshold` so CLI values never pass through
+  // Number.parseFloat and silently become NaN.
+  propertyValue?: string;
   // F49 (2026-05-30) — `between` joins the comparator vocab for the int
   // dtype (deviceInput/deviceGet) and number varType (varChange/varGet).
   // Requires --threshold + --threshold2 (or threshold + threshold2 fields
@@ -713,6 +724,8 @@ export interface AddNodeInput {
   ruleId: string;
   node?: unknown;
   shortcut?: AddNodeShortcut;
+  /** Optional pure fake-spec seam for offline tests and embedders. */
+  getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
   validate?: boolean;
   // F66f (2026-05-31) — opt-out of the incremental var-existence sweep.
   // Defaults to ON (mirrors the UI save() nodeCheckTool variable phase). Set
@@ -767,6 +780,19 @@ export async function addNode(
     // Variable grammar is entirely local. Run it before any device/session/
     // MIoT lookup so malformed authoring flags never reach a gateway path.
     assertShortcutVariableIdentifiers(input.shortcut);
+    if (
+      input.shortcut.propertyValue !== undefined &&
+      !(
+        (input.shortcut.type === 'deviceInput' || input.shortcut.type === 'deviceGet') &&
+        input.shortcut.deviceProperty !== undefined &&
+        input.shortcut.deviceEvent === undefined
+      )
+    ) {
+      throw new ConfigError(
+        '--property-value only applies to deviceInput/deviceGet property-mode shortcuts',
+        { type: input.shortcut.type },
+      );
+    }
     if (isNonDeviceShortcut(input.shortcut)) {
       // M10 F17: non-device shortcuts (onLoad / condition / logic gates /
       // timeRange / varChange / alarmClock) build a node entirely from
@@ -874,9 +900,12 @@ export async function addNode(
           }
         }
       }
-      const spec = await getDeviceSpec(device.urn, {
-        ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-      });
+      const spec =
+        input.getDeviceSpec !== undefined
+          ? await input.getDeviceSpec(device.urn)
+          : await getDeviceSpec(device.urn, {
+              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+            });
       rawNode = synthesizeNodeFromShortcut(
         input.shortcut,
         {
@@ -943,6 +972,7 @@ export async function addNode(
   await setGraph({ id: current.id, nodes: updatedNodes, cfg: refreshTimestamp(summary) }, deps, {
     validate: input.validate !== false,
     skipLint: true,
+    ...(input.getDeviceSpec !== undefined && { getDeviceSpec: input.getDeviceSpec }),
     ...(input.varCheck !== false && {
       listAvailVars: (ruleId: string) => listAvailVarsForRule(ruleId, deps),
     }),
@@ -954,41 +984,10 @@ export async function addNode(
 // Shortcut synthesis helpers
 // ---------------------------------------------------------------------------
 
-// F14 fix: gateway operator vocab observed in real-rule samples is
-// {>, <, >=, <=, include, !=}. Equality '==' is rejected; the gateway uses
-// set-membership 'include' for equality (real-rule "All" deviceInput
-// dtype='int' operator='include' v1=[2] expresses "value == 2"). Map 'eq' to
-// 'include' and pair with array v1. Comparison operators keep scalar v1.
-// F49 (2026-05-30) — `between` joined the vocab. Bundle accepts
-// `between` on int dtype and float dtype; it always requires both v1
-// and v2 numerics (with the int-vs-float type matching dtype).
-const OP_SYMBOLS: Record<string, string> = {
-  gt: '>',
-  lt: '<',
-  eq: 'include',
-  ne: '!=',
-  between: 'between',
-  gte: '>=',
-  lte: '<=',
-};
-
-const MEMBERSHIP_OPS = new Set(['include']);
-// F40 (2026-05-30 real-gateway probe) — float MIoT properties only
-// accept `>`, `<`, and `between` on the wire. F49 (2026-05-30) added
-// `between` to the c-shortcut surface — requires --threshold +
-// --threshold2 for v1/v2. Probe trail: 2026-05-30-f38-discovery.md +
-// 2026-05-30-f49-between-discovery.md.
-const FLOAT_SHORTCUT_OPS = new Set(['>', '<', 'between']);
 // F49 (2026-05-30) — operators that imply both v1 and v2 must be set
 // (validate before synth so the agent doesn't see a gateway "Invalid v2"
 // round-trip for the trivially-omitted --threshold2 case).
 const BETWEEN_OPS = new Set(['between']);
-
-function opSymbol(op: string): string {
-  const sym = OP_SYMBOLS[op];
-  if (!sym) throw new ConfigError(`unknown operator: ${op}`, { op });
-  return sym;
-}
 
 // B9 / F63d (2026-05-30) — parse a single `--event-filter <piid><op><v1>`
 // expression into one F59 DeviceInputEventArgument union element. The
@@ -1042,19 +1041,16 @@ function parseDeviceEventArg(
       { piid, siid: service.iid },
     );
   }
-  const dtype = mapFormatToDtype(prop.format, propHasValueList(prop)) as
-    | 'int'
-    | 'float'
-    | 'boolean'
-    | 'string';
+  const dtype = projectMiotComparisonDtype(prop);
+  if (!isMiotEventWireOperator(dtype, operator)) {
+    const allowed = MIOT_COMPARISON_CONTRACT[dtype].eventWireOperators.join(', ');
+    throw new ConfigError(
+      `${dtype} event arg piid=${piid} only supports ${allowed} (got ${operator})`,
+      { piid, operator, dtype, allowed },
+    );
+  }
 
   if (dtype === 'boolean') {
-    if (operator !== '=') {
-      throw new ConfigError(
-        `bool event arg piid=${piid} only supports operator '=' (got ${operator})`,
-        { piid, operator },
-      );
-    }
     let v1: boolean;
     if (rest === 'true' || rest === '1') v1 = true;
     else if (rest === 'false' || rest === '0') v1 = false;
@@ -1064,31 +1060,21 @@ function parseDeviceEventArg(
     return { piid, dtype, operator, v1 };
   }
   if (dtype === 'string') {
-    if (operator !== '=') {
-      throw new ConfigError(
-        `string event arg piid=${piid} only supports operator '=' (got ${operator})`,
-        { piid, operator },
-      );
+    if (rest.length === 0) {
+      throw new ConfigError(`string v1 must not be empty for event arg piid=${piid}`, { raw });
     }
     return { piid, dtype, operator, v1: rest };
   }
   if (dtype === 'float') {
-    // F40 — float supports only >, < (between handled via raw setGraph for now).
-    if (operator !== '>' && operator !== '<') {
-      throw new ConfigError(`float event arg piid=${piid} only supports >, < (got ${operator})`, {
-        piid,
-        operator,
-      });
-    }
-    const v1 = Number.parseFloat(rest);
-    if (!Number.isFinite(v1)) {
+    const v1 = parseFiniteDecimalLiteral(rest);
+    if (v1 === null) {
       throw new ConfigError(`float v1 must be numeric, got "${rest}"`, { raw });
     }
     return { piid, dtype, operator, v1 };
   }
   // int — all 6 scalar operators legal per F40.
-  const v1 = Number.parseInt(rest, 10);
-  if (!Number.isInteger(v1)) {
+  const v1 = parseFiniteDecimalLiteral(rest);
+  if (v1 === null || !Number.isInteger(v1)) {
     throw new ConfigError(`int v1 must be an integer, got "${rest}"`, { raw });
   }
   return { piid, dtype, operator, v1 };
@@ -1167,37 +1153,6 @@ function parseEventArgVar(
     );
   }
   return { piid, scope, id };
-}
-
-// F13 fix: gateway dtype vocab is {int, float, string}. MIoT format vocab
-// (bool / uint8 / uint16 / uint32 / int8 / int16 / int32 / int64 / float /
-// string) must be projected onto it or the gateway rejects the node with
-// "Invalid dtype". Empirical mapping confirmed against real-gateway-created
-// rules ("Test" deviceInput dtype='float' v1=40; "All" deviceInput dtype='int'
-// v1=[2]). Bool collapses to int with v1 ∈ {0,1}.
-// F14 REWRITTEN (2026-05-28 user-physical-test): bool MIoT properties wire as
-// `dtype:"boolean"` (with `operator:"="` + scalar bool v1), NOT `dtype:"int"`
-// (which the gateway accepted at setGraph time but never matched at runtime —
-// every bool comparison silently routed to unmet). Verified against the web
-// UI's wire format on walk-02-deviceget-toggle. Older fixtures using int+
-// include for bool remain parseable via the schema's union, but new c-shortcut
-// authoring uses the bool dialect.
-// `hasValueList` mirrors the gateway capability builder, which downgrades a
-// value-list (enum) property's `float` format to `int`. Enumerated values are
-// discrete, so equality / set-membership (`=`/`include`) must be expressible; a
-// raw `float` dtype restricts operators to `>`/`<`/`between` and can't match a
-// specific enum value. The UI form renderer reads the downgraded dtype, so a
-// faithful c-shortcut emits `int` for value-list floats too.
-function mapFormatToDtype(format: string, hasValueList = false): string {
-  if (format === 'float') return hasValueList ? 'int' : 'float';
-  if (format === 'string') return 'string';
-  if (format === 'bool') return 'boolean';
-  // signed / unsigned int widths → 'int'
-  return 'int';
-}
-
-function propHasValueList(prop: { 'value-list'?: unknown }): boolean {
-  return Array.isArray(prop['value-list']) && prop['value-list'].length > 0;
 }
 
 // F16 fix: coerce CLI string value to gateway-storage type per MIoT format.
@@ -1487,6 +1442,122 @@ function findServiceEvent(
   return candidates[0] as { service: MiotService; event: MiotEvent };
 }
 
+function synthesizePropertyComparison(
+  shortcut: AddNodeShortcut,
+  property: MiotProperty,
+  propertyName: string,
+  specType: string,
+): Record<string, unknown> {
+  const dtype = projectMiotComparisonDtype(property);
+  const rawOp = shortcut.op ?? (dtype === 'boolean' || dtype === 'string' ? 'eq' : 'gt');
+  const operator = miotShortcutOperatorToWire(dtype, rawOp);
+  if (operator === null) {
+    const allowed = MIOT_COMPARISON_CONTRACT[dtype].shortcutOperators.join('|');
+    throw new ConfigError(
+      `${dtype} property "${propertyName}" only supports --op ${allowed} (got ${rawOp})`,
+      { op: rawOp, dtype, property: propertyName, allowed },
+    );
+  }
+
+  if (dtype === 'string') {
+    if (shortcut.threshold !== undefined || shortcut.threshold2 !== undefined) {
+      throw new ConfigError(
+        `string property "${propertyName}" cannot use numeric --threshold/--threshold2; pass --property-value <S> instead`,
+        { property: propertyName },
+      );
+    }
+    if (shortcut.propertyValue === undefined || shortcut.propertyValue.length === 0) {
+      throw new ConfigError(
+        `string property "${propertyName}" requires a non-empty --property-value <S> comparison literal`,
+        { property: propertyName },
+      );
+    }
+    return {
+      dtype,
+      operator,
+      v1: shortcut.propertyValue,
+      preload: true,
+    };
+  }
+
+  if (shortcut.propertyValue !== undefined) {
+    throw new ConfigError(
+      `${dtype} property "${propertyName}" cannot use --property-value; pass numeric --threshold instead`,
+      { dtype, property: propertyName },
+    );
+  }
+  if (dtype === 'boolean') {
+    if (shortcut.threshold2 !== undefined) {
+      throw new ConfigError(
+        `boolean property "${propertyName}" cannot use --threshold2; only --op eq with --threshold 0|1 is supported`,
+        { property: propertyName },
+      );
+    }
+    return {
+      dtype,
+      operator,
+      v1: boolThresholdFromShortcut(shortcut.threshold, propertyName),
+    };
+  }
+
+  const thresholdValue = shortcut.threshold ?? 0;
+  const validThreshold =
+    dtype === 'int' ? Number.isInteger(thresholdValue) : Number.isFinite(thresholdValue);
+  if (!validThreshold) {
+    throw new ConfigError(
+      `${dtype} property "${propertyName}" requires a ${dtype === 'int' ? 'finite integer' : 'finite number'} --threshold (got ${String(thresholdValue)})`,
+      { dtype, threshold: shortcut.threshold, property: propertyName },
+    );
+  }
+
+  const range = property['value-range'];
+  if (range !== undefined && shortcut.forceOutOfRange !== true) {
+    const [lo, hi] = range;
+    if (thresholdValue < lo || thresholdValue > hi) {
+      throw new ConfigError(
+        `--threshold ${thresholdValue} out of value-range [${lo}, ${hi}] for property "${propertyName}" on urn ${specType}. Pass --force-out-of-range to override.`,
+        { threshold: thresholdValue, range, property: propertyName },
+      );
+    }
+  }
+
+  const isBetween = operator === 'between';
+  if (isBetween && shortcut.threshold2 === undefined) {
+    throw new ConfigError(
+      `--op between on property "${propertyName}" requires both --threshold (v1) and --threshold2 (v2). Real-gateway setGraph rejects between without v2 as "Invalid v2".`,
+      { op: rawOp, operator, property: propertyName },
+    );
+  }
+  if (!isBetween && shortcut.threshold2 !== undefined) {
+    throw new ConfigError(
+      `--threshold2 only applies to --op between on property "${propertyName}"`,
+      { op: rawOp, property: propertyName },
+    );
+  }
+  if (isBetween) {
+    const threshold2 = shortcut.threshold2 as number;
+    const validThreshold2 =
+      dtype === 'int' ? Number.isInteger(threshold2) : Number.isFinite(threshold2);
+    if (!validThreshold2) {
+      throw new ConfigError(
+        `${dtype} property "${propertyName}" requires a ${dtype === 'int' ? 'finite integer' : 'finite number'} --threshold2 (got ${String(threshold2)})`,
+        { dtype, threshold2, property: propertyName },
+      );
+    }
+  }
+
+  return {
+    dtype,
+    operator,
+    v1:
+      operator === MIOT_COMPARISON_CONTRACT.int.equalityWireOperator
+        ? [thresholdValue]
+        : thresholdValue,
+    ...(isBetween && { v2: shortcut.threshold2 }),
+    preload: true,
+  };
+}
+
 function synthesizeNodeFromShortcut(
   shortcut: AddNodeShortcut,
   device: { did: string; urn: string; name: string; model?: string },
@@ -1561,90 +1632,12 @@ function synthesizeNodeFromShortcut(
       shortcut.deviceSiid,
       deviceModel,
     );
-    const thresholdValue = shortcut.threshold ?? 0;
-    const dtype = mapFormatToDtype(property.format, propHasValueList(property));
-    // M11 F19: when the MIoT spec advertises a value-range [lo, hi, step],
-    // refuse thresholds outside it — saves a round-trip + a useless rule
-    // that would never fire. Opt out with --force-out-of-range when the
-    // user knows the range is overly conservative.
-    // Skip range check for bool (the range is always [0,1] and we coerce
-    // the threshold to bool below anyway).
-    if (dtype !== 'boolean') {
-      const range = property['value-range'];
-      if (range !== undefined && shortcut.forceOutOfRange !== true) {
-        const [lo, hi] = range;
-        if (thresholdValue < lo || thresholdValue > hi) {
-          throw new ConfigError(
-            `--threshold ${thresholdValue} out of value-range [${lo}, ${hi}] for property "${shortcut.deviceProperty}" on urn ${spec.type}. Pass --force-out-of-range to override.`,
-            { threshold: thresholdValue, range, property: shortcut.deviceProperty },
-          );
-        }
-      }
-    }
-    let operator: string;
-    let v1: number | number[] | boolean;
-    let preload: boolean | undefined = true;
-    if (dtype === 'boolean') {
-      // F14 REWRITTEN: bool wire shape verified against UI-saved walk-02.
-      // F37 (2026-05-29 real-gateway probe): bool state checks only accept
-      // equality. Both the save-button validator and raw setGraph reject
-      // operator "!=" with "Invalid operator".
-      // UI also omits `preload` for bool — match that for byte-perfect
-      // round-trip with UI-edited rules.
-      const op = shortcut.op ?? 'eq';
-      if (op === 'eq') operator = '=';
-      else {
-        throw new ConfigError(
-          `bool property "${shortcut.deviceProperty}" only supports --op eq (got ${op}). Real-gateway setGraph rejects "!=" as Invalid operator.`,
-          { op, property: shortcut.deviceProperty },
-        );
-      }
-      // F38 (2026-05-29) — bool threshold strict 0|1. Previously
-      // `v1 = Boolean(thresholdValue)` silently coerced NaN (from
-      // Number.parseFloat("true"/"xyz")) to false and any nonzero
-      // number to true, inverting user intent. The wire validator only
-      // checks `typeof v1 === 'boolean'` so the gateway can't surface
-      // the silent flip — enforce the canonical 0|1 vocab here.
-      v1 = boolThresholdFromShortcut(shortcut.threshold, shortcut.deviceProperty);
-      preload = undefined; // omit from emitted props
-    } else {
-      const rawOp = shortcut.op ?? 'gt';
-      operator = opSymbol(rawOp);
-      // F40 (2026-05-30 real-gateway probe): float MIoT properties only
-      // accept >, <, between. F49 (2026-05-30) added 'between' to the
-      // c-shortcut surface. Reject everything else in synth so raw
-      // `validate:false` writes can't reach the gateway either.
-      if (dtype === 'float' && !FLOAT_SHORTCUT_OPS.has(operator)) {
-        throw new ConfigError(
-          `float property "${shortcut.deviceProperty}" only supports --op gt|lt|between (got ${rawOp} → wire operator "${operator}"). Real-gateway setGraph rejects ${operator} on float dtype with "Invalid operator".`,
-          { op: rawOp, operator, dtype, property: shortcut.deviceProperty },
-        );
-      }
-      // F49 (2026-05-30): `between` requires both --threshold (v1) and
-      // --threshold2 (v2). Fail fast so the agent doesn't see a gateway
-      // "Invalid v2" round-trip.
-      if (BETWEEN_OPS.has(operator) && shortcut.threshold2 === undefined) {
-        throw new ConfigError(
-          `--op between on property "${shortcut.deviceProperty}" requires both --threshold (v1) and --threshold2 (v2). Real-gateway setGraph rejects between without v2 as "Invalid v2".`,
-          { op: rawOp, operator, property: shortcut.deviceProperty },
-        );
-      }
-      // F13 + F14: int/float/string use `>`/`<`/etc. for comparison and
-      // `include` (with array v1) for set-membership equality.
-      v1 = MEMBERSHIP_OPS.has(operator) ? [thresholdValue] : thresholdValue;
-    }
     const props: Record<string, unknown> = {
       did: device.did,
       siid: service.iid,
       piid: property.iid,
-      dtype,
-      operator,
-      v1,
+      ...synthesizePropertyComparison(shortcut, property, shortcut.deviceProperty, spec.type),
     };
-    if (BETWEEN_OPS.has(operator) && shortcut.threshold2 !== undefined) {
-      props.v2 = shortcut.threshold2;
-    }
-    if (preload !== undefined) props.preload = preload;
     return {
       id,
       type: 'deviceInput',
@@ -1786,69 +1779,12 @@ function synthesizeNodeFromShortcut(
       shortcut.deviceSiid,
       deviceModel,
     );
-    const thresholdValue = shortcut.threshold ?? 0;
-    const dtype = mapFormatToDtype(property.format, propHasValueList(property));
-    if (dtype !== 'boolean') {
-      const range = property['value-range'];
-      if (range !== undefined && shortcut.forceOutOfRange !== true) {
-        const [lo, hi] = range;
-        if (thresholdValue < lo || thresholdValue > hi) {
-          throw new ConfigError(
-            `--threshold ${thresholdValue} out of value-range [${lo}, ${hi}] for property "${shortcut.deviceProperty}" on urn ${spec.type}. Pass --force-out-of-range to override.`,
-            { threshold: thresholdValue, range, property: shortcut.deviceProperty },
-          );
-        }
-      }
-    }
-    let operator: string;
-    let v1: number | number[] | boolean;
-    let preload: boolean | undefined = true;
-    if (dtype === 'boolean') {
-      const op = shortcut.op ?? 'eq';
-      if (op === 'eq') operator = '=';
-      else {
-        throw new ConfigError(
-          `bool property "${shortcut.deviceProperty}" only supports --op eq (got ${op}). Real-gateway setGraph rejects "!=" as Invalid operator.`,
-          { op, property: shortcut.deviceProperty },
-        );
-      }
-      // F38 (2026-05-29) — strict 0|1 vocab; see deviceInput branch above
-      // for rationale.
-      v1 = boolThresholdFromShortcut(shortcut.threshold, shortcut.deviceProperty);
-      preload = undefined;
-    } else {
-      const rawOp = shortcut.op ?? 'gt';
-      operator = opSymbol(rawOp);
-      // F40 (2026-05-30) — float dtype op allow-list; see deviceInput
-      // branch above for rationale + probe trail. F49 widened to allow
-      // 'between' (requires --threshold2).
-      if (dtype === 'float' && !FLOAT_SHORTCUT_OPS.has(operator)) {
-        throw new ConfigError(
-          `float property "${shortcut.deviceProperty}" only supports --op gt|lt|between (got ${rawOp} → wire operator "${operator}"). Real-gateway setGraph rejects ${operator} on float dtype with "Invalid operator".`,
-          { op: rawOp, operator, dtype, property: shortcut.deviceProperty },
-        );
-      }
-      // F49 (2026-05-30) — `between` requires both v1 and v2.
-      if (BETWEEN_OPS.has(operator) && shortcut.threshold2 === undefined) {
-        throw new ConfigError(
-          `--op between on property "${shortcut.deviceProperty}" requires both --threshold (v1) and --threshold2 (v2). Real-gateway setGraph rejects between without v2 as "Invalid v2".`,
-          { op: rawOp, operator, property: shortcut.deviceProperty },
-        );
-      }
-      v1 = MEMBERSHIP_OPS.has(operator) ? [thresholdValue] : thresholdValue;
-    }
     const props: Record<string, unknown> = {
       did: device.did,
       siid: service.iid,
       piid: property.iid,
-      dtype,
-      operator,
-      v1,
+      ...synthesizePropertyComparison(shortcut, property, shortcut.deviceProperty, spec.type),
     };
-    if (BETWEEN_OPS.has(operator) && shortcut.threshold2 !== undefined) {
-      props.v2 = shortcut.threshold2;
-    }
-    if (preload !== undefined) props.preload = preload;
     return {
       id,
       type: 'deviceGet',

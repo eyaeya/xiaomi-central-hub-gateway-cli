@@ -4,9 +4,10 @@ import {
   dumpBeforeWrite,
   getDevice,
   nodeSchemaForType,
+  parseFiniteDecimalLiteral,
 } from '@eyaeya/xgg-core';
 import type { AddNodeShortcut } from '@eyaeya/xgg-core';
-import type { Command } from 'commander';
+import { type Command, InvalidArgumentError } from 'commander';
 import { wrap } from '../../action-wrap.js';
 import {
   addNextHintFlag,
@@ -64,6 +65,42 @@ function parseParamsJson(raw: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function parseFiniteDecimal(raw: string): number {
+  const parsed = parseFiniteDecimalLiteral(raw);
+  if (parsed === null) {
+    throw new InvalidArgumentError(`expected a finite decimal number (got "${raw}")`);
+  }
+  return parsed;
+}
+
+function assertPropertyValueUsage(opts: NodeAddOpts): void {
+  if (opts.propertyValue === undefined) return;
+  if (opts.type !== 'deviceInput' && opts.type !== 'deviceGet') {
+    throw new ConfigError(
+      `--property-value only applies to deviceInput/deviceGet property-mode shortcuts (got --type ${opts.type})`,
+    );
+  }
+  if (
+    opts.deviceDid === undefined ||
+    opts.deviceProperty === undefined ||
+    opts.deviceEvent !== undefined ||
+    opts.cfg !== undefined
+  ) {
+    throw new ConfigError(
+      '--property-value requires --device-did plus --device-property and is not valid with --device-event or legacy --cfg',
+    );
+  }
+  if (opts.propertyValue.length === 0) {
+    throw new ConfigError('--property-value must not be empty');
+  }
+  if (opts.threshold !== undefined || opts.threshold2 !== undefined) {
+    throw new ConfigError('--property-value is mutually exclusive with --threshold/--threshold2');
+  }
+  if (opts.op !== undefined && opts.op !== 'eq') {
+    throw new ConfigError('--property-value only supports --op eq');
+  }
+}
+
 interface NodeAddOpts extends RuleOpts {
   ruleId: string;
   type: string;
@@ -93,6 +130,7 @@ interface NodeAddOpts extends RuleOpts {
   // captured event-argument flows into its own destination variable.
   eventArgVar?: string[];
   threshold?: number;
+  propertyValue?: string;
   op?: string;
   params?: string;
   value?: string;
@@ -176,7 +214,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--event-filter <piid><op><v1>',
-      "deviceInput event-mode argument filter (repeatable). Forms: <piid>=<v1> | <piid>!=<v1> | <piid>><v1> | <piid><<v1> | <piid>>=<v1> | <piid><=<v1>. Operator/v1 validated against the event spec dtype (F40/F59): bool/string → '=' only; int → 6 scalar ops; float → '>' / '<' only. Mutually exclusive with --cfg. Example: --event-filter 1=1 --event-filter 3=2",
+      "deviceInput event-mode argument filter (repeatable). Forms: <piid>=<v1> | <piid>!=<v1> | <piid>><v1> | <piid><<v1> | <piid>>=<v1> | <piid><=<v1>. Operator/v1 validated against the event spec comparison dtype (F40/F59): bool/string → '=' only; int (including float + non-empty value-list enums) → 6 scalar ops; continuous float → '>' / '<' only. Mutually exclusive with --cfg. Example: --event-filter 1=1 --event-filter 3=2",
       (v: string, acc: string[] = []) => acc.concat(v),
       [] as string[],
     )
@@ -188,8 +226,12 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--threshold <N>',
-      'comparison threshold (deviceInput) or count threshold (counter/onlyNTimes)',
-      Number.parseFloat,
+      'numeric comparison threshold (deviceInput/deviceGet) or count threshold (counter/onlyNTimes)',
+      parseFiniteDecimal,
+    )
+    .option(
+      '--property-value <S>',
+      'deviceInput/deviceGet string-property equality literal (required for string properties; mutually exclusive with --threshold/--threshold2)',
     )
     .option(
       '--op <OP>',
@@ -258,7 +300,7 @@ export function attachNodeAdd(cmd: Command): void {
       '--var-value <S>',
       'varChange/varGet string-varType comparison literal (required for --var-type string; mutually exclusive with --threshold — F41)',
     )
-    .option('--threshold2 <N>', 'varChange optional second threshold', Number.parseFloat)
+    .option('--threshold2 <N>', 'optional second threshold for --op between', parseFiniteDecimal)
     .option(
       '--allow-unknown-scope',
       'silence F29 warning when --var-scope is not in KNOWN_UI_SCOPES',
@@ -363,6 +405,10 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
         const parsedParams = opts.params !== undefined ? parseParamsJson(opts.params) : undefined;
         const parsedCfg =
           opts.cfg !== undefined ? parseJsonInput<unknown>(opts.cfg, '--cfg') : undefined;
+        // This flag's applicability is entirely local. Reject misuse before
+        // Agent guards, session lookup, device warnings, snapshots, or IPC so
+        // authentication state cannot mask a deterministic authoring error.
+        assertPropertyValueUsage(opts);
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
@@ -502,6 +548,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             ...(opts.eventArgVar !== undefined &&
               opts.eventArgVar.length > 0 && { deviceEventArgVars: opts.eventArgVar }),
             ...(opts.threshold !== undefined && { threshold: opts.threshold }),
+            ...(opts.propertyValue !== undefined && { propertyValue: opts.propertyValue }),
             // F49 (2026-05-30) — --threshold2 must reach device-shortcut
             // path too (used by deviceInput/deviceGet `--op between`).
             // Previously only forwarded inside the non-device branch.
