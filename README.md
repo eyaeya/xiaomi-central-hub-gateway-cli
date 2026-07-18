@@ -274,6 +274,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 - `xgg device list` 默认排除 ghost device。不要把网页标为“设备已丢失”的设备作为 `deviceOutput` 目标。
 - 变量类型只有 `number` 和 `string`。开关状态建议用数字 `1/0` 或字符串表示。
 - 变量 scope 默认用 `global`。规则本地变量使用 `R<rule-id>` 约定；如果 rule id 含连字符，本地变量 scope 无法按该约定合法创建，建议改用 `global` 或使用纯字母数字 rule id。
+- `rule export` 会用当前表达式解析器回读生成的 `varSetNumber` / `varSetString --expr`；若源图的结构化 elements 无法用 DSL 无损表示（例如变量后紧跟会被吞入变量 ID 的字母或数字常量），导出会以 `ConfigError` 拒绝。请先在源表达式中加入显式分隔符，或改用 `rule view` 的整图 JSON 往返。
 - 网关没有直接读取任意设备实时属性的通用 RPC。需要观测设备属性时，创建规则把属性写入变量，再用 `xgg variable watch` 观察。
 - `xgg api` 是低层逃生口，不建议把它作为常规自动化编辑路径。read 是普通/未知方法的默认 intent；当前已知写接口必须显式传 `--kind write`，并进入与 typed 写命令相同的 Agent guard、完整写前 rollback snapshot 与 `NOT_CONFIRMED` 超时分类。未知的新接口仍可显式选择 read 或 write，JSON 输出会回显最终 `kind`。
 
