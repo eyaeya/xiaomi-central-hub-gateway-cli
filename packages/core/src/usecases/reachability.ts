@@ -20,6 +20,7 @@
 // reachability (it cannot be a dangling sink).
 
 import { NodeUnion } from '../schemas/nodes/index.js';
+import { targetInputPinStatus } from './edge-integrity.js';
 import type { LintIssue } from './lint-graph.js';
 
 // Self-firing nodes: their `inputs` schema is empty, or they are bootstrapped
@@ -49,6 +50,7 @@ const SINK_TYPES = new Set<string>([
 interface ParsedNode {
   id: string;
   type: string;
+  raw: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }
 
@@ -65,7 +67,7 @@ function parseNodes(rawNodes: unknown[]): ParsedNode[] {
       node.outputs && typeof node.outputs === 'object' && !Array.isArray(node.outputs)
         ? (node.outputs as Record<string, unknown>)
         : undefined;
-    out.push(outputs !== undefined ? { id, type, outputs } : { id, type });
+    out.push(outputs !== undefined ? { id, type, raw: node, outputs } : { id, type, raw: node });
   }
   return out;
 }
@@ -115,6 +117,7 @@ export function checkReachability(rawNodes: unknown[]): LintIssue[] {
 
   const ids = parsed.map((n) => n.id);
   const idSet = new Set(ids);
+  const nodesById = new Map(parsed.map((node) => [node.id, node]));
   const uf = makeUF(ids);
 
   for (const node of parsed) {
@@ -128,6 +131,10 @@ export function checkReachability(rawNodes: unknown[]): LintIssue[] {
         if (dot === -1) continue;
         const targetId = entry.slice(0, dot);
         if (!idSet.has(targetId)) continue;
+        const targetNode = nodesById.get(targetId);
+        if (targetNode === undefined) continue;
+        const targetPin = entry.slice(dot + 1);
+        if (targetInputPinStatus(targetNode.raw, targetPin) === 'invalid') continue;
         uf.union(node.id, targetId);
       }
     }

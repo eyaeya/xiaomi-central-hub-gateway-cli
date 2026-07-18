@@ -16,6 +16,7 @@ import {
 import { type VarEntry, isValidVariableScopeName } from '../schemas/variable.js';
 import { ConfigError, GatewayError, NotFoundError, parseOrThrow } from '../transport/errors.js';
 import { agentCall } from '../usecases/agent-call.js';
+import { inputPinNames, targetInputPinStatus } from '../usecases/edge-integrity.js';
 import { getDeviceSpec } from '../usecases/get-device-spec.js';
 import { layoutGraph } from '../usecases/layout-graph.js';
 import { lintGraph } from '../usecases/lint-graph.js';
@@ -2919,9 +2920,8 @@ export async function addEdge(
       toPin: input.to.pin,
     });
   }
-  const tgtInputs = (tgtNode.inputs ?? {}) as Record<string, unknown>;
-  const tgtInputKeys = Object.keys(tgtInputs);
-  if (!(input.to.pin in tgtInputs)) {
+  const tgtInputKeys = inputPinNames(tgtNode);
+  if (targetInputPinStatus(tgtNode, input.to.pin) !== 'valid') {
     const tgtType = String(tgtNode.type ?? 'unknown');
     const suggestion = suggestPinName(tgtType, input.to.pin, tgtInputKeys);
     const didYouMean = suggestion !== null ? `; did you mean \`${suggestion}\`?` : '';
@@ -2941,6 +2941,26 @@ export async function addEdge(
   const edgeString = `${input.to.nodeId}.${input.to.pin}`;
   const srcNode = current.nodes[srcIdx] as Record<string, unknown>;
   const srcOutputs = (srcNode.outputs ?? {}) as Record<string, unknown>;
+  const existing = srcOutputs[input.from.pin];
+  if (existing !== undefined && !Array.isArray(existing)) {
+    throw new GatewayError(
+      `outputs[${input.from.pin}] is not an array on node ${input.from.nodeId}`,
+      { ruleId: input.ruleId, nodeId: input.from.nodeId, pin: input.from.pin },
+    );
+  }
+  // Preserve retry classification before the broader fan-in scan: an exact
+  // source endpoint already carrying this target is a duplicate, not a second
+  // incoming source.
+  if (Array.isArray(existing) && existing.includes(edgeString)) {
+    throw new ConfigError(
+      `edge already exists: ${input.from.nodeId}.${input.from.pin} -> ${edgeString}`,
+      {
+        ruleId: input.ruleId,
+        from: `${input.from.nodeId}.${input.from.pin}`,
+        to: edgeString,
+      },
+    );
+  }
   // F66a (2026-05-31) — cross-color guard. Bundle connectTool.connect uses
   // `p===Qe.both||p===f` to refuse event→state / state→event wires (the
   // src-side dual `event|state` is the only wildcard). lintGraph already
@@ -2974,20 +2994,22 @@ export async function addEdge(
   // F66a (2026-05-31) — fan-in cap. Bundle connectTool.connect rejects a
   // second wire into a pin that already has one ("一个输入节点只能连一条线
   // 。你可能需要使用逻辑卡片"). Loop every other node's outputs and refuse
-  // the add when the target endpoint is already in any output array.
+  // the add when the target endpoint is already in any output array. Scan the
+  // attempted source node as well: a different output pin on that same node is
+  // still a distinct incoming wire.
   for (const otherRaw of current.nodes) {
     const other = otherRaw as Record<string, unknown>;
-    if (other.id === input.from.nodeId) continue; // F28 duplicate path below
     const outs = other.outputs as Record<string, unknown> | undefined;
     if (outs === undefined) continue;
-    for (const arr of Object.values(outs)) {
+    for (const [otherPin, arr] of Object.entries(outs)) {
       if (!Array.isArray(arr)) continue;
       if (arr.includes(edgeString)) {
+        const existingFrom = `${String(other.id)}.${otherPin}`;
         throw new ConfigError(
-          `fan-in cap: input pin "${edgeString}" is already wired from another source (canvas-illegal — "一个输入节点只能连一条线"). Use a logicOr/signalOr card to merge multiple triggers.`,
+          `fan-in cap: input pin "${edgeString}" is already wired from ${existingFrom} (canvas-illegal — "一个输入节点只能连一条线"). Use a logicOr/signalOr card to merge multiple triggers.`,
           {
             ruleId: input.ruleId,
-            existingSource: String(other.id),
+            existingSource: existingFrom,
             to: edgeString,
             attemptedFrom: `${input.from.nodeId}.${input.from.pin}`,
           },
@@ -2995,33 +3017,19 @@ export async function addEdge(
       }
     }
   }
-  const existing = srcOutputs[input.from.pin];
 
   let newArr: string[];
   if (existing === undefined) {
     newArr = [edgeString];
   } else if (Array.isArray(existing)) {
-    // F28 (2026-05-30 save-flow audit): reject duplicate edges. The gateway
-    // dispatcher fires downstream once per array entry, so a duplicate
-    // `src.pin -> dst.pin` makes the target fire N times per upstream trigger
-    // — a shape the UI canvas never produces. (Realistic trigger: an LLM
-    // retrying edge-add on a transient error.)
-    if (existing.includes(edgeString)) {
-      throw new ConfigError(
-        `edge already exists: ${input.from.nodeId}.${input.from.pin} -> ${edgeString}`,
-        {
-          ruleId: input.ruleId,
-          from: `${input.from.nodeId}.${input.from.pin}`,
-          to: edgeString,
-        },
-      );
-    }
     newArr = [...existing, edgeString];
   } else {
-    throw new GatewayError(
-      `outputs[${input.from.pin}] is not an array on node ${input.from.nodeId}`,
-      { ruleId: input.ruleId, nodeId: input.from.nodeId, pin: input.from.pin },
-    );
+    // Guarded above; retained for exhaustive narrowing if the shape changes.
+    throw new GatewayError(`outputs[${input.from.pin}] is invalid on node ${input.from.nodeId}`, {
+      ruleId: input.ruleId,
+      nodeId: input.from.nodeId,
+      pin: input.from.pin,
+    });
   }
 
   const newSrc = { ...srcNode, outputs: { ...srcOutputs, [input.from.pin]: newArr } };
