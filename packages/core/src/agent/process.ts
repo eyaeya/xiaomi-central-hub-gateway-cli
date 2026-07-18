@@ -15,6 +15,8 @@ export interface RunAgentOptions {
   rpcTimeoutMs?: number;
   /** Optional agent metadata returned by the `$ping` meta-method. */
   meta?: { agentStartedAt: string; agentVersion: string };
+  /** Test seam: defaults to the real local IPC server factory. */
+  createServer?: typeof createIpcServer;
 }
 
 export interface AgentHandle {
@@ -48,9 +50,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
     channel,
     defaultTimeoutMs: opts.rpcTimeoutMs ?? 10_000,
   });
-  router.start();
-
   let stopping = false;
+  let cleanupPromise: Promise<void> | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let idleDeadline = Date.now() + opts.idleMs;
   let lastActivityAt = new Date().toISOString();
@@ -61,65 +62,99 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
 
   let server: IpcServerHandle | null = null;
 
-  const cleanup = async (): Promise<void> => {
-    if (stopping) return;
+  const cleanup = (): Promise<void> => {
+    if (cleanupPromise) return cleanupPromise;
     stopping = true;
-    if (idleTimer) clearTimeout(idleTimer);
-    if (server) await server.close();
-    await router.stop();
-    opts.transport.close();
-    resolveDone();
+    cleanupPromise = (async () => {
+      const errors: unknown[] = [];
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = null;
+      if (server) {
+        try {
+          await server.close();
+        } catch (e) {
+          errors.push(e);
+        }
+        server = null;
+      }
+      try {
+        await router.stop();
+      } catch (e) {
+        errors.push(e);
+      }
+      try {
+        opts.transport.close();
+      } catch (e) {
+        errors.push(e);
+      }
+      resolveDone();
+      if (errors.length > 0) {
+        throw new AggregateError(errors, 'agent cleanup failed');
+      }
+    })();
+    return cleanupPromise;
   };
 
   const resetIdle = (): void => {
+    if (stopping) return;
     if (idleTimer) clearTimeout(idleTimer);
     idleDeadline = Date.now() + opts.idleMs;
     lastActivityAt = new Date().toISOString();
     idleTimer = setTimeout(() => {
-      void cleanup();
+      void cleanup().catch(() => {});
     }, opts.idleMs);
   };
 
-  server = await createIpcServer({
-    path: opts.socketPath,
-    handler: async ({ method, params, timeoutMs, kind }) => {
-      const isMeta = method.startsWith('$');
-      // Only renew the idle window on real gateway traffic. Cheap meta probes
-      // (status, health checks) must not keep the daemon alive indefinitely.
-      if (!isMeta) resetIdle();
-      if (method === '$ping') {
-        return {
-          ok: true,
-          host: opts.host,
-          agentStartedAt: opts.meta?.agentStartedAt ?? null,
-          agentVersion: opts.meta?.agentVersion ?? null,
-          idleMs: opts.idleMs,
-          idleMsRemaining: Math.max(0, idleDeadline - Date.now()),
-          lastActivityAt,
-        };
-      }
-      // Forward to the gateway honouring the caller's deadline (so `--timeout`
-      // isn't silently clamped to the router default) and classifying a timeout
-      // by call kind: a write that times out *after* being sent is "not
-      // confirmed" (state may or may not have applied), not a plain network
-      // failure. That distinction survives the IPC boundary via reviveError.
-      return router.request(method, params, {
-        ...(timeoutMs !== undefined && { timeoutMs }),
-        onTimeout: (ms) =>
-          kind === 'write'
-            ? new NotConfirmedError(
-                `gateway call ${method} was not confirmed within ${ms}ms (the write may or may not have applied)`,
-                { method },
-              )
-            : new NetworkError(`gateway call ${method} timed out after ${ms}ms`),
-      });
-    },
-  });
+  try {
+    router.start();
+    server = await (opts.createServer ?? createIpcServer)({
+      path: opts.socketPath,
+      handler: async ({ method, params, timeoutMs, kind }) => {
+        const isMeta = method.startsWith('$');
+        // Only renew the idle window on real gateway traffic. Cheap meta probes
+        // (status, health checks) must not keep the daemon alive indefinitely.
+        if (!isMeta) resetIdle();
+        if (method === '$ping') {
+          return {
+            ok: true,
+            host: opts.host,
+            agentStartedAt: opts.meta?.agentStartedAt ?? null,
+            agentVersion: opts.meta?.agentVersion ?? null,
+            idleMs: opts.idleMs,
+            idleMsRemaining: Math.max(0, idleDeadline - Date.now()),
+            lastActivityAt,
+          };
+        }
+        // Forward to the gateway honouring the caller's deadline (so `--timeout`
+        // isn't silently clamped to the router default) and classifying a timeout
+        // by call kind: a write that times out *after* being sent is "not
+        // confirmed" (state may or may not have applied), not a plain network
+        // failure. That distinction survives the IPC boundary via reviveError.
+        return router.request(method, params, {
+          ...(timeoutMs !== undefined && { timeoutMs }),
+          onTimeout: (ms) =>
+            kind === 'write'
+              ? new NotConfirmedError(
+                  `gateway call ${method} was not confirmed within ${ms}ms (the write may or may not have applied)`,
+                  { method },
+                )
+              : new NetworkError(`gateway call ${method} timed out after ${ms}ms`),
+        });
+      },
+    });
 
-  resetIdle();
+    resetIdle();
+  } catch (originalError) {
+    try {
+      await cleanup();
+    } catch {
+      // Rollback is best-effort; the bootstrap failure remains the root cause.
+    }
+    throw originalError;
+  }
 
   // WS drop / unrecoverable decrypt failure → router.done resolves → cleanup.
-  void router.done.then(() => cleanup());
+  void router.done.then(() => cleanup()).catch(() => {});
 
   return {
     socketPath: opts.socketPath,

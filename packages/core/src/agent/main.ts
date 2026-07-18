@@ -24,6 +24,8 @@ export interface RunAgentMainOptions {
   out?: NodeJS.WritableStream;
   /** Test seam: open an in-process transport instead of a real WS. */
   connect?: (host: string) => Promise<BinaryTransport>;
+  /** Test seam: defaults to a file-backed SessionStore at `sessionFile`. */
+  sessionStore?: Pick<SessionStore, 'delete' | 'write'>;
 }
 
 export interface RunAgentMainHandle {
@@ -56,6 +58,11 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
     baseDir: socketBaseDir,
     platform: process.platform,
   });
+  const store =
+    opts.sessionStore ??
+    new SessionStore({
+      path: opts.sessionFile ?? defaultSessionFilePath(),
+    });
   const transport = opts.connect
     ? await opts.connect(opts.host)
     : await connectWs({ url: toWsUrl(opts.host) });
@@ -66,9 +73,13 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
       passcode: opts.passcode,
       transport,
     });
-  } catch (e) {
-    transport.close();
-    throw e;
+  } catch (originalError) {
+    try {
+      transport.close();
+    } catch {
+      // Preserve the handshake failure even if transport rollback also fails.
+    }
+    throw originalError;
   }
 
   const agentStartedAt = new Date().toISOString();
@@ -81,25 +92,41 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
     meta: { agentStartedAt, agentVersion: opts.agentVersion },
   });
 
-  const store = new SessionStore({
-    path: opts.sessionFile ?? defaultSessionFilePath(),
-  });
-  await store.write({
+  const session = {
     host: opts.host,
     pid: process.pid,
     socketPath: endpoint.path,
     agentStartedAt,
     agentVersion: opts.agentVersion,
     lastValidatedAt: agentStartedAt,
-  });
+  };
 
   const ready: ReadyPayload = {
     socketPath: endpoint.path,
     agentStartedAt,
     agentVersion: opts.agentVersion,
   };
-  const out = opts.out ?? process.stdout;
-  out.write(`READY ${JSON.stringify(ready)}\n`);
+  let sessionWritten = false;
+  try {
+    await store.write(session);
+    sessionWritten = true;
+    const out = opts.out ?? process.stdout;
+    await writeReady(out, `READY ${JSON.stringify(ready)}\n`);
+  } catch (originalError) {
+    if (sessionWritten) {
+      try {
+        await store.delete(opts.host);
+      } catch {
+        // Best-effort rollback; cross-instance session fencing is handled separately.
+      }
+    }
+    try {
+      await agent.stop();
+    } catch {
+      // Preserve the bootstrap failure even if transport/IPC cleanup also fails.
+    }
+    throw originalError;
+  }
 
   // Whenever the agent exits, remove the session entry so a fresh `xgg login`
   // is required next time. We intentionally don't await this in `done` — the
@@ -130,6 +157,43 @@ async function ensurePrivateRuntimeDir(path: string): Promise<void> {
     throw new Error(`agent runtime directory is not owned by the current user: ${path}`);
   }
   await fs.chmod(path, 0o700);
+}
+
+async function writeReady(out: NodeJS.WritableStream, line: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const removeErrorListener = (): void => {
+      out.off('error', onError);
+    };
+    const onError = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    out.once('error', onError);
+    try {
+      out.write(line, (error?: Error | null) => {
+        if (settled) return;
+        settled = true;
+        if (error) {
+          reject(error);
+          // Node emits the corresponding 'error' after the write callback.
+          // Keep the listener through that turn so the rollback path does not
+          // cause an unhandled stream error, then remove it for nonstandard
+          // WritableStream implementations that only invoke the callback.
+          setImmediate(removeErrorListener);
+          return;
+        }
+        removeErrorListener();
+        resolve();
+      });
+    } catch (error) {
+      settled = true;
+      removeErrorListener();
+      reject(error);
+    }
+  });
 }
 
 function defaultSessionFilePath(): string {
