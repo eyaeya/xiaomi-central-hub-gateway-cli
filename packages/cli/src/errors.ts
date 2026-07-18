@@ -230,6 +230,12 @@ const HINTS: HintRule[] = [
   // NOT_CONFIRMED
   {
     code: 'NOT_CONFIRMED',
+    command: '*',
+    messageMatches: 'backup progress polling timed out',
+    hint: 'The backup operation may still be running. Use error.details.from and error.details.progressId with `xgg backup progress --from <from> --progress-id <id>` before retrying the write.',
+  },
+  {
+    code: 'NOT_CONFIRMED',
     command: 'variable.set-value',
     hint: 'Write was sent but ack timed out. The value MAY have changed — run `xgg variable get <scope>` to verify.',
   },

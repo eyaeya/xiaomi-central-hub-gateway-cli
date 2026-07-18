@@ -59,6 +59,16 @@ interface SetConfigOpts extends BackupOpts {
   autoBackupLimit?: string;
 }
 
+interface ParsedWaitOptions {
+  enabled: boolean;
+  pollIntervalMs?: number;
+  pollTimeoutMs?: number;
+}
+
+type BackupWaitOperation = 'backup.create' | 'backup.download' | 'backup.load';
+
+const MAX_TIMER_MS = 2_147_483_647;
+
 function makeDeps(opts: BackupOpts) {
   const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
   if (!baseUrl) throw new ConfigError('missing --base-url or XGG_BASE_URL');
@@ -98,19 +108,21 @@ function addWaitOptions(cmd: Command): Command {
 }
 
 async function maybeWaitForProgress(
-  opts: BackupOpts,
+  from: string,
+  operation: BackupWaitOperation,
+  waitOpts: ParsedWaitOptions,
   result: unknown,
   deps: ReturnType<typeof makeDeps>,
 ): Promise<{ progress: number } | undefined> {
-  if (opts.wait !== true) return undefined;
+  if (!waitOpts.enabled) return undefined;
   const progressId = extractBackupProgressId(result);
   // Nothing pollable (e.g. loadBackup returned {} / true) — surface as-is.
   if (progressId === null) return undefined;
-  const pollIntervalMs = parseOptionalNumber(opts.pollIntervalMs, '--poll-interval-ms');
-  const pollTimeoutMs = parseOptionalNumber(opts.pollTimeoutMs, '--poll-timeout-ms');
-  return waitForBackupProgress({ from: opts.from, progressId }, deps, {
-    ...(pollIntervalMs !== undefined && { pollIntervalMs }),
-    ...(pollTimeoutMs !== undefined && { pollTimeoutMs }),
+  return waitForBackupProgress({ from, progressId, operation }, deps, {
+    ...(waitOpts.pollIntervalMs !== undefined && {
+      pollIntervalMs: waitOpts.pollIntervalMs,
+    }),
+    ...(waitOpts.pollTimeoutMs !== undefined && { pollTimeoutMs: waitOpts.pollTimeoutMs }),
   });
 }
 
@@ -139,6 +151,43 @@ function parseOptionalNumber(raw: string | undefined, flag: string): number | un
   const value = Number(raw);
   if (!Number.isFinite(value)) throw new ConfigError(`${flag} must be a number`);
   return value;
+}
+
+function parsePositiveTimerMs(raw: string, flag: string): number {
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new ConfigError(
+      `${flag} must be a positive decimal integer no greater than ${MAX_TIMER_MS}`,
+    );
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value > MAX_TIMER_MS) {
+    throw new ConfigError(
+      `${flag} must be a positive decimal integer no greater than ${MAX_TIMER_MS}`,
+    );
+  }
+  return value;
+}
+
+function parseWaitOptions(opts: BackupOpts): ParsedWaitOptions {
+  const suppliedPollFlags = [
+    ...(opts.pollIntervalMs !== undefined ? ['--poll-interval-ms'] : []),
+    ...(opts.pollTimeoutMs !== undefined ? ['--poll-timeout-ms'] : []),
+  ];
+  if (opts.wait !== true) {
+    if (suppliedPollFlags.length > 0) {
+      throw new ConfigError(`${suppliedPollFlags.join(' and ')} require --wait`);
+    }
+    return { enabled: false };
+  }
+  return {
+    enabled: true,
+    ...(opts.pollIntervalMs !== undefined && {
+      pollIntervalMs: parsePositiveTimerMs(opts.pollIntervalMs, '--poll-interval-ms'),
+    }),
+    ...(opts.pollTimeoutMs !== undefined && {
+      pollTimeoutMs: parsePositiveTimerMs(opts.pollTimeoutMs, '--poll-timeout-ms'),
+    }),
+  };
 }
 
 function backupRef(opts: BackupTargetOpts): BackupItem {
@@ -206,9 +255,16 @@ export function backupCommand(): Command {
     ),
   ).action(
     wrap('backup.create', async (opts: CreateOpts) => {
+      const waitOpts = parseWaitOptions(opts);
       const deps = makeDeps(opts);
       const result = await createBackup({ from: opts.from, fileName: opts.fileName }, deps);
-      const progress = await maybeWaitForProgress(opts, result, deps);
+      const progress = await maybeWaitForProgress(
+        opts.from,
+        'backup.create',
+        waitOpts,
+        result,
+        deps,
+      );
       emit({ ok: true, result, ...(progress && { progress }) }, { pretty: opts.pretty === true });
     }),
   );
@@ -240,9 +296,16 @@ export function backupCommand(): Command {
     ),
   ).action(
     wrap('backup.download', async (opts: BackupTargetOpts) => {
+      const waitOpts = parseWaitOptions(opts);
       const deps = makeDeps(opts);
       const result = await downloadBackup({ from: opts.from, backup: backupRef(opts) }, deps);
-      const progress = await maybeWaitForProgress(opts, result, deps);
+      const progress = await maybeWaitForProgress(
+        opts.from,
+        'backup.download',
+        waitOpts,
+        result,
+        deps,
+      );
       emit({ ok: true, result, ...(progress && { progress }) }, { pretty: opts.pretty === true });
     }),
   );
@@ -277,10 +340,11 @@ export function backupCommand(): Command {
     ),
   ).action(
     wrap('backup.load', async (opts: SnapshotOpts) => {
+      const waitOpts = parseWaitOptions(opts);
       const deps = makeDeps(opts);
       const snapshot = await snapshotBeforeBackupWrite(opts, deps);
       const result = await loadBackup({ from: opts.from, backup: backupRef(opts) }, deps);
-      const progress = await maybeWaitForProgress(opts, result, deps);
+      const progress = await maybeWaitForProgress(opts.from, 'backup.load', waitOpts, result, deps);
       emit(
         { ok: true, snapshot, result, ...(progress && { progress }) },
         { pretty: opts.pretty === true },
