@@ -1,12 +1,65 @@
-export class MiotSpecFetchError extends Error {
+import { NetworkError, SchemaError } from './transport/errors.js';
+
+const MIOT_SPEC_DEPENDENCY = 'miot-spec-registry';
+
+interface MiotSpecErrorContext {
+  status?: number;
+  timeoutMs?: number;
+  cause?: unknown;
+  urn?: string;
+}
+
+function publicRegistryUrl(rawUrl: string, urn?: string): string {
+  try {
+    const url = new URL(rawUrl);
+    url.username = '';
+    url.password = '';
+    url.hash = '';
+    // Never trust query values inherited from a configured base URL. Only the
+    // URN supplied separately by fetchMiotSpec is safe to expose.
+    url.search = '';
+    if (urn !== undefined) url.searchParams.set('type', urn);
+    return url.toString();
+  } catch {
+    return '<invalid-miot-spec-registry-url>';
+  }
+}
+
+function errorDetails(rawUrl: string, context: MiotSpecErrorContext): Record<string, unknown> {
+  const details: Record<string, unknown> = {
+    dependency: MIOT_SPEC_DEPENDENCY,
+    url: publicRegistryUrl(rawUrl, context.urn),
+  };
+  if (context.status !== undefined) details.status = context.status;
+  if (context.timeoutMs !== undefined) details.timeoutMs = context.timeoutMs;
+  return details;
+}
+
+export class MiotSpecFetchError extends NetworkError {
   override readonly name = 'MiotSpecFetchError';
-  constructor(
-    message: string,
-    public readonly url: string,
-    public readonly status?: number,
-    override readonly cause?: unknown,
-  ) {
-    super(message);
+  readonly url: string;
+  readonly status: number | undefined;
+  override readonly cause: unknown;
+
+  constructor(message: string, rawUrl: string, context: MiotSpecErrorContext = {}) {
+    super(message, errorDetails(rawUrl, context));
+    this.url = publicRegistryUrl(rawUrl, context.urn);
+    this.status = context.status;
+    this.cause = context.cause;
+  }
+}
+
+export class MiotSpecContentError extends SchemaError {
+  override readonly name = 'MiotSpecContentError';
+  readonly url: string;
+  readonly status: number | undefined;
+  override readonly cause: unknown;
+
+  constructor(message: string, rawUrl: string, context: MiotSpecErrorContext = {}) {
+    super(message, errorDetails(rawUrl, context));
+    this.url = publicRegistryUrl(rawUrl, context.urn);
+    this.status = context.status;
+    this.cause = context.cause;
   }
 }
 
@@ -52,7 +105,14 @@ export async function fetchMiotSpec(
 async function doFetchMiotSpec(urn: string, opts: FetchMiotSpecOptions): Promise<unknown> {
   const baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const url = `${baseUrl}?type=${encodeURIComponent(urn)}`;
+  let url: string;
+  try {
+    const requestUrl = new URL(baseUrl);
+    requestUrl.searchParams.set('type', urn);
+    url = requestUrl.toString();
+  } catch (cause) {
+    throw new MiotSpecFetchError('MIoT spec registry URL is invalid', baseUrl, { cause, urn });
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -61,23 +121,40 @@ async function doFetchMiotSpec(urn: string, opts: FetchMiotSpecOptions): Promise
     const res = await fetch(url, { method: 'GET', signal: controller.signal });
     if (!res.ok) {
       throw new MiotSpecFetchError(
-        `MIoT spec fetch failed: ${res.status} ${res.statusText}`,
+        `MIoT spec registry request failed with HTTP ${res.status}`,
         url,
-        res.status,
+        { status: res.status, urn },
       );
     }
     try {
       return await res.json();
     } catch (jsonErr) {
-      throw new MiotSpecFetchError('MIoT spec malformed JSON', url, res.status, jsonErr);
+      if (controller.signal.aborted) {
+        throw new MiotSpecFetchError(
+          `MIoT spec registry request timed out after ${timeoutMs}ms`,
+          url,
+          { status: res.status, timeoutMs, cause: jsonErr, urn },
+        );
+      }
+      throw new MiotSpecContentError('MIoT spec registry returned malformed JSON', url, {
+        status: res.status,
+        cause: jsonErr,
+        urn,
+      });
     }
   } catch (err) {
-    if (err instanceof MiotSpecFetchError) throw err;
+    if (err instanceof MiotSpecFetchError || err instanceof MiotSpecContentError) throw err;
+    const timedOut = controller.signal.aborted;
     throw new MiotSpecFetchError(
-      `MIoT spec fetch error: ${(err as Error).message}`,
+      timedOut
+        ? `MIoT spec registry request timed out after ${timeoutMs}ms`
+        : 'MIoT spec registry request failed',
       url,
-      undefined,
-      err,
+      {
+        ...(timedOut ? { timeoutMs } : {}),
+        cause: err,
+        urn,
+      },
     );
   } finally {
     clearTimeout(timer);

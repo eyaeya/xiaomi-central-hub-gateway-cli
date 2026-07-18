@@ -35,6 +35,12 @@ const HINTS: HintRule[] = [
   // SCHEMA
   {
     code: 'SCHEMA',
+    command: '*',
+    messageMatches: 'MIoT spec registry',
+    hint: 'The MIoT spec registry returned malformed content. Check error.details.url/status, verify the configured registry, and retry.',
+  },
+  {
+    code: 'SCHEMA',
     command: 'rule.set',
     hint: 'cfg must mirror the RuleSummary returned by `xgg rule list`.',
   },
@@ -221,6 +227,12 @@ const HINTS: HintRule[] = [
   },
 
   // NETWORK
+  {
+    code: 'NETWORK',
+    command: '*',
+    messageMatches: 'MIoT spec registry',
+    hint: 'The MIoT spec registry request failed. Check DNS/public internet connectivity and error.details.url/status, then retry.',
+  },
   {
     code: 'NETWORK',
     command: '*',
