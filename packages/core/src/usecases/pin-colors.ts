@@ -37,6 +37,9 @@ interface NodePinSemantics {
   // driving one of its inputs. Keep this next to the pin semantics so lint,
   // reachability, and agent guidance share one source of truth.
   independentEventSource?: true;
+  // The card exposes a state value without another graph node driving an
+  // input, but that state alone must not bootstrap an event path.
+  independentStateSource?: true;
 }
 
 const PIN_TABLE: Record<string, NodePinSemantics> = {
@@ -61,7 +64,11 @@ const PIN_TABLE: Record<string, NodePinSemantics> = {
     outputs: [{ name: 'output', color: 'event' }],
     independentEventSource: true,
   },
-  timeRange: { inputs: [], outputs: [{ name: 'output', color: 'event|state' }] },
+  timeRange: {
+    inputs: [],
+    outputs: [{ name: 'output', color: 'event|state' }],
+    independentStateSource: true,
+  },
   delay: {
     inputs: [{ name: 'input', color: 'event' }],
     outputs: [{ name: 'output', color: 'event' }],
@@ -90,7 +97,7 @@ const PIN_TABLE: Record<string, NodePinSemantics> = {
   onlyNTimes: {
     inputs: [
       { name: 'input', color: 'event' },
-      { name: 'zero', color: 'event' },
+      { name: 'zero', color: 'event', propagatesEvent: false },
     ],
     outputs: [{ name: 'output', color: 'event' }],
   },
@@ -198,6 +205,19 @@ const INDEPENDENT_EVENT_SOURCE_TYPE_SET = new Set(INDEPENDENT_EVENT_SOURCE_TYPES
 
 export function isIndependentEventSourceType(type: string): boolean {
   return INDEPENDENT_EVENT_SOURCE_TYPE_SET.has(type);
+}
+
+/** Cards whose output state is available without an incoming graph event. */
+export const INDEPENDENT_STATE_SOURCE_TYPES: readonly string[] = Object.freeze(
+  Object.entries(PIN_TABLE)
+    .filter(([, semantics]) => semantics.independentStateSource === true)
+    .map(([type]) => type),
+);
+
+const INDEPENDENT_STATE_SOURCE_TYPE_SET = new Set(INDEPENDENT_STATE_SOURCE_TYPES);
+
+export function isIndependentStateSourceType(type: string): boolean {
+  return INDEPENDENT_STATE_SOURCE_TYPE_SET.has(type);
 }
 
 /**
