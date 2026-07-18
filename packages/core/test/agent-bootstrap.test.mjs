@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { test } from 'node:test';
-import { resolveAgentEndpoint } from '../dist/agent/ipc-path.js';
+import { resolveAgentInstanceEndpoint } from '../dist/agent/ipc-path.js';
 import { runAgentMain } from '../dist/agent/main.js';
 import { runAgent } from '../dist/agent/process.js';
 import { GcmStream } from '../dist/crypto/gcm.js';
@@ -113,9 +113,11 @@ test('runAgentMain stops the live agent when session persistence fails', async (
     code: 'EACCES',
   });
   let deleteCalls = 0;
-  const endpoint = resolveAgentEndpoint({
+  const instanceId = 'session-write-failure';
+  const endpoint = resolveAgentInstanceEndpoint({
     baseDir,
     host,
+    instanceId,
     platform: process.platform,
   });
 
@@ -125,10 +127,12 @@ test('runAgentMain stops the live agent when session persistence fails', async (
       connect: async () => transport,
       host,
       idleMs: 60_000,
+      instanceId,
       passcode,
       sessionStore: {
-        delete: async () => {
+        deleteIfMatch: async () => {
           deleteCalls += 1;
+          return true;
         },
         write: async () => {
           throw sessionError;
@@ -164,9 +168,11 @@ test('runAgentMain removes its session and stops the agent when READY output fai
       callback(readyError);
     },
   });
-  const endpoint = resolveAgentEndpoint({
+  const instanceId = 'ready-write-failure';
+  const endpoint = resolveAgentInstanceEndpoint({
     baseDir,
     host,
+    instanceId,
     platform: process.platform,
   });
 
@@ -176,11 +182,13 @@ test('runAgentMain removes its session and stops the agent when READY output fai
       connect: async () => transport,
       host,
       idleMs: 60_000,
+      instanceId,
       out,
       passcode,
       sessionStore: {
-        delete: async (deletedHost) => {
-          sessionEvents.push(`delete:${deletedHost}`);
+        deleteIfMatch: async (expected) => {
+          sessionEvents.push(`delete:${expected.host}`);
+          return true;
         },
         write: async (session) => {
           sessionEvents.push(`write:${session.host}`);

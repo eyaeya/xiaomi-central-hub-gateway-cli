@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AuthExpiredError, agentCall, resolveAgentEndpoint, status } from '../dist/index.js';
+import {
+  AuthExpiredError,
+  agentCall,
+  resolveAgentEndpoint,
+  resolveAgentInstanceEndpoint,
+  status,
+} from '../dist/index.js';
 
 const collisionA = 'http://gateway-a.invalid:8086/?nonce=24592';
 const collisionB = 'http://gateway-b.invalid:8086/?nonce=53162';
@@ -31,6 +37,24 @@ test('equivalent gateway URLs share a canonical endpoint', () => {
     endpoint('http://GATEWAY-A.invalid:8086/ignored/path?nonce=1#fragment'),
     endpoint('http://gateway-a.invalid:8086/'),
   );
+});
+
+test('daemon instances derive distinct short paths from one stable host endpoint', () => {
+  const common = { host: collisionA, baseDir: '/tmp/xgg-test', platform: 'darwin' };
+  const first = resolveAgentInstanceEndpoint({ ...common, instanceId: 'first' }).path;
+  const second = resolveAgentInstanceEndpoint({ ...common, instanceId: 'second' }).path;
+
+  assert.notEqual(first, second);
+  assert.equal(first, resolveAgentInstanceEndpoint({ ...common, instanceId: 'first' }).path);
+  assert.match(first, /agent-[0-9a-f]{32}-[0-9a-f]{24}\.sock$/);
+
+  const compact = resolveAgentInstanceEndpoint({
+    ...common,
+    baseDir: `/tmp/${'nested/'.repeat(8)}runtime`,
+    instanceId: 'compact',
+  }).path;
+  assert.ok(Buffer.byteLength(compact) <= 103);
+  assert.match(compact, /\/\.x[0-9a-f]{24}$/);
 });
 
 test('status rejects a ping from the wrong gateway identity', async () => {
