@@ -34,7 +34,7 @@ export function buildProgram(): Command {
     `
 Examples:
   $ xgg login --code <CODE>                        Bind agent to gateway
-  $ xgg dump > snapshot.json                       Export devices+rules+variables
+  $ xgg dump > inventory.json                      Export best-effort indexes
   $ xgg rule list --pretty                         Table view
   $ xgg rule new --name "Evening automation"       Create an empty rule
   $ xgg backup list --from fds --pretty            List gateway cloud backups

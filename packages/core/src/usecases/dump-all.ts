@@ -14,14 +14,15 @@ export interface DumpAllResult {
 }
 
 /**
- * Composite read: dump the three top-level resources (devices, rules,
- * variable scopes) as a single document.
+ * Lightweight inventory read: dump the three top-level resource indexes
+ * (devices, rule summaries, variable scope names) as a single document.
  *
  * Calls run sequentially because the per-host agent's JSON-RPC handler does
  * not multiplex concurrent in-flight requests. Each resource has its own
  * try/catch so a single failure (e.g. gateway transient error) doesn't abort
  * the rest — the failed slot reports `null` and the failure is recorded in
- * `errors`.
+ * `errors`. Never use this best-effort result as a pre-write rollback snapshot;
+ * `dumpBeforeWrite()` uses the strict full-state schema instead.
  */
 export async function dumpAll(deps: ResourceDeps): Promise<DumpAllResult> {
   const errors: Array<{ resource: string; error: string }> = [];

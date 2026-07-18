@@ -12,19 +12,21 @@ interface DumpOpts {
 
 export function dumpCommand(): Command {
   return new Command('dump')
-    .description('Dump device list, rule list, and variable scopes as a single JSON document')
+    .description('Dump a best-effort device/rule/scope inventory as JSON (not a rollback snapshot)')
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
     .option('--timeout <ms>', 'request timeout in milliseconds', '10000')
     .option('--pretty', 'pretty-print JSON output')
-    .addHelpText('after', '\nExample:\n  $ xgg dump > snapshot.json')
+    .addHelpText('after', '\nExample:\n  $ xgg dump > inventory.json')
     .action(
       wrap('dump', async (opts: DumpOpts) => {
         const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
         if (!baseUrl) throw new ConfigError('missing --base-url or XGG_BASE_URL');
         const store = createStore(opts.sessionFile ? { sessionFile: opts.sessionFile } : {});
         const result = await dumpAll({ baseUrl, store, timeoutMs: Number(opts.timeout) });
-        emit({ ok: true, ...result }, { pretty: opts.pretty === true });
+        const partial = result.errors.length > 0;
+        emit({ ok: !partial, partial, ...result }, { pretty: opts.pretty === true });
+        if (partial) process.exitCode = 1;
       }),
     );
 }

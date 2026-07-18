@@ -54,7 +54,7 @@ export function attachDelete(cmd: Command): void {
         }
         // F53 (2026-05-30): when --allow-missing turns this into a no-op
         // (existed=false), skip the pre-write snapshot. dumpBeforeWrite
-        // makes a full dumpAll RPC + mkdir/writeFile, and recording a
+        // captures and atomically persists a full rollback artifact; recording a
         // "before" checkpoint for an op that won't mutate state produces
         // a misleading snapshot path in the response payload (looks like
         // we deleted something).

@@ -161,7 +161,9 @@ export XGG_AGENT_MODE=1
 export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 ```
 
-`XGG_AGENT_MODE=1` 会拒绝无快照写入，避免 Agent 修改规则图或变量后没有可回滚证据。建议把快照目录建在当前项目目录下（上面的 `$PWD/snapshots`），让快照随项目留存、便于回溯。
+`XGG_AGENT_MODE=1` 会拒绝无快照写入，避免 Agent 修改规则图或变量后没有可回滚证据。写前 rollback artifact 会完整保存规则节点与边、各 scope 的变量配置和值；backup load/delete 还会记录 backup list、config 与目标引用。任一必需读取失败时 mutation 会 fail closed，不会留下可误认的快照或继续写入。建议把快照目录建在当前项目目录下（上面的 `$PWD/snapshots`），让快照随项目留存、便于回溯。
+
+`xgg dump` 只用于 best-effort 资源索引，不是 rollback artifact；若任一资源读取失败，它会输出 `partial:true`、`ok:false` 并返回非零状态。
 
 装好之后，Agent 应主动引导用户完成登录：请用户打开**米家 App 中的中枢网关设备页面**（如果中枢网关是路由器或家庭屏自带的，则打开对应设备内的中枢网关功能页面），把页面上的**中枢网关网址**和 **6 位动态码**发给 Agent，Agent 据此运行 `xgg login --code <6位动态码> --base-url <中枢网关网址>` 完成登录，之后即可开始读取设备、创建自动化。
 
