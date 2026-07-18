@@ -3,6 +3,20 @@ import { z } from 'zod';
 export const NodeId = z.string().min(1);
 export type NodeId = z.infer<typeof NodeId>;
 
+/** Shared continuity rule for dynamic pin records such as input0..inputN. */
+export function hasContiguousNumberedPins(
+  pins: Record<string, unknown>,
+  prefix: string,
+  minimum: number,
+): boolean {
+  const count = Object.keys(pins).length;
+  if (count < minimum) return false;
+  for (let index = 0; index < count; index += 1) {
+    if (!Object.hasOwn(pins, `${prefix}${index}`)) return false;
+  }
+  return true;
+}
+
 // cfg.pos in baseline fixtures is always {x, y, width, height} (UI canvas geometry).
 // Kept strict — if a future type adds fields, schema parse will surface it.
 export const Position = z

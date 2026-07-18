@@ -3,6 +3,7 @@ import type { DeviceSpec, MiotProperty } from '../schemas/device-spec.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
 import { ConfigError, NotFoundError } from '../transport/errors.js';
 import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
+import { duplicateNodeIdIssues, findDuplicateNodeIds } from './graph-invariants.js';
 import type { LintIssue } from './lint-graph.js';
 import { checkNodeStrict } from './typed-schemas.js';
 import { checkVarSetNumberExpr } from './var-expr-check.js';
@@ -759,6 +760,7 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
   }
   if (nodes === undefined) return issues;
   if (!Array.isArray(nodes)) return [issue('nodes', '卡片配置有误: Invalid nodes')];
+  issues.push(...duplicateNodeIdIssues(findDuplicateNodeIds(nodes)));
 
   const specCache = new Map<string, Promise<DeviceSpec>>();
   const getDeviceSpec = input.getDeviceSpec ?? fetchDeviceSpec;

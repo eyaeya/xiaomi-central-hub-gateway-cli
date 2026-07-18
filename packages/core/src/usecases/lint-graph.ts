@@ -1,5 +1,10 @@
 import { NodeUnion } from '../schemas/nodes/index.js';
 import { isModeledNodeType, targetInputPinStatus } from './edge-integrity.js';
+import {
+  duplicateNodeIdIssues,
+  findDuplicateNodeIds,
+  missingRequiredInputIssues,
+} from './graph-invariants.js';
 import { arePinColorsCompatible, resolvePinColor } from './pin-colors.js';
 import { checkNodeStrict } from './typed-schemas.js';
 
@@ -24,6 +29,13 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
   const issues: LintIssue[] = [];
   const nodes = input.graph.nodes;
   if (!nodes) return issues;
+
+  // Graph identity must be checked before nodesById is constructed: assigning
+  // duplicate ids into a Map silently makes the later node overwrite the
+  // earlier one and corrupts every endpoint lookup that follows.
+  const duplicateGroups = findDuplicateNodeIds(nodes);
+  issues.push(...duplicateNodeIdIssues(duplicateGroups));
+  const duplicateIds = new Set(duplicateGroups.map((group) => group.id));
 
   // Phase 1: parse each node, collect valid ids.
   const parsed: Array<{ node: Record<string, unknown>; idx: number }> = [];
@@ -88,7 +100,7 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
     }
 
     nodeIds.add(nodeId);
-    nodesById.set(nodeId, node);
+    if (!duplicateIds.has(nodeId)) nodesById.set(nodeId, node);
     parsed.push({ node, idx: i });
   }
 
@@ -262,23 +274,10 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
     }
   }
 
-  // A `condition` node whose `condition` input has no incoming edge has no state
-  // source feeding the gate. A canvas-authored condition always wires one
-  // (timeRange / logic / varGet / deviceInput); the CLI funnel can't "see" the
-  // empty pin the way the canvas does. Verified against the real gateway: an
-  // unconnected condition defaults to FALSE, so ONLY the `unmet` branch fires
-  // and `met` is dead.
-  for (const { node, idx } of parsed) {
-    if (node.type !== 'condition') continue;
-    const id = node.id as string;
-    if (!edgeTargets.has(`${id}.condition`)) {
-      issues.push({
-        severity: 'warn',
-        path: `nodes[${idx}]`,
-        message: `condition node "${id}" condition input has no incoming edge — gateway defaults it to FALSE (verified), so only the "unmet" branch fires and "met" is dead. Wire a state source (timeRange/logic/varGet/deviceInput) into ${id}.condition.`,
-      });
-    }
-  }
+  // Required-input policy is intentionally selective. Strict write/enable
+  // gates reject incomplete nodes, while advisory lint preserves warnings for
+  // authors assembling a graph incrementally.
+  issues.push(...missingRequiredInputIssues(parsed, edgeTargets, input.strict === true));
 
   return issues;
 }
