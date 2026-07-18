@@ -8,11 +8,13 @@ export {
   canonicalGatewayKey,
   defaultAgentRuntimeDir,
   resolveAgentEndpoint,
+  resolveAgentInstanceEndpoint,
 } from './ipc-path.js';
 export type {
   AgentEndpoint,
   AgentEndpointKind,
   ResolveAgentEndpointInput,
+  ResolveAgentInstanceEndpointInput,
 } from './ipc-path.js';
 export { runAgent } from './process.js';
 export type { AgentHandle, RunAgentOptions } from './process.js';

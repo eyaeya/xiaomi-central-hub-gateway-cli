@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 export type AgentEndpointKind = 'unix' | 'pipe';
 
@@ -14,6 +14,11 @@ export interface ResolveAgentEndpointInput {
   host: string;
   baseDir: string;
   platform: NodeJS.Platform;
+}
+
+export interface ResolveAgentInstanceEndpointInput extends ResolveAgentEndpointInput {
+  /** Per-daemon nonce. Production callers should use a cryptographically random value. */
+  instanceId: string;
 }
 
 /**
@@ -57,4 +62,32 @@ export function resolveAgentEndpoint(input: ResolveAgentEndpointInput): AgentEnd
     return { kind: 'pipe', path: `\\\\.\\pipe\\xgg-agent-${hash}` };
   }
   return { kind: 'unix', path: join(input.baseDir, `agent-${hash}.sock`) };
+}
+
+/**
+ * Derive a per-daemon endpoint from the stable per-host endpoint identity.
+ *
+ * Session files publish the concrete instance path, so replacement daemons do
+ * not need to rename or unlink a shared pathname. Keeping ownership in the
+ * name removes the otherwise unavoidable lstat/unlink TOCTOU during cleanup.
+ */
+export function resolveAgentInstanceEndpoint(
+  input: ResolveAgentInstanceEndpointInput,
+): AgentEndpoint {
+  const base = resolveAgentEndpoint(input);
+  const instanceHash = createHash('sha256').update(input.instanceId).digest('hex').slice(0, 24);
+  if (base.kind === 'pipe') {
+    return { kind: 'pipe', path: `${base.path}-${instanceHash}` };
+  }
+
+  const directory = dirname(base.path);
+  const candidate = join(directory, `${basename(base.path, '.sock')}-${instanceHash}.sock`);
+  // Darwin has the shortest supported sockaddr_un path. Fall back to a compact
+  // private name while retaining the full 96-bit instance nonce.
+  if (Buffer.byteLength(candidate, 'utf8') <= 103) return { kind: 'unix', path: candidate };
+  const compact = join(directory, `.x${instanceHash}`);
+  if (Buffer.byteLength(compact, 'utf8') > 103) {
+    throw new RangeError(`agent runtime directory path is too long: ${directory}`);
+  }
+  return { kind: 'unix', path: compact };
 }

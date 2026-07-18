@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { SessionStore } from '../session/store.js';
 import type { HandshakeResult } from '../transport/handshake.js';
 import type { BinaryTransport } from '../transport/index.js';
 import { connectWs, runPasscodeHandshake, toWsUrl } from '../transport/index.js';
-import { defaultAgentRuntimeDir, resolveAgentEndpoint } from './ipc-path.js';
+import { defaultAgentRuntimeDir, resolveAgentInstanceEndpoint } from './ipc-path.js';
 import { runAgent } from './process.js';
 
 export interface RunAgentMainOptions {
@@ -25,7 +26,11 @@ export interface RunAgentMainOptions {
   /** Test seam: open an in-process transport instead of a real WS. */
   connect?: (host: string) => Promise<BinaryTransport>;
   /** Test seam: defaults to a file-backed SessionStore at `sessionFile`. */
-  sessionStore?: Pick<SessionStore, 'delete' | 'write'>;
+  sessionStore?: Pick<SessionStore, 'deleteIfMatch' | 'write'>;
+  /** Test seam: controls the per-instance timestamp used for ownership. */
+  now?: () => Date;
+  /** Test seam: defaults to a random per-daemon endpoint nonce. */
+  instanceId?: string;
 }
 
 export interface RunAgentMainHandle {
@@ -56,10 +61,11 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
   const host = opts.host;
   const socketBaseDir = opts.socketBaseDir ?? defaultAgentRuntimeDir();
   if (process.platform !== 'win32') await ensurePrivateRuntimeDir(socketBaseDir);
-  const endpoint = resolveAgentEndpoint({
-    host: opts.host,
+  const endpoint = resolveAgentInstanceEndpoint({
+    host,
     baseDir: socketBaseDir,
     platform: process.platform,
+    instanceId: opts.instanceId ?? randomUUID(),
   });
   const store =
     opts.sessionStore ??
@@ -67,8 +73,8 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
       path: opts.sessionFile ?? defaultSessionFilePath(),
     });
   const transport = opts.connect
-    ? await opts.connect(opts.host)
-    : await connectWs({ url: toWsUrl(opts.host) });
+    ? await opts.connect(host)
+    : await connectWs({ url: toWsUrl(host) });
 
   let handshake: HandshakeResult;
   try {
@@ -85,9 +91,9 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
     throw originalError;
   }
 
-  const agentStartedAt = new Date().toISOString();
+  const agentStartedAt = (opts.now?.() ?? new Date()).toISOString();
   const agent = await runAgent({
-    host: opts.host,
+    host,
     transport,
     handshake,
     socketPath: endpoint.path,
@@ -96,7 +102,7 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
   });
 
   const session = {
-    host: opts.host,
+    host,
     pid: process.pid,
     socketPath: endpoint.path,
     agentStartedAt,
@@ -118,9 +124,9 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
   } catch (originalError) {
     if (sessionWritten) {
       try {
-        await store.delete(opts.host);
+        await store.deleteIfMatch(session);
       } catch {
-        // Best-effort rollback; cross-instance session fencing is handled separately.
+        // Best-effort rollback; an ownership mismatch deliberately preserves a replacement.
       }
     }
     try {
@@ -131,12 +137,12 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
     throw originalError;
   }
 
-  // Whenever the agent exits, remove the session entry so a fresh `xgg login`
-  // is required next time. We intentionally don't await this in `done` — the
-  // process is going down anyway and the parent has already moved on.
+  // Whenever the agent exits, remove its session only if this instance still
+  // owns the host entry. A replacement daemon may already have published a
+  // newer identity at the same key.
   const done = agent.done.then(async () => {
     try {
-      await store.delete(host);
+      await store.deleteIfMatch(session);
     } catch {
       // best-effort: tolerate fs errors during shutdown
     }

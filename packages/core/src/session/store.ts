@@ -11,6 +11,11 @@ export interface SessionStoreOptions {
   path: string;
 }
 
+export type StoredSessionIdentity = Pick<
+  StoredSession,
+  'agentStartedAt' | 'host' | 'pid' | 'socketPath'
+>;
+
 interface LockOwner {
   token: string;
   pid: number;
@@ -149,7 +154,23 @@ export class SessionStore {
   }
 
   async delete(host: string): Promise<void> {
-    await this.withLock(async (path) => {
+    await this.deleteMatching(host);
+  }
+
+  /**
+   * Delete a session only while the stored entry still belongs to the expected
+   * daemon instance. The comparison and delete happen under the same
+   * cross-process lock, so an older daemon cannot remove a replacement entry.
+   */
+  async deleteIfMatch(expected: StoredSessionIdentity): Promise<boolean> {
+    return this.deleteMatching(expected.host, (current) => sameSessionIdentity(current, expected));
+  }
+
+  private async deleteMatching(
+    host: string,
+    matches: (current: StoredSession) => boolean = () => true,
+  ): Promise<boolean> {
+    return this.withLock(async (path) => {
       let file: SessionFile;
       try {
         file = await this.readFile(path);
@@ -158,10 +179,13 @@ export class SessionStore {
         // already-cleaned verified v1 are best-effort no-ops. Every invalid
         // schema or I/O failure surfaces instead.
         if (!isMissingFile(e) && !(e instanceof LegacySessionFileError)) throw e;
-        return;
+        return false;
       }
+      const current = file.sessions[host];
+      if (!current || !matches(current)) return false;
       delete file.sessions[host];
       await this.replaceFile(path, file);
+      return true;
     });
   }
 
@@ -493,6 +517,15 @@ function sameEntries(left: string[], right: string[]): boolean {
 
 function sameOwner(left: LockOwner, right: LockOwner): boolean {
   return left.token === right.token && left.pid === right.pid && left.createdAt === right.createdAt;
+}
+
+function sameSessionIdentity(left: StoredSession, right: StoredSessionIdentity): boolean {
+  return (
+    left.host === right.host &&
+    left.pid === right.pid &&
+    left.socketPath === right.socketPath &&
+    left.agentStartedAt === right.agentStartedAt
+  );
 }
 
 function sameOwnerEntries(left: LockOwnerEntry[], right: LockOwnerEntry[]): boolean {

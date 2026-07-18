@@ -1,4 +1,3 @@
-import { promises as fs } from 'node:fs';
 import { type Server, type Socket, createServer } from 'node:net';
 import { createInterface } from 'node:readline';
 import {
@@ -51,10 +50,6 @@ interface ErrorEnvelope {
 export async function createIpcServer(opts: IpcServerOptions): Promise<IpcServerHandle> {
   const isPipe = opts.path.startsWith('\\\\.\\pipe\\');
 
-  if (!isPipe) {
-    await fs.unlink(opts.path).catch(() => {});
-  }
-
   const liveSockets = new Set<Socket>();
   const server: Server = createServer((socket: Socket) => {
     liveSockets.add(socket);
@@ -100,14 +95,17 @@ export async function createIpcServer(opts: IpcServerOptions): Promise<IpcServer
     }
   });
 
+  let closePromise: Promise<void> | null = null;
+
   return {
-    close: async () => {
-      for (const s of liveSockets) s.destroy();
-      liveSockets.clear();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      if (!isPipe) {
-        await fs.unlink(opts.path).catch(() => {});
-      }
+    close: () => {
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        for (const s of liveSockets) s.destroy();
+        liveSockets.clear();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      })();
+      return closePromise;
     },
   };
 }

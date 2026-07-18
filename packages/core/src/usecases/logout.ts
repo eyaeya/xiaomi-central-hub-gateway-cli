@@ -51,9 +51,9 @@ export interface LogoutResult {
  * after a crash or reboot the session file keeps a stale pid that the OS may
  * have recycled for an unrelated (same-user) process — killing it would be
  * collateral damage. When the probe can't confirm our daemon, we skip the
- * signal and just drop the (now-orphaned) session entry; any genuinely-alive
- * daemon we couldn't reach will still self-exit on its idle timeout, and the
- * socket is reclaimed by the next `xgg login` (deterministic per-host path).
+ * signal and conditionally drop the (now-orphaned) session entry; any
+ * genuinely-alive daemon we couldn't reach will still self-exit on its idle
+ * timeout and clean up its per-instance socket.
  */
 export async function logout(input: LogoutInputs): Promise<LogoutResult> {
   let entry: StoredSession;
@@ -73,7 +73,10 @@ export async function logout(input: LogoutInputs): Promise<LogoutResult> {
   const sig = input.signal ?? defaultSignal;
   const wasRunning = isOurDaemon ? sig(entry.pid, 'SIGTERM') : false;
 
-  await input.store.delete(input.baseUrl);
+  // The probe and signal happen without the session-file lock. A replacement
+  // login can publish a new daemon while either is in flight, so logout must
+  // only remove the exact entry it originally inspected.
+  await input.store.deleteIfMatch(entry);
   return { ok: true, host: input.baseUrl, wasRunning };
 }
 
