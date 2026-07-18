@@ -183,19 +183,15 @@ export async function enableRule(
         issues: lintIssues,
       });
     }
-    await validateGraphOrThrow({
-      graph: { id, nodes: body.nodes },
-      listAvailVars: (ruleId: string) => listAvailVarsForRule(ruleId, deps),
-      ...(opts.getDeviceSpec !== undefined && { getDeviceSpec: opts.getDeviceSpec }),
-    });
-    // F63b (2026-05-30) — graph-level reachability gate, enable-only. A sink
-    // card (deviceOutput / varSet* / deviceGetSetVar) sitting in a
-    // weakly-connected component with no trigger card will never fire. The
+    // F63b / GitHub #25 — graph-level directed reachability gate, enable-only.
+    // A sink card (deviceOutput / varSet* / deviceGetSetVar) with no valid
+    // source -> target path from an independent event source will never fire. The
     // gateway accepts the graph; the official UI's save() hides the trap
     // (canvas makes it visually obvious). The CLI's save-then-enable split
     // makes it possible to silently enable a dead rule — this gate restores
-    // the invariant on the enable funnel. NOT run in setGraph (incremental
-    // authoring legitimately leaves cards floating until wires are added).
+    // the invariant on the enable funnel. loop/register need upstream control
+    // and timeRange is supporting state, so none is a bootstrap source. NOT run
+    // in setGraph (incremental authoring may leave cards floating while wiring).
     if (Array.isArray(body.nodes)) {
       const reachIssues = checkReachability(body.nodes);
       const firstError = reachIssues.find((i) => i.severity === 'error');
@@ -205,6 +201,14 @@ export async function enableRule(
         });
       }
     }
+    // Keep the purely local reachability gate before variable/spec lookups so
+    // a statically dead graph is rejected after getGraph and before any
+    // follow-up gateway RPC (especially before the enable write funnel).
+    await validateGraphOrThrow({
+      graph: { id, nodes: body.nodes },
+      listAvailVars: (ruleId: string) => listAvailVarsForRule(ruleId, deps),
+      ...(opts.getDeviceSpec !== undefined && { getDeviceSpec: opts.getDeviceSpec }),
+    });
   }
   return setRuleEnable(id, true, deps);
 }

@@ -24,10 +24,27 @@ export type PinDirection = 'input' | 'output';
 interface PinDef {
   name: string;
   color: PinColor;
+  // False when an incoming signal only updates auxiliary/control state and
+  // cannot make the card emit from its output by itself. Reachability uses
+  // this to avoid treating condition-state and loop-stop wires as event paths.
+  propagatesEvent?: false;
 }
 
-const PIN_TABLE: Record<string, { inputs: PinDef[]; outputs: PinDef[] }> = {
-  deviceInput: { inputs: [], outputs: [{ name: 'output', color: 'event|state' }] },
+interface NodePinSemantics {
+  inputs: PinDef[];
+  outputs: PinDef[];
+  // The card can originate runtime activity without another graph node first
+  // driving one of its inputs. Keep this next to the pin semantics so lint,
+  // reachability, and agent guidance share one source of truth.
+  independentEventSource?: true;
+}
+
+const PIN_TABLE: Record<string, NodePinSemantics> = {
+  deviceInput: {
+    inputs: [],
+    outputs: [{ name: 'output', color: 'event|state' }],
+    independentEventSource: true,
+  },
   deviceGet: {
     inputs: [{ name: 'input', color: 'event' }],
     outputs: [
@@ -39,7 +56,11 @@ const PIN_TABLE: Record<string, { inputs: PinDef[]; outputs: PinDef[] }> = {
     inputs: [{ name: 'trigger', color: 'event' }],
     outputs: [{ name: 'output', color: 'event' }],
   },
-  alarmClock: { inputs: [], outputs: [{ name: 'output', color: 'event' }] },
+  alarmClock: {
+    inputs: [],
+    outputs: [{ name: 'output', color: 'event' }],
+    independentEventSource: true,
+  },
   timeRange: { inputs: [], outputs: [{ name: 'output', color: 'event|state' }] },
   delay: {
     inputs: [{ name: 'input', color: 'event' }],
@@ -52,7 +73,7 @@ const PIN_TABLE: Record<string, { inputs: PinDef[]; outputs: PinDef[] }> = {
   condition: {
     inputs: [
       { name: 'trigger', color: 'event' },
-      { name: 'condition', color: 'state' },
+      { name: 'condition', color: 'state', propagatesEvent: false },
     ],
     outputs: [
       { name: 'met', color: 'event' },
@@ -62,7 +83,7 @@ const PIN_TABLE: Record<string, { inputs: PinDef[]; outputs: PinDef[] }> = {
   loop: {
     inputs: [
       { name: 'start', color: 'event' },
-      { name: 'stop', color: 'event' },
+      { name: 'stop', color: 'event', propagatesEvent: false },
     ],
     outputs: [{ name: 'output', color: 'event' }],
   },
@@ -105,7 +126,11 @@ const PIN_TABLE: Record<string, { inputs: PinDef[]; outputs: PinDef[] }> = {
     inputs: [{ name: 'input', color: 'state' }],
     outputs: [{ name: 'output', color: 'event|state' }],
   },
-  onLoad: { inputs: [], outputs: [{ name: 'output', color: 'event' }] },
+  onLoad: {
+    inputs: [],
+    outputs: [{ name: 'output', color: 'event' }],
+    independentEventSource: true,
+  },
   eventSequence: {
     inputs: [
       { name: 'input1', color: 'event' },
@@ -127,12 +152,20 @@ const PIN_TABLE: Record<string, { inputs: PinDef[]; outputs: PinDef[] }> = {
       { name: 'output1', color: 'event' },
     ],
   },
-  deviceInputSetVar: { inputs: [], outputs: [{ name: 'output', color: 'event' }] },
+  deviceInputSetVar: {
+    inputs: [],
+    outputs: [{ name: 'output', color: 'event' }],
+    independentEventSource: true,
+  },
   deviceGetSetVar: {
     inputs: [{ name: 'input', color: 'event' }],
     outputs: [{ name: 'output', color: 'event' }],
   },
-  varChange: { inputs: [], outputs: [{ name: 'output', color: 'event|state' }] },
+  varChange: {
+    inputs: [],
+    outputs: [{ name: 'output', color: 'event|state' }],
+    independentEventSource: true,
+  },
   varGet: {
     inputs: [{ name: 'input', color: 'event' }],
     outputs: [
@@ -149,6 +182,43 @@ const PIN_TABLE: Record<string, { inputs: PinDef[]; outputs: PinDef[] }> = {
     outputs: [{ name: 'output', color: 'event' }],
   },
 };
+
+/**
+ * Cards that can bootstrap a directed runtime path without another graph node
+ * first driving an input. In particular, timeRange is state, loop needs start,
+ * and register needs setTrue/setFalse, so none of those are independent sources.
+ */
+export const INDEPENDENT_EVENT_SOURCE_TYPES: readonly string[] = Object.freeze(
+  Object.entries(PIN_TABLE)
+    .filter(([, semantics]) => semantics.independentEventSource === true)
+    .map(([type]) => type),
+);
+
+const INDEPENDENT_EVENT_SOURCE_TYPE_SET = new Set(INDEPENDENT_EVENT_SOURCE_TYPES);
+
+export function isIndependentEventSourceType(type: string): boolean {
+  return INDEPENDENT_EVENT_SOURCE_TYPE_SET.has(type);
+}
+
+/**
+ * Whether reaching a modeled input can make that card's outputs reachable.
+ * Returns null for future node types/pins so callers retain forward-compatible
+ * behavior instead of guessing at firmware semantics.
+ */
+export function inputPropagatesEventReachability(type: string, pin: string): boolean | null {
+  const entry = PIN_TABLE[type];
+  if (entry === undefined) return null;
+
+  const exact = entry.inputs.find((candidate) => candidate.name === pin);
+  if (exact !== undefined) return exact.propagatesEvent !== false;
+
+  const numbered = /^input\d+$/.exec(pin);
+  if (numbered !== null) {
+    const base = entry.inputs.find((candidate) => candidate.name.startsWith('input'));
+    if (base !== undefined) return base.propagatesEvent !== false;
+  }
+  return null;
+}
 
 /**
  * Resolve the event/state color of a pin. Returns `undefined` for an unknown
