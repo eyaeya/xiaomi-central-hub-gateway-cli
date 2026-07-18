@@ -6,6 +6,12 @@ export interface ConnectWsOptions {
   url: string;
   /** Milliseconds to wait for the initial 'open' event before aborting. */
   connectTimeoutMs?: number;
+  /** Maximum bytes accepted in one WebSocket message. Default 32 MiB. */
+  maxFrameBytes?: number;
+  /** Maximum complete messages buffered while no receive() is pending. Default 64. */
+  maxQueuedFrames?: number;
+  /** Maximum cumulative bytes buffered while no receive() is pending. Default 64 MiB. */
+  maxQueuedBytes?: number;
   /**
    * Application-level keepalive interval in ms. When set (> 0), connectWs
    * starts sending a WebSocket protocol-level ping frame every `keepaliveMs`
@@ -23,6 +29,22 @@ export interface ConnectWsOptions {
    * the legacy fail-fast behavior.
    */
   maxMissedPongs?: number;
+}
+
+// The frame ceiling includes encrypted protocol overhead. Keep it above the
+// DATA decoder's compressed-body default while remaining explicitly bounded.
+export const DEFAULT_MAX_WS_FRAME_BYTES = 32 * 1024 * 1024;
+export const DEFAULT_MAX_WS_QUEUED_FRAMES = 64;
+export const DEFAULT_MAX_WS_QUEUED_BYTES = 64 * 1024 * 1024;
+
+function receiveLimit(value: number | undefined, fallback: number, name: string): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
+    throw new NetworkError(`${name} must be a positive safe integer`, {
+      [name]: resolved,
+    });
+  }
+  return resolved;
 }
 
 /**
@@ -110,48 +132,139 @@ export function toWsUrl(baseUrl: string): string {
  *   - Buffered frames arrive via `'message'` and queue if no consumer is
  *     currently `await`ing `receive()`.
  *   - Any post-connect transport failure (`'error'` or `'close'`) latches into
- *     `receiveError`; the next `receive()` call (or any pending one) rejects.
+ *     `receiveError`, discards queued frames, and rejects current/future
+ *     `receive()` calls.
  *   - `close()` is idempotent.
- *
- * Not unit-tested in M2 — exercised end-to-end against a real gateway in Task 11.
  */
 export async function connectWs(opts: ConnectWsOptions): Promise<BinaryTransport> {
-  const ws = new WebSocket(opts.url, { perMessageDeflate: false });
+  const maxFrameBytes = receiveLimit(
+    opts.maxFrameBytes,
+    DEFAULT_MAX_WS_FRAME_BYTES,
+    'maxFrameBytes',
+  );
+  const maxQueuedFrames = receiveLimit(
+    opts.maxQueuedFrames,
+    DEFAULT_MAX_WS_QUEUED_FRAMES,
+    'maxQueuedFrames',
+  );
+  const maxQueuedBytes = receiveLimit(
+    opts.maxQueuedBytes,
+    DEFAULT_MAX_WS_QUEUED_BYTES,
+    'maxQueuedBytes',
+  );
+
+  const ws = new WebSocket(opts.url, {
+    maxPayload: maxFrameBytes,
+    perMessageDeflate: false,
+  });
   ws.binaryType = 'nodebuffer';
 
   const queue: Buffer[] = [];
+  let queuedBytes = 0;
   let resolveNext: ((b: Buffer) => void) | null = null;
   let rejectNext: ((e: unknown) => void) | null = null;
-  let receiveError: Error | null = null;
+  let receiveError: NetworkError | null = null;
+  let cancelKeepalive: (() => void) | null = null;
 
-  const failPending = (err: Error): void => {
-    receiveError ??= err;
+  const failTransport = (err: NetworkError, terminate = false): void => {
+    if (receiveError) return;
+    receiveError = err;
+    queue.length = 0;
+    queuedBytes = 0;
+    if (cancelKeepalive) cancelKeepalive();
+    cancelKeepalive = null;
     if (rejectNext) {
       const r = rejectNext;
       resolveNext = null;
       rejectNext = null;
       r(err);
     }
+    if (terminate && ws.readyState !== WebSocket.CLOSED) {
+      try {
+        ws.terminate();
+      } catch {
+        // already closing/closed
+      }
+    }
   };
 
-  ws.on('message', (data) => {
-    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+  ws.on('message', (data, isBinary) => {
+    if (receiveError) return;
+    if (!isBinary) {
+      failTransport(new NetworkError('ws protocol violation: expected a binary message'), true);
+      return;
+    }
+
+    const buf = Buffer.isBuffer(data)
+      ? data
+      : Array.isArray(data)
+        ? Buffer.concat(data)
+        : Buffer.from(data as ArrayBuffer);
+    if (buf.length > maxFrameBytes) {
+      failTransport(
+        new NetworkError(`ws frame exceeds maxFrameBytes (${maxFrameBytes} bytes)`, {
+          frameBytes: buf.length,
+          maxFrameBytes,
+        }),
+        true,
+      );
+      return;
+    }
     if (resolveNext) {
       const r = resolveNext;
       resolveNext = null;
       rejectNext = null;
       r(buf);
-    } else {
-      queue.push(buf);
+      return;
     }
+
+    if (queue.length + 1 > maxQueuedFrames) {
+      failTransport(
+        new NetworkError(`ws receive queue exceeds maxQueuedFrames (${maxQueuedFrames})`, {
+          maxQueuedFrames,
+          queuedBytes,
+          queuedFrames: queue.length,
+        }),
+        true,
+      );
+      return;
+    }
+    if (queuedBytes + buf.length > maxQueuedBytes) {
+      failTransport(
+        new NetworkError(`ws receive queue exceeds maxQueuedBytes (${maxQueuedBytes} bytes)`, {
+          frameBytes: buf.length,
+          maxQueuedBytes,
+          queuedBytes,
+          queuedFrames: queue.length,
+        }),
+        true,
+      );
+      return;
+    }
+    queue.push(buf);
+    queuedBytes += buf.length;
   });
 
   ws.on('error', (err) => {
-    failPending(err);
+    const code = 'code' in err ? String(err.code) : undefined;
+    const payloadTooLarge =
+      code === 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH' ||
+      /max payload size exceeded/i.test(err.message);
+    failTransport(
+      payloadTooLarge
+        ? new NetworkError(`ws frame exceeds maxFrameBytes (${maxFrameBytes} bytes)`, {
+            cause: err.message,
+            maxFrameBytes,
+          })
+        : new NetworkError(`ws receive failed: ${err.message}`, {
+            ...(code !== undefined && { causeCode: code }),
+          }),
+      payloadTooLarge,
+    );
   });
 
   ws.on('close', () => {
-    failPending(new NetworkError('ws closed by peer'));
+    failTransport(new NetworkError('ws closed by peer'));
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -175,8 +288,7 @@ export async function connectWs(opts: ConnectWsOptions): Promise<BinaryTransport
   // after `maxMissedPongs` consecutive ping intervals without a pong (M14 F4
   // — a single missed pong used to kill the daemon and force re-login).
   const keepaliveMs = opts.keepaliveMs ?? 25_000;
-  let cancelKeepalive: (() => void) | null = null;
-  if (keepaliveMs > 0) {
+  if (keepaliveMs > 0 && !receiveError && ws.readyState === WebSocket.OPEN) {
     cancelKeepalive = startKeepalive(
       {
         isOpen: () => ws.readyState === WebSocket.OPEN,
@@ -194,7 +306,12 @@ export async function connectWs(opts: ConnectWsOptions): Promise<BinaryTransport
             // already gone
           }
         },
-        fail: (err) => failPending(err),
+        fail: (err) =>
+          failTransport(
+            err instanceof NetworkError
+              ? err
+              : new NetworkError(`ws keepalive failed: ${err.message}`),
+          ),
         onPong: (h) => {
           ws.on('pong', h);
         },
@@ -215,17 +332,19 @@ export async function connectWs(opts: ConnectWsOptions): Promise<BinaryTransport
       ws.send(frame, { binary: true });
     },
     receive(): Promise<Buffer> {
-      const head = queue.shift();
-      if (head !== undefined) return Promise.resolve(head);
       if (receiveError) return Promise.reject(receiveError);
+      const head = queue.shift();
+      if (head !== undefined) {
+        queuedBytes -= head.length;
+        return Promise.resolve(head);
+      }
       return new Promise<Buffer>((resolve, reject) => {
         resolveNext = resolve;
         rejectNext = reject;
       });
     },
     close(): void {
-      if (cancelKeepalive) cancelKeepalive();
-      cancelKeepalive = null;
+      failTransport(new NetworkError('ws closed by client'));
       try {
         ws.close();
       } catch {
