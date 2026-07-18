@@ -26,8 +26,10 @@ export type { LintGraphInput, LintIssue } from './lint-graph.js';
 export { checkReachability } from './reachability.js';
 export {
   INDEPENDENT_EVENT_SOURCE_TYPES,
+  INDEPENDENT_STATE_SOURCE_TYPES,
   inputPropagatesEventReachability,
   isIndependentEventSourceType,
+  isIndependentStateSourceType,
 } from './pin-colors.js';
 export { validateGraph, validateGraphOrThrow } from './validate-graph.js';
 export type { ValidateGraphInput } from './validate-graph.js';

@@ -1,26 +1,27 @@
 // F63b (2026-05-30) / GitHub #25 (2026-07-19) — graph-level directed
 // reachability gate for `rule enable` and `rule lint --strict`.
 //
-// A sink is statically reachable only when a card that can independently
-// originate runtime activity has a valid source -> target path to it. Weak
-// connectivity is insufficient: a downstream loop/register must not prove
-// that an upstream action can ever run, and a timeRange state is not an event
-// bootstrap. The independent-source and input-flow facts live beside the pin
-// table in pin-colors.ts so lint, reachability, and CLI guidance cannot drift.
+// GitHub #64 refines that gate from node-level BFS to an endpoint-aware,
+// monotone fixed point. Runtime-driving events and supporting state are
+// deliberately separate facts: timeRange can satisfy condition.condition,
+// for example, but cannot bootstrap condition.trigger or an action by itself.
 
 import { NodeUnion } from '../schemas/nodes/index.js';
-import { targetInputPinStatus } from './edge-integrity.js';
-import { duplicateNodeIdIssues, findDuplicateNodeIds } from './graph-invariants.js';
+import { isModeledNodeType, targetInputPinStatus } from './edge-integrity.js';
+import {
+  duplicateNodeIdIssues,
+  findDuplicateNodeIds,
+  requiredInputPins,
+} from './graph-invariants.js';
 import type { LintIssue } from './lint-graph.js';
 import {
   INDEPENDENT_EVENT_SOURCE_TYPES,
   inputPropagatesEventReachability,
   isIndependentEventSourceType,
+  isIndependentStateSourceType,
+  resolvePinColor,
 } from './pin-colors.js';
 
-// Action / writer nodes: each must have an upstream independent event source.
-// deviceInputSetVar is intentionally not a sink: it is itself an independent
-// device source which also writes a variable.
 const SINK_TYPES = new Set<string>([
   'deviceOutput',
   'deviceGetSetVar',
@@ -33,7 +34,34 @@ interface ParsedNode {
   type: string;
   idx: number;
   raw: Record<string, unknown>;
-  outputs?: Record<string, unknown>;
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+}
+
+interface DirectedEdge {
+  sourceEndpoint: string;
+  targetEndpoint: string;
+  targetNodeId: string;
+  targetPin: string;
+}
+
+interface InputRequirement {
+  mode: 'any' | 'all';
+  pins: string[];
+}
+
+interface ActivationPolicy {
+  event?: InputRequirement;
+  state?: InputRequirement;
+  eventRequiresState?: true;
+  stateDrivesEvent?: true;
+  eventOutputsRequiringState?: readonly string[];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function parseNodes(rawNodes: unknown[]): ParsedNode[] {
@@ -45,55 +73,154 @@ function parseNodes(rawNodes: unknown[]): ParsedNode[] {
     const id = node.id;
     const type = node.type;
     if (typeof id !== 'string' || typeof type !== 'string') continue;
-    const outputs =
-      node.outputs && typeof node.outputs === 'object' && !Array.isArray(node.outputs)
-        ? (node.outputs as Record<string, unknown>)
-        : undefined;
-    out.push(
-      outputs !== undefined ? { id, type, idx, raw: node, outputs } : { id, type, idx, raw: node },
-    );
+    out.push({
+      id,
+      type,
+      idx,
+      raw: node,
+      inputs: asRecord(node.inputs),
+      outputs: asRecord(node.outputs),
+    });
   }
   return out;
 }
 
-function directedTargets(node: ParsedNode, nodesById: ReadonlyMap<string, ParsedNode>): string[] {
-  const targets: string[] = [];
-  if (node.outputs === undefined) return targets;
+function activationPolicy(
+  node: ParsedNode,
+  observedIncomingPins: readonly string[],
+): ActivationPolicy {
+  const declaredPins = [...new Set([...Object.keys(node.inputs), ...observedIncomingPins])];
+  const requiredPins = requiredInputPins(node.raw);
+  const all = (pins: string[]): InputRequirement => ({ mode: 'all', pins });
+  const any = (pins: string[]): InputRequirement => ({ mode: 'any', pins });
 
-  for (const arr of Object.values(node.outputs)) {
-    if (!Array.isArray(arr)) continue;
-    for (const entry of arr) {
-      if (typeof entry !== 'string') continue;
-      const dot = entry.indexOf('.');
-      if (dot <= 0 || dot === entry.length - 1 || entry.indexOf('.', dot + 1) !== -1) continue;
+  // UnknownNode deliberately permits firmware cards whose input declaration
+  // is absent or unfamiliar. Derive their candidate pins from real incoming
+  // edges and preserve event/state facts independently through an optimistic
+  // ANY-input pass-through; never promote them to independent sources.
+  if (!isModeledNodeType(node.type)) {
+    return {
+      event: any(declaredPins),
+      state: any(declaredPins),
+    };
+  }
 
-      const targetId = entry.slice(0, dot);
-      const targetPin = entry.slice(dot + 1);
-      const targetNode = nodesById.get(targetId);
-      if (targetNode === undefined) continue;
-      if (targetInputPinStatus(targetNode.raw, targetPin) === 'invalid') continue;
-
-      // condition.condition is supporting state rather than an event path;
-      // loop.stop cannot start loop output. Unknown future cards return null
-      // and remain traversable for forward compatibility.
-      if (inputPropagatesEventReachability(targetNode.type, targetPin) === false) continue;
-      targets.push(targetId);
+  switch (node.type) {
+    case 'eventSequence':
+      return { event: all(requiredPins) };
+    case 'condition':
+      return {
+        event: all(requiredPins.filter((pin) => pin === 'trigger')),
+        state: all(requiredPins.filter((pin) => pin === 'condition')),
+        // A missing/false state still executes `unmet`; `met` additionally
+        // requires a live supporting-state path. Tracking whether that path
+        // can specifically be true is the separate value-domain work in #65.
+        eventOutputsRequiringState: ['met'],
+      };
+    case 'logicAnd':
+      return {
+        event: any(requiredPins),
+        state: all(requiredPins),
+        eventRequiresState: true,
+      };
+    case 'logicOr':
+      return {
+        event: any(declaredPins),
+        state: any(declaredPins),
+        eventRequiresState: true,
+      };
+    case 'signalOr':
+      return { event: any(declaredPins) };
+    case 'loop':
+      return { event: all(['start']) };
+    case 'onlyNTimes':
+      return { event: all(['input']) };
+    case 'counter':
+      // The gateway's zero-path output behavior is not sufficiently evidenced
+      // to reject it. Preserve the prior optimistic ANY behavior for now.
+      return { event: any(['input', 'zero']) };
+    case 'register':
+      return { event: any(['setTrue', 'setFalse']) };
+    case 'statusLast':
+      // This card is the explicit state-to-event bridge: a true state held
+      // for the configured duration emits even without a separate event pin.
+      return { state: all(['input']), stateDrivesEvent: true };
+    default: {
+      const eventPins = declaredPins.filter(
+        (pin) => inputPropagatesEventReachability(node.type, pin) !== false,
+      );
+      const statePins = declaredPins.filter(
+        (pin) => resolvePinColor(node.type, pin, 'input', asRecord(node.raw.props)) === 'state',
+      );
+      return {
+        ...(eventPins.length > 0 ? { event: any(eventPins) } : {}),
+        ...(statePins.length > 0 ? { state: any(statePins) } : {}),
+        ...(statePins.length > 0 ? { eventRequiresState: true as const } : {}),
+      };
     }
   }
-  return targets;
+}
+
+function directedEdges(
+  nodes: ParsedNode[],
+  nodesById: ReadonlyMap<string, ParsedNode>,
+): DirectedEdge[] {
+  const edges: DirectedEdge[] = [];
+  for (const node of nodes) {
+    for (const [sourcePin, values] of Object.entries(node.outputs)) {
+      if (!Array.isArray(values)) continue;
+      for (const value of values) {
+        if (typeof value !== 'string') continue;
+        const dot = value.indexOf('.');
+        if (dot <= 0 || dot === value.length - 1 || value.indexOf('.', dot + 1) !== -1) continue;
+        const targetId = value.slice(0, dot);
+        const targetPin = value.slice(dot + 1);
+        const target = nodesById.get(targetId);
+        if (target === undefined || targetInputPinStatus(target.raw, targetPin) === 'invalid') {
+          continue;
+        }
+        edges.push({
+          sourceEndpoint: `${node.id}.${sourcePin}`,
+          targetEndpoint: `${targetId}.${targetPin}`,
+          targetNodeId: targetId,
+          targetPin,
+        });
+      }
+    }
+  }
+  return edges;
+}
+
+function requirementSatisfied(
+  nodeId: string,
+  requirement: InputRequirement | undefined,
+  incomingByTarget: ReadonlyMap<string, readonly DirectedEdge[]>,
+  factAvailable: (pin: string, sourceEndpoint: string) => boolean,
+): boolean {
+  if (requirement === undefined || requirement.pins.length === 0) return false;
+  const satisfied = (pin: string): boolean =>
+    (incomingByTarget.get(`${nodeId}.${pin}`) ?? []).some((edge) =>
+      factAvailable(pin, edge.sourceEndpoint),
+    );
+  return requirement.mode === 'all'
+    ? requirement.pins.every(satisfied)
+    : requirement.pins.some(satisfied);
+}
+
+function addFact(set: Set<string>, value: string): boolean {
+  if (set.has(value)) return false;
+  set.add(value);
+  return true;
 }
 
 /**
- * Check that every action/writer sink is reachable from an independent event
- * source by following valid edges in their source -> target direction.
+ * Check that every action/writer sink has a satisfiable upstream event path.
  *
- * Malformed edges, dangling targets, invalid modeled target pins, and edges
- * that only update non-emitting control/state inputs do not participate. Those
- * edge-shape failures are diagnosed by lintGraph; excluding them here prevents
- * a second bug from manufacturing a false reachability proof.
- *
- * Unknown future node types may be intermediate vertices once reached from a
- * known source, but are never guessed to be a source or sink themselves.
+ * Facts are attached to output endpoints, not merely nodes. A monotone fixed
+ * point aggregates the exact target pins required by multi-input cards. Event
+ * facts drive runtime work; state facts only prove that a supporting value is
+ * available. Unknown future cards retain optimistic pass-through behavior once
+ * reached, while never being guessed to be an independent source or sink.
  */
 export function checkReachability(rawNodes: unknown[]): LintIssue[] {
   if (!Array.isArray(rawNodes) || rawNodes.length === 0) return [];
@@ -104,35 +231,82 @@ export function checkReachability(rawNodes: unknown[]): LintIssue[] {
   if (parsed.length === 0) return [];
 
   const nodesById = new Map(parsed.map((node) => [node.id, node]));
-  const adjacency = new Map<string, string[]>();
-  for (const node of parsed) adjacency.set(node.id, directedTargets(node, nodesById));
-
-  const reachable = new Set<string>();
-  const queue: string[] = [];
-  for (const node of parsed) {
-    if (!isIndependentEventSourceType(node.type)) continue;
-    reachable.add(node.id);
-    queue.push(node.id);
+  const incomingByTarget = new Map<string, DirectedEdge[]>();
+  const incomingPinsByNode = new Map<string, Set<string>>();
+  for (const edge of directedEdges(parsed, nodesById)) {
+    const incoming = incomingByTarget.get(edge.targetEndpoint) ?? [];
+    incoming.push(edge);
+    incomingByTarget.set(edge.targetEndpoint, incoming);
+    const incomingPins = incomingPinsByNode.get(edge.targetNodeId) ?? new Set<string>();
+    incomingPins.add(edge.targetPin);
+    incomingPinsByNode.set(edge.targetNodeId, incomingPins);
   }
 
-  for (let head = 0; head < queue.length; head += 1) {
-    const sourceId = queue[head];
-    if (sourceId === undefined) continue;
-    for (const targetId of adjacency.get(sourceId) ?? []) {
-      if (reachable.has(targetId)) continue;
-      reachable.add(targetId);
-      queue.push(targetId);
+  const eventNodes = new Set<string>();
+  const stateNodes = new Set<string>();
+  const eventOutputs = new Set<string>();
+  const stateOutputs = new Set<string>();
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of parsed) {
+      const policy = activationPolicy(node, [...(incomingPinsByNode.get(node.id) ?? [])]);
+      const eventInputsReady = requirementSatisfied(
+        node.id,
+        policy.event,
+        incomingByTarget,
+        (pin, sourceEndpoint) => {
+          if (!eventOutputs.has(sourceEndpoint)) return false;
+          // A state input is "updating" only when the same source endpoint
+          // provides both a state value and an event-driving path. This keeps
+          // an event-only cross-color edge from manufacturing logic reachability.
+          const targetColor = resolvePinColor(node.type, pin, 'input', asRecord(node.raw.props));
+          return targetColor !== 'state' || stateOutputs.has(sourceEndpoint);
+        },
+      );
+      const stateInputsReady = requirementSatisfied(
+        node.id,
+        policy.state,
+        incomingByTarget,
+        (_pin, sourceEndpoint) => stateOutputs.has(sourceEndpoint),
+      );
+      const eventReady =
+        isIndependentEventSourceType(node.type) ||
+        (eventInputsReady && (policy.eventRequiresState !== true || stateInputsReady)) ||
+        (policy.stateDrivesEvent === true && stateInputsReady);
+      const stateReady =
+        isIndependentStateSourceType(node.type) ||
+        stateInputsReady ||
+        // Event-driven dual-output cards (register/counter/property sources)
+        // have a usable state after their driving path is reachable.
+        eventReady;
+
+      if (eventReady) changed = addFact(eventNodes, node.id) || changed;
+      if (stateReady) changed = addFact(stateNodes, node.id) || changed;
+
+      for (const outputPin of Object.keys(node.outputs)) {
+        const endpoint = `${node.id}.${outputPin}`;
+        const color = resolvePinColor(node.type, outputPin, 'output', asRecord(node.raw.props));
+        const outputNeedsState = policy.eventOutputsRequiringState?.includes(outputPin) === true;
+        if (eventReady && color !== 'state' && (!outputNeedsState || stateInputsReady)) {
+          changed = addFact(eventOutputs, endpoint) || changed;
+        }
+        if (stateReady && color !== 'event') {
+          changed = addFact(stateOutputs, endpoint) || changed;
+        }
+      }
     }
   }
 
   const sourceList = INDEPENDENT_EVENT_SOURCE_TYPES.join('/');
   const issues: LintIssue[] = [];
   for (const node of parsed) {
-    if (!SINK_TYPES.has(node.type) || reachable.has(node.id)) continue;
+    if (!SINK_TYPES.has(node.type) || eventNodes.has(node.id)) continue;
     issues.push({
       severity: 'error',
       path: `nodes[${node.idx}]`,
-      message: `卡片不可达: ${node.type} sink "${node.id}" has no upstream independent event source (${sourceList}) along directed edges — rule will never fire this action`,
+      message: `卡片不可达: ${node.type} sink "${node.id}" has no satisfiable upstream event path from an independent source (${sourceList}) under required-input semantics — rule will never fire this action`,
     });
   }
   return issues;

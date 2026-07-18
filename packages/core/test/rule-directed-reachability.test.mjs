@@ -158,13 +158,13 @@ function timeRange(id, targets = []) {
   };
 }
 
-function condition(id, targets = []) {
+function condition(id, metTargets = [], unmetTargets = []) {
   return {
     id,
     type: 'condition',
     cfg: { pos: position(), name: 'condition', version: 1 },
     inputs: { trigger: null, condition: null },
-    outputs: { met: targets, unmet: [] },
+    outputs: { met: metTargets, unmet: unmetTargets },
     props: {},
   };
 }
@@ -180,12 +180,83 @@ function delay(id, targets = []) {
   };
 }
 
+function eventSequence(id, targets = []) {
+  return {
+    id,
+    type: 'eventSequence',
+    cfg: {
+      pos: position(524, 180),
+      name: 'eventSequence',
+      version: 1,
+      unit: 's',
+      value: 5,
+    },
+    inputs: { input1: null, input2: null },
+    outputs: { output: targets },
+    props: { timeout: 5_000 },
+  };
+}
+
+function multiInput(type, id, targets = []) {
+  return {
+    id,
+    type,
+    cfg: { pos: position(340, 180), name: type, version: 1 },
+    inputs: { input0: null, input1: null },
+    outputs: { output: targets },
+    props: {},
+  };
+}
+
+function stateUnary(type, id, targets = []) {
+  return {
+    id,
+    type,
+    cfg: { pos: position(240, 120), name: type, version: 1 },
+    inputs: { input: null },
+    outputs: { output: targets },
+    props: {},
+  };
+}
+
+function statusLast(id, targets = []) {
+  return {
+    id,
+    type: 'statusLast',
+    cfg: { pos: position(340, 140), name: 'statusLast', version: 1, unit: 's', value: 1 },
+    inputs: { input: null },
+    outputs: { output: targets },
+    props: { timeout: 1_000 },
+  };
+}
+
+function counterLike(type, id, targets = []) {
+  return {
+    id,
+    type,
+    cfg: { pos: position(382, 160), name: type, version: 1 },
+    inputs: { input: null, zero: null },
+    outputs: { output: targets },
+    props: { n: 2 },
+  };
+}
+
 function futureNode(id, targets = []) {
   return {
     id,
     type: 'futureNode',
     cfg: {},
     inputs: { input: null },
+    outputs: { output: targets },
+    props: {},
+  };
+}
+
+function futureNodeWithoutInputs(id, targets = []) {
+  return {
+    id,
+    type: 'futureNode',
+    cfg: {},
     outputs: { output: targets },
     props: {},
   };
@@ -299,6 +370,185 @@ test('timeRange supports condition state but cannot replace the condition event 
   assert.deepEqual(checkReachability(eventAndState), []);
 });
 
+test('condition trigger can reach unmet without a live true-state path, while met stays guarded', () => {
+  const unmet = [
+    onLoad('source', ['gate.trigger']),
+    register('initially-false', ['gate.condition']),
+    condition('gate', [], ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(checkReachability(unmet), []);
+
+  const met = [
+    onLoad('source', ['gate.trigger']),
+    register('initially-false', ['gate.condition']),
+    condition('gate', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(met), ['sink']);
+});
+
+test('statusLast converts supporting state into an event but rejects an unreachable state card', () => {
+  assert.deepEqual(
+    checkReachability([
+      timeRange('window', ['held.input']),
+      statusLast('held', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    [],
+  );
+
+  assert.deepEqual(
+    checkReachability([
+      timeRange('first-state', ['all.input0']),
+      timeRange('second-state', ['all.input1']),
+      multiInput('logicAnd', 'all', ['held.input']),
+      statusLast('held', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    [],
+  );
+
+  assert.deepEqual(
+    unreachableSinkIds([
+      register('dead-state', ['held.input']),
+      statusLast('held', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    ['sink'],
+  );
+});
+
+test('eventSequence requires an event-driving path at every required input endpoint', () => {
+  const oneLiveInput = [
+    onLoad('first', ['sequence.input1']),
+    delay('dead', ['sequence.input2']),
+    eventSequence('sequence', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(oneLiveInput), ['sink']);
+
+  const otherLiveInput = [
+    delay('dead', ['sequence.input1']),
+    onLoad('second', ['sequence.input2']),
+    eventSequence('sequence', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(otherLiveInput), ['sink']);
+
+  const bothLiveInputs = [
+    onLoad('source', ['sequence.input1', 'sequence.input2']),
+    eventSequence('sequence', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(checkReachability(bothLiveInputs), []);
+});
+
+test('logicAnd requires all state values and at least one event-driving update path', () => {
+  const staticStateOnly = [
+    timeRange('first-state', ['all.input0']),
+    timeRange('second-state', ['all.input1']),
+    multiInput('logicAnd', 'all', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(staticStateOnly), ['sink']);
+
+  const missingState = [
+    independentSource('varChange', 'updating-state', ['all.input0']),
+    register('dead-state', ['all.input1']),
+    multiInput('logicAnd', 'all', ['stable.input']),
+    statusLast('stable', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(missingState), ['sink']);
+
+  const complete = [
+    independentSource('varChange', 'updating-state', ['all.input0']),
+    timeRange('supporting-state', ['all.input1']),
+    multiInput('logicAnd', 'all', ['stable.input']),
+    statusLast('stable', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(checkReachability(complete), []);
+});
+
+test('ANY-input cards activate from one live endpoint while reset-only onlyNTimes does not', () => {
+  for (const type of ['signalOr', 'logicOr']) {
+    const source =
+      type === 'logicOr'
+        ? independentSource('varChange', 'source', ['any.input0'])
+        : onLoad('source', ['any.input0']);
+    const nodes = [source, multiInput(type, 'any', ['sink.trigger']), deviceOutput('sink')];
+    assert.deepEqual(checkReachability(nodes), [], type);
+  }
+
+  assert.deepEqual(
+    unreachableSinkIds([
+      onLoad('reset', ['limited.zero']),
+      counterLike('onlyNTimes', 'limited', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    ['sink'],
+  );
+  assert.deepEqual(
+    checkReachability([
+      onLoad('input', ['limited.input']),
+      counterLike('onlyNTimes', 'limited', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    [],
+  );
+
+  // Counter zero behavior is not sufficiently evidenced to tighten in #64;
+  // retain the prior optimistic reachability behavior.
+  assert.deepEqual(
+    checkReachability([
+      onLoad('reset', ['count.zero']),
+      counterLike('counter', 'count', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    [],
+  );
+});
+
+test('state-card updates require a dual/state source endpoint, not an event-only cross-color wire', () => {
+  const eventOnlyWithOtherState = [
+    onLoad('event-only', ['any.input0']),
+    timeRange('supporting-state', ['any.input1']),
+    multiInput('logicOr', 'any', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(eventOnlyWithOtherState), ['sink']);
+
+  assert.deepEqual(
+    unreachableSinkIds([
+      onLoad('event-only', ['not.input']),
+      stateUnary('logicNot', 'not', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    ['sink'],
+  );
+  assert.deepEqual(
+    checkReachability([
+      independentSource('varChange', 'dual-source', ['not.input']),
+      stateUnary('logicNot', 'not', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    [],
+  );
+});
+
+test('register activates from either setter endpoint', () => {
+  for (const pin of ['setTrue', 'setFalse']) {
+    const nodes = [
+      onLoad('source', [`latch.${pin}`]),
+      register('latch', ['sink.trigger']),
+      deviceOutput('sink'),
+    ];
+    assert.deepEqual(checkReachability(nodes), [], pin);
+  }
+});
+
 test('invalid target pins and malformed endpoints cannot manufacture reachability', () => {
   assert.deepEqual(unreachableSinkIds([onLoad('source', ['sink.typo']), deviceOutput('sink')]), [
     'sink',
@@ -324,6 +574,32 @@ test('branches, multiple sinks, cycles, and future intermediate nodes terminate 
   ];
 
   assert.deepEqual(unreachableSinkIds(nodes), ['dead']);
+});
+
+test('future nodes with missing or empty inputs preserve observed event and state paths', () => {
+  const eventFuture = {
+    ...futureNodeWithoutInputs('future-event', ['event-sink.trigger']),
+    inputs: {},
+  };
+  assert.deepEqual(
+    checkReachability([
+      onLoad('source', ['future-event.input']),
+      eventFuture,
+      deviceOutput('event-sink'),
+    ]),
+    [],
+  );
+
+  const stateFuture = futureNodeWithoutInputs('future-state', ['held.input']);
+  assert.deepEqual(
+    checkReachability([
+      timeRange('window', ['future-state.input']),
+      stateFuture,
+      statusLast('held', ['state-sink.trigger']),
+      deviceOutput('state-sink'),
+    ]),
+    [],
+  );
 });
 
 test('strict lint and enable expose the same directed diagnosis before follow-up RPCs', async () => {
@@ -354,6 +630,33 @@ test('strict lint and enable expose the same directed diagnosis before follow-up
       error?.code === 'CONFIG' &&
       error.message.includes(reachIssues[0].message) &&
       error.details?.issues?.[0]?.message === reachIssues[0].message,
+  );
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ['/api/getGraph'],
+  );
+  assert.equal(
+    calls.some((call) => call.options?.kind === 'write'),
+    false,
+  );
+});
+
+test('enable rejects a partially live multi-input path after getGraph and performs zero writes', async () => {
+  const id = 'rule-1';
+  const nodes = [
+    onLoad('first', ['sequence.input1']),
+    delay('dead', ['sequence.input2']),
+    eventSequence('sequence', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  const { deps, calls } = fakeDeps((method) => {
+    if (method === '/api/getGraph') return { id, nodes };
+    throw new Error(`unexpected RPC: ${method}`);
+  });
+
+  await assert.rejects(
+    enableRule(id, deps),
+    (error) => error?.code === 'CONFIG' && error.message.includes('卡片不可达'),
   );
   assert.deepEqual(
     calls.map((call) => call.method),
