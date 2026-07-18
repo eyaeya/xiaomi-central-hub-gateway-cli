@@ -54,8 +54,6 @@ interface ActivationPolicy {
   event?: InputRequirement;
   state?: InputRequirement;
   eventRequiresState?: true;
-  stateDrivesEvent?: true;
-  eventOutputsRequiringState?: readonly string[];
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -112,10 +110,6 @@ function activationPolicy(
       return {
         event: all(requiredPins.filter((pin) => pin === 'trigger')),
         state: all(requiredPins.filter((pin) => pin === 'condition')),
-        // A missing/false state still executes `unmet`; `met` additionally
-        // requires a live supporting-state path. Tracking whether that path
-        // can specifically be true is the separate value-domain work in #65.
-        eventOutputsRequiringState: ['met'],
       };
     case 'logicAnd':
       return {
@@ -144,7 +138,7 @@ function activationPolicy(
     case 'statusLast':
       // This card is the explicit state-to-event bridge: a true state held
       // for the configured duration emits even without a separate event pin.
-      return { state: all(['input']), stateDrivesEvent: true };
+      return { state: all(['input']) };
     default: {
       const eventPins = declaredPins.filter(
         (pin) => inputPropagatesEventReachability(node.type, pin) !== false,
@@ -207,6 +201,36 @@ function requirementSatisfied(
     : requirement.pins.some(satisfied);
 }
 
+function inputPinHasFact(
+  nodeId: string,
+  pin: string,
+  incomingByTarget: ReadonlyMap<string, readonly DirectedEdge[]>,
+  facts: ReadonlySet<string>,
+): boolean {
+  return (incomingByTarget.get(`${nodeId}.${pin}`) ?? []).some((edge) =>
+    facts.has(edge.sourceEndpoint),
+  );
+}
+
+function allPinsCanBeFalse(
+  nodeId: string,
+  pins: readonly string[],
+  incomingByTarget: ReadonlyMap<string, readonly DirectedEdge[]>,
+  falseStateOutputs: ReadonlySet<string>,
+): boolean {
+  return (
+    pins.length > 0 &&
+    pins.every((pin) => {
+      const incoming = incomingByTarget.get(`${nodeId}.${pin}`) ?? [];
+      // Unwired logicOr inputs have the gateway's default false value, but do
+      // not themselves manufacture state availability or runtime activity.
+      return (
+        incoming.length === 0 || incoming.some((edge) => falseStateOutputs.has(edge.sourceEndpoint))
+      );
+    })
+  );
+}
+
 function addFact(set: Set<string>, value: string): boolean {
   if (set.has(value)) return false;
   set.add(value);
@@ -218,9 +242,11 @@ function addFact(set: Set<string>, value: string): boolean {
  *
  * Facts are attached to output endpoints, not merely nodes. A monotone fixed
  * point aggregates the exact target pins required by multi-input cards. Event
- * facts drive runtime work; state facts only prove that a supporting value is
- * available. Unknown future cards retain optimistic pass-through behavior once
- * reached, while never being guessed to be an independent source or sink.
+ * facts drive runtime work. State availability, may-true, and may-false are
+ * separate monotone facts so a known false value cannot satisfy a true-only
+ * card such as statusLast. Unknown future cards retain optimistic pass-through
+ * behavior once reached, while never being guessed to be an independent source
+ * or sink.
  */
 export function checkReachability(rawNodes: unknown[]): LintIssue[] {
   if (!Array.isArray(rawNodes) || rawNodes.length === 0) return [];
@@ -246,6 +272,8 @@ export function checkReachability(rawNodes: unknown[]): LintIssue[] {
   const stateNodes = new Set<string>();
   const eventOutputs = new Set<string>();
   const stateOutputs = new Set<string>();
+  const trueStateOutputs = new Set<string>();
+  const falseStateOutputs = new Set<string>();
 
   let changed = true;
   while (changed) {
@@ -271,16 +299,89 @@ export function checkReachability(rawNodes: unknown[]): LintIssue[] {
         incomingByTarget,
         (_pin, sourceEndpoint) => stateOutputs.has(sourceEndpoint),
       );
-      const eventReady =
+      const trueStateInputsReady = requirementSatisfied(
+        node.id,
+        policy.state,
+        incomingByTarget,
+        (_pin, sourceEndpoint) => trueStateOutputs.has(sourceEndpoint),
+      );
+      const falseStateInputsReady = requirementSatisfied(
+        node.id,
+        policy.state,
+        incomingByTarget,
+        (_pin, sourceEndpoint) => falseStateOutputs.has(sourceEndpoint),
+      );
+      let eventReady =
         isIndependentEventSourceType(node.type) ||
-        (eventInputsReady && (policy.eventRequiresState !== true || stateInputsReady)) ||
-        (policy.stateDrivesEvent === true && stateInputsReady);
-      const stateReady =
+        (eventInputsReady && (policy.eventRequiresState !== true || stateInputsReady));
+      let stateReady =
         isIndependentStateSourceType(node.type) ||
         stateInputsReady ||
         // Event-driven dual-output cards (register/counter/property sources)
         // have a usable state after their driving path is reachable.
         eventReady;
+      let stateMayBeTrue = stateReady;
+      let stateMayBeFalse = stateReady;
+
+      switch (node.type) {
+        case 'register': {
+          const setTrueReady = inputPinHasFact(node.id, 'setTrue', incomingByTarget, eventOutputs);
+          // The register has an available false state before either setter
+          // fires. A reachable setTrue adds may-true but never removes the
+          // initial may-false fact from this path-insensitive fixed point.
+          stateReady = true;
+          stateMayBeTrue = setTrueReady;
+          stateMayBeFalse = true;
+          break;
+        }
+        case 'counter':
+          // Counter starts at zero/false. Once either modeled control path is
+          // live, retain the pre-#65 optimistic TOP truth domain; zero output
+          // behavior is intentionally not tightened without gateway evidence.
+          stateReady = true;
+          stateMayBeTrue = eventReady;
+          stateMayBeFalse = true;
+          break;
+        case 'condition':
+          stateReady = false;
+          stateMayBeTrue = false;
+          stateMayBeFalse = false;
+          break;
+        case 'statusLast':
+          // A state value is observable at the output, but only a may-true
+          // input can complete the duration and emit an event.
+          eventReady = trueStateInputsReady;
+          stateReady = stateInputsReady;
+          stateMayBeTrue = trueStateInputsReady;
+          stateMayBeFalse = falseStateInputsReady;
+          break;
+        case 'logicAnd': {
+          const pins = policy.state?.pins ?? [];
+          stateReady = stateInputsReady;
+          stateMayBeTrue = trueStateInputsReady;
+          stateMayBeFalse =
+            stateReady &&
+            pins.some((pin) => inputPinHasFact(node.id, pin, incomingByTarget, falseStateOutputs));
+          break;
+        }
+        case 'logicOr': {
+          const pins = policy.state?.pins ?? [];
+          stateReady = stateInputsReady;
+          stateMayBeTrue = trueStateInputsReady;
+          stateMayBeFalse =
+            stateReady && allPinsCanBeFalse(node.id, pins, incomingByTarget, falseStateOutputs);
+          break;
+        }
+        case 'logicNot':
+          stateReady = stateInputsReady;
+          stateMayBeTrue = falseStateInputsReady;
+          stateMayBeFalse = trueStateInputsReady;
+          break;
+        default:
+          // Modeled non-boolean dual outputs and unknown future cards remain
+          // conservative TOP once their state domain is available.
+          break;
+      }
 
       if (eventReady) changed = addFact(eventNodes, node.id) || changed;
       if (stateReady) changed = addFact(stateNodes, node.id) || changed;
@@ -288,12 +389,23 @@ export function checkReachability(rawNodes: unknown[]): LintIssue[] {
       for (const outputPin of Object.keys(node.outputs)) {
         const endpoint = `${node.id}.${outputPin}`;
         const color = resolvePinColor(node.type, outputPin, 'output', asRecord(node.raw.props));
-        const outputNeedsState = policy.eventOutputsRequiringState?.includes(outputPin) === true;
-        if (eventReady && color !== 'state' && (!outputNeedsState || stateInputsReady)) {
+        let eventOutputReady = eventReady;
+        if (node.type === 'condition' && outputPin === 'met') {
+          eventOutputReady = eventReady && trueStateInputsReady;
+        } else if (node.type === 'condition' && outputPin === 'unmet') {
+          eventOutputReady = eventReady && falseStateInputsReady;
+        }
+        if (eventOutputReady && color !== 'state') {
           changed = addFact(eventOutputs, endpoint) || changed;
         }
         if (stateReady && color !== 'event') {
           changed = addFact(stateOutputs, endpoint) || changed;
+        }
+        if (stateMayBeTrue && color !== 'event') {
+          changed = addFact(trueStateOutputs, endpoint) || changed;
+        }
+        if (stateMayBeFalse && color !== 'event') {
+          changed = addFact(falseStateOutputs, endpoint) || changed;
         }
       }
     }
