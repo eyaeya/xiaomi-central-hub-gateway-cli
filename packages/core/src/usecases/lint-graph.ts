@@ -1,6 +1,7 @@
 import { NodeUnion } from '../schemas/nodes/index.js';
+import { isModeledNodeType, targetInputPinStatus } from './edge-integrity.js';
 import { arePinColorsCompatible, resolvePinColor } from './pin-colors.js';
-import { TYPED_SCHEMAS, checkNodeStrict } from './typed-schemas.js';
+import { checkNodeStrict } from './typed-schemas.js';
 
 export interface LintIssue {
   severity: 'warn' | 'error';
@@ -16,10 +17,6 @@ export interface LintGraphInput {
   devices?: Record<string, { pushAvailable?: boolean }>;
   strict?: boolean;
 }
-
-// F62 (2026-05-30): derive from TYPED_SCHEMAS so the two stay in lockstep.
-// "Known" == "we have a strict schema for it"; anything else is forward-compat.
-const KNOWN_NODE_TYPES = new Set<string>(Object.keys(TYPED_SCHEMAS));
 
 /** Client-side linter: surfaces edge-format errors and semantic smells
  *  that the gateway accepts silently. */
@@ -47,7 +44,7 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
     const nodeType = node.type as string;
     const nodeId = node.id as string;
 
-    if (!KNOWN_NODE_TYPES.has(nodeType)) {
+    if (!isModeledNodeType(nodeType)) {
       issues.push({
         severity: 'warn',
         path: `nodes[${i}]`,
@@ -99,6 +96,11 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
   // Also collect every edge target string ("<dstId>.<dstPin>") so a later pass
   // can flag required state-input pins that nothing feeds.
   const edgeTargets = new Set<string>();
+  // Canvas fan-in is keyed by the full target endpoint. Keep source endpoints
+  // unique so a repeated identical edge retains the existing duplicate-edge
+  // diagnosis, while another output on the same source node still counts as a
+  // distinct incoming wire.
+  const incomingByTarget = new Map<string, Map<string, string>>();
   for (const { node, idx } of parsed) {
     const outputs = node.outputs;
     if (!outputs || typeof outputs !== 'object') continue;
@@ -110,7 +112,6 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
       let hasDuplicate = false;
 
       for (let j = 0; j < arr.length; j++) {
-        if (typeof arr[j] === 'string') edgeTargets.add(arr[j] as string);
         const entry = arr[j];
         const edgePath = `nodes[${idx}].outputs.${pin}[${j}]`;
 
@@ -162,7 +163,7 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
         const sourceId = node.id as string;
         if (targetId === sourceId) {
           issues.push({
-            severity: 'warn',
+            severity: input.strict === true ? 'error' : 'warn',
             path: edgePath,
             message: 'self-loop (gateway accepts; suspicious)',
           });
@@ -182,24 +183,58 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
           const targetNode = nodesById.get(targetId);
           if (targetNode !== undefined) {
             const targetPin = entry.slice(dotIdx + 1);
-            const srcColor = resolvePinColor(
-              node.type as string,
-              pin,
-              'output',
-              node.props as Record<string, unknown> | undefined,
-            );
-            const tgtColor = resolvePinColor(
-              targetNode.type as string,
-              targetPin,
-              'input',
-              targetNode.props as Record<string, unknown> | undefined,
-            );
-            if (arePinColorsCompatible(srcColor, tgtColor) === false) {
+            const pinStatus = targetInputPinStatus(targetNode, targetPin);
+            if (pinStatus === 'invalid') {
+              const availablePins = Object.keys(
+                typeof targetNode.inputs === 'object' &&
+                  targetNode.inputs !== null &&
+                  !Array.isArray(targetNode.inputs)
+                  ? targetNode.inputs
+                  : {},
+              );
+              const available =
+                availablePins.length > 0
+                  ? `available: ${availablePins.join(', ')}`
+                  : 'node has no input pins';
               issues.push({
                 severity: 'error',
                 path: edgePath,
-                message: `cross-color edge: ${srcColor} output "${pin}" → ${tgtColor} input "${targetPin}" (canvas-illegal, runtime-dead)`,
+                message: `target input pin "${targetPin}" does not exist on modeled ${String(targetNode.type)} node "${targetId}" (${available})`,
               });
+            } else {
+              const srcColor = resolvePinColor(
+                node.type as string,
+                pin,
+                'output',
+                node.props as Record<string, unknown> | undefined,
+              );
+              const tgtColor = resolvePinColor(
+                targetNode.type as string,
+                targetPin,
+                'input',
+                targetNode.props as Record<string, unknown> | undefined,
+              );
+              if (arePinColorsCompatible(srcColor, tgtColor) === false) {
+                issues.push({
+                  severity: 'error',
+                  path: edgePath,
+                  message: `cross-color edge: ${srcColor} output "${pin}" → ${tgtColor} input "${targetPin}" (canvas-illegal, runtime-dead)`,
+                });
+              }
+
+              edgeTargets.add(entry);
+              const sourceEndpoint = `${sourceId}.${pin}`;
+              const incoming = incomingByTarget.get(entry) ?? new Map<string, string>();
+              if (!incoming.has(sourceEndpoint) && incoming.size > 0) {
+                const existingSource = incoming.keys().next().value as string;
+                issues.push({
+                  severity: 'error',
+                  path: edgePath,
+                  message: `fan-in cap: input pin "${entry}" is already wired from ${existingSource}; cannot also wire ${sourceEndpoint} (canvas-illegal — "一个输入节点只能连一条线")`,
+                });
+              }
+              incoming.set(sourceEndpoint, edgePath);
+              incomingByTarget.set(entry, incoming);
             }
           }
         }
