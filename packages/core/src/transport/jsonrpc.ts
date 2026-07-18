@@ -63,7 +63,11 @@ export class JsonRpcRouter {
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.loop = this.readLoop().finally(() => this.resolveDone());
+    this.loop = this.readLoop()
+      .catch((e) => {
+        this.endWithError(new NetworkError(`router read loop failed: ${errorMessage(e)}`), true);
+      })
+      .finally(() => this.resolveDone());
   }
 
   async stop(): Promise<void> {
@@ -120,21 +124,18 @@ export class JsonRpcRouter {
       try {
         frame = await this.opts.transport.receive();
       } catch (e) {
-        this.failAllPending(new NetworkError(`WS read failed: ${(e as Error).message ?? e}`));
+        this.endWithError(new NetworkError(`WS read failed: ${errorMessage(e)}`), false);
         return;
       }
       let response: JsonRpcResponse;
       try {
-        response = this.opts.channel.recvJson(frame) as JsonRpcResponse;
+        response = parseJsonRpcResponse(this.opts.channel.recvJson(frame));
       } catch (e) {
         // Unrecoverable wire-level failure (bad GCM tag, malformed/oversized
         // compressed JSON, wrong type byte, …). Close the transport so callers
         // cannot accidentally continue on a session whose receive counter and
         // protocol state can no longer be trusted.
-        this.failAllPending(
-          new NetworkError(`session decode failed: ${(e as Error).message ?? e}`),
-        );
-        this.opts.transport.close();
+        this.endWithError(new NetworkError(`session decode failed: ${errorMessage(e)}`), true);
         return;
       }
       const pending = this.pending.get(response.id);
@@ -161,4 +162,62 @@ export class JsonRpcRouter {
     }
     this.pending.clear();
   }
+
+  private endWithError(error: NetworkError, closeTransport: boolean): void {
+    this.running = false;
+    this.failAllPending(error);
+    if (closeTransport) {
+      try {
+        this.opts.transport.close();
+      } catch {
+        // Preserve the protocol/read failure as the root cause.
+      }
+    }
+  }
+}
+
+function parseJsonRpcResponse(value: unknown): JsonRpcResponse {
+  if (!isRecord(value)) throw new Error('invalid JSON-RPC response: expected an object');
+  if (value.jsonrpc !== '2.0') {
+    throw new Error('invalid JSON-RPC response: jsonrpc must equal "2.0"');
+  }
+  if (typeof value.id !== 'number' || !Number.isSafeInteger(value.id)) {
+    throw new Error('invalid JSON-RPC response: id must be a safe integer');
+  }
+
+  const hasResult = Object.hasOwn(value, 'result');
+  const hasError = Object.hasOwn(value, 'error');
+  if (hasResult === hasError) {
+    throw new Error('invalid JSON-RPC response: exactly one of result or error is required');
+  }
+  if (hasResult) {
+    return { jsonrpc: '2.0', id: value.id, result: value.result };
+  }
+
+  if (!isRecord(value.error)) {
+    throw new Error('invalid JSON-RPC response: error must be an object');
+  }
+  if (typeof value.error.code !== 'number' || !Number.isSafeInteger(value.error.code)) {
+    throw new Error('invalid JSON-RPC response: error.code must be a safe integer');
+  }
+  if (typeof value.error.message !== 'string') {
+    throw new Error('invalid JSON-RPC response: error.message must be a string');
+  }
+  return {
+    jsonrpc: '2.0',
+    id: value.id,
+    error: {
+      code: value.error.code,
+      message: value.error.message,
+      ...(Object.hasOwn(value.error, 'data') && { data: value.error.data }),
+    },
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
