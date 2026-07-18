@@ -27,9 +27,10 @@ export interface LoginResult {
 
 /**
  * Fork the per-host agent and wait for its READY line. The single-use
- * `passcode` is passed via env (`XGG_LOGIN_CODE`) so it never appears in
- * `ps`; the child consumes it during handshake and then scrubs it. The
- * v2 session entry is written by the child once its IPC socket is up.
+ * `passcode` is sent over the child's anonymous stdin pipe, never in the
+ * detached child's argv or environment. This does not hide a `--code` value
+ * from the short-lived parent CLI's argv or the invoking shell's history.
+ * The v2 session entry is written by the child once its IPC socket is up.
  */
 export async function login(input: LoginInputs): Promise<LoginResult> {
   if (!/^\d{6,8}$/.test(input.passcode)) {
@@ -53,11 +54,10 @@ export async function login(input: LoginInputs): Promise<LoginResult> {
   const args = [...input.agentBinary.args, 'agent', 'serve', '--host', canonicalBaseUrl];
   if (input.sessionFile) args.push('--session-file', input.sessionFile);
   const fn = input.spawn ?? spawnAgent;
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, XGG_LOGIN_CODE: input.passcode };
   const result = await fn({
     binary: input.agentBinary.binary,
     args,
-    env: childEnv,
+    passcode: input.passcode,
     readyTimeoutMs: input.readyTimeoutMs ?? 15_000,
   });
   return {

@@ -26,7 +26,18 @@ export function loginCommand(): Command {
     .option('--base-url <url>', 'gateway base URL (or set XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path (default ~/.xgg/session.json)')
     .option('--pretty', 'pretty-print JSON output')
-    .addHelpText('after', '\nExample:\n  $ xgg login --code <CODE>');
+    .addHelpText(
+      'after',
+      `
+Example:
+  $ xgg login --code <CODE>
+
+Security:
+  --code may be visible in the parent process argv and shell history.
+  XGG_LOGIN_CODE avoids parent argv, but remains in its short-lived environment
+  and may still enter shell history depending on how it is set.
+  Neither form is forwarded in the detached agent's argv or environment.`,
+    );
   addNextHintFlag(cmd);
   cmd.action(
     wrap('login', async (opts: LoginOpts) => {
