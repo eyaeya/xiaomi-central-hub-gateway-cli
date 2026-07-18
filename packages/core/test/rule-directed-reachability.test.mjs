@@ -262,6 +262,21 @@ function futureNodeWithoutInputs(id, targets = []) {
   };
 }
 
+function falseStateNodes(prefix, target) {
+  return [
+    onLoad(`${prefix}-source`, [`${prefix}-latch.setFalse`]),
+    register(`${prefix}-latch`, [target]),
+  ];
+}
+
+function trueStateNodes(prefix, target) {
+  return [
+    onLoad(`${prefix}-source`, [`${prefix}-latch.setFalse`]),
+    register(`${prefix}-latch`, [`${prefix}-not.input`]),
+    stateUnary('logicNot', `${prefix}-not`, [target]),
+  ];
+}
+
 function fakeDeps(respond) {
   const calls = [];
   return {
@@ -549,6 +564,148 @@ test('register activates from either setter endpoint', () => {
   }
 });
 
+test('register truth facts distinguish condition branches and true-only statusLast', () => {
+  const setFalseMet = [
+    onLoad('source', ['latch.setFalse', 'gate.trigger']),
+    register('latch', ['gate.condition']),
+    condition('gate', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(setFalseMet), ['sink']);
+
+  const setFalseUnmet = [
+    onLoad('source', ['latch.setFalse', 'gate.trigger']),
+    register('latch', ['gate.condition']),
+    condition('gate', [], ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(checkReachability(setFalseUnmet), []);
+
+  const setTrueBranches = [
+    onLoad('source', ['latch.setTrue', 'gate.trigger']),
+    register('latch', ['gate.condition']),
+    condition('gate', ['met.trigger'], ['unmet.trigger']),
+    deviceOutput('met'),
+    deviceOutput('unmet'),
+  ];
+  assert.deepEqual(checkReachability(setTrueBranches), []);
+
+  assert.deepEqual(
+    unreachableSinkIds([
+      onLoad('source', ['latch.setFalse']),
+      register('latch', ['held.input']),
+      statusLast('held', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    ['sink'],
+  );
+  assert.deepEqual(
+    checkReachability([
+      onLoad('source', ['latch.setTrue']),
+      register('latch', ['held.input']),
+      statusLast('held', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    [],
+  );
+});
+
+test('false state remains usable through logicNot instead of being discarded', () => {
+  assert.deepEqual(
+    checkReachability([
+      register('initially-false', ['not.input']),
+      stateUnary('logicNot', 'not', ['held.input']),
+      statusLast('held', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    [],
+  );
+
+  assert.deepEqual(
+    checkReachability([
+      onLoad('source', ['latch.setFalse']),
+      register('latch', ['not.input']),
+      stateUnary('logicNot', 'not', ['held.input']),
+      statusLast('held', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    [],
+  );
+});
+
+test('logicAnd, logicOr, and logicNot propagate may-true and may-false separately', () => {
+  const andFalseTrue = [
+    ...falseStateNodes('f', 'gate.input0'),
+    ...trueStateNodes('t', 'gate.input1'),
+    multiInput('logicAnd', 'gate', ['held.input']),
+    statusLast('held', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(andFalseTrue), ['sink']);
+
+  const andTrueTrue = [
+    ...trueStateNodes('a', 'gate.input0'),
+    ...trueStateNodes('b', 'gate.input1'),
+    multiInput('logicAnd', 'gate', ['held.input']),
+    statusLast('held', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(checkReachability(andTrueTrue), []);
+
+  const andTrueTrueNot = [
+    ...trueStateNodes('a', 'gate.input0'),
+    ...trueStateNodes('b', 'gate.input1'),
+    multiInput('logicAnd', 'gate', ['not.input']),
+    stateUnary('logicNot', 'not', ['held.input']),
+    statusLast('held', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(andTrueTrueNot), ['sink']);
+
+  const orFalseFalseNot = [
+    ...falseStateNodes('a', 'gate.input0'),
+    ...falseStateNodes('b', 'gate.input1'),
+    multiInput('logicOr', 'gate', ['not.input']),
+    stateUnary('logicNot', 'not', ['held.input']),
+    statusLast('held', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(checkReachability(orFalseFalseNot), []);
+
+  const orFalseTrueNot = [
+    ...falseStateNodes('f', 'gate.input0'),
+    ...trueStateNodes('t', 'gate.input1'),
+    multiInput('logicOr', 'gate', ['not.input']),
+    stateUnary('logicNot', 'not', ['held.input']),
+    statusLast('held', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(orFalseTrueNot), ['sink']);
+});
+
+test('counter zero and unknown future cards retain optimistic truth compatibility', () => {
+  assert.deepEqual(
+    checkReachability([
+      onLoad('reset', ['count.zero']),
+      counterLike('counter', 'count', ['held.input']),
+      statusLast('held', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    [],
+  );
+
+  const future = futureNodeWithoutInputs('future', ['held.input']);
+  assert.deepEqual(
+    checkReachability([
+      ...falseStateNodes('f', 'future.input'),
+      future,
+      statusLast('held', ['sink.trigger']),
+      deviceOutput('sink'),
+    ]),
+    [],
+  );
+});
+
 test('invalid target pins and malformed endpoints cannot manufacture reachability', () => {
   assert.deepEqual(unreachableSinkIds([onLoad('source', ['sink.typo']), deviceOutput('sink')]), [
     'sink',
@@ -666,4 +823,42 @@ test('enable rejects a partially live multi-input path after getGraph and perfor
     calls.some((call) => call.options?.kind === 'write'),
     false,
   );
+});
+
+test('enable rejects known-false true-only paths after getGraph and performs zero writes', async () => {
+  const id = 'rule-1';
+  const cases = [
+    [
+      onLoad('source', ['latch.setFalse', 'gate.trigger']),
+      register('latch', ['gate.condition']),
+      condition('gate', ['sink.trigger']),
+      deviceOutput('sink'),
+    ],
+    [
+      onLoad('source', ['latch.setFalse']),
+      register('latch', ['held.input']),
+      statusLast('held', ['sink.trigger']),
+      deviceOutput('sink'),
+    ],
+  ];
+
+  for (const nodes of cases) {
+    const { deps, calls } = fakeDeps((method) => {
+      if (method === '/api/getGraph') return { id, nodes };
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+
+    await assert.rejects(
+      enableRule(id, deps),
+      (error) => error?.code === 'CONFIG' && error.message.includes('卡片不可达'),
+    );
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['/api/getGraph'],
+    );
+    assert.equal(
+      calls.some((call) => call.options?.kind === 'write'),
+      false,
+    );
+  }
 });

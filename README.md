@@ -205,7 +205,7 @@ xgg rule logs <rule-id> --tail 20
 - 连线完成后跑 `xgg rule layout <rule-id>`，让网页画布中的卡片按数据流排布。
 - 启用前跑 `xgg rule validate --rule-id <rule-id>` 和 `xgg rule lint --rule-id <rule-id> --strict`；启用后用 `xgg rule logs` 看真实触发日志。
 - 对 Agent 自测场景，可用 `onLoad` 作为触发节点，再通过 `rule disable` + `rule enable` 重放，不需要人类物理按按钮。
-- 严格 lint 与 enable 会按目标 pin 的必需输入语义检查动作可达性。独立事件源只有 `onLoad`、`alarmClock`、`deviceInput`、`deviceInputSetVar`、`varChange`；`timeRange` 只提供条件状态，不能直接启动事件路径，但可经 `statusLast` 的“状态持续后触发”桥接成事件。`eventSequence` 的每个事件输入都必须可达；`condition` 的 `unmet` 只需可达的 `trigger`，`met` 还需可用的 `condition` 状态；`logicAnd` 需要全部状态输入可用，直接向事件下游传播时还需至少一路会更新（纯状态组合可再经 `statusLast` 桥接），`logicOr` / `signalOr` 则任一路即可。`loop.stop` 与 `onlyNTimes.zero` 是控制输入，不能单独证明下游动作可执行。
+- 严格 lint 与 enable 会按目标 pin 的必需输入语义检查动作可达性，并把状态“可用 / 可能为 true / 可能为 false”分开。独立事件源只有 `onLoad`、`alarmClock`、`deviceInput`、`deviceInputSetVar`、`varChange`；`timeRange` 只提供可真可假的条件状态，不能直接启动事件路径，但可经 `statusLast` 的“状态持续为 true 后触发”桥接成事件。`register` 初值与 `setFalse` 提供 false，只有可达的 `setTrue` 再增加 true；因此 `condition.met` 要 trigger + may-true，`condition.unmet` 要 trigger + may-false，`statusLast` 也只接受 may-true。`eventSequence` 的每个事件输入都必须可达；`logicAnd` / `logicOr` / `logicNot` 按布尔语义传播真假状态，直接传播事件时仍需更新路径，`signalOr` 则任一路事件即可。`loop.stop` 与 `onlyNTimes.zero` 是控制输入，不能单独证明下游动作可执行。
 
 ### 离线校验候选规则
 
