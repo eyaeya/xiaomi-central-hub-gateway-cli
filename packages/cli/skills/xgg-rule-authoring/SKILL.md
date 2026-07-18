@@ -630,6 +630,8 @@ xgg rule enable <规则id>            # 单独启用
 
 > **有现成规则时不用手写**：`xgg rule view <id> > rule.json` 拿到的就是上面这个 envelope 形状，改完 `xgg rule set --body rule.json` 写回（`rule view` 是规范的 round-trip 读路径；`rule export` 产出的是可复现的**命令脚本/结构**，不是整图 JSON，不能直接喂回 `set`）。
 >
+> **变量感知 clone：** `rule export <source> --target-id <target>`（或先 `--format json` 再 `rule import --target-id`）只把源规则本地 scope `R<source>` 改成 `R<target>`。导出会读取规则真正引用的本地变量，把导出时的**当前值**连同 type/显示名放在脚本最前面；脚本先只读预检完整变量计划，通过后才准备变量并依次写空规则、节点、边、enable。稳定目标上，已有变量三项完全兼容时保留，任何冲突都在首次写前失败且绝不覆盖；真实创建还会 fresh check，网关无跨变量事务，并发修改仍可能让脚本中途停止，可用写前 snapshot 恢复。`global` 只列为明确外部依赖，不创建、不改写；其他 scope 直接拒绝。`source=target` 不会冒充 clone（省略 `--target-id` 才是同 id 重放）。
+>
 > **`rule export` 的有损点：** `deviceInput`/`deviceGet` 的 `include()` 过滤若 `v1` 是**多值集合**（如 `v1:[1,2,3]`），export 会打印警告——CLI 单个 `--threshold` 只能复现第一个值（`v1[0]`），重放脚本会让成员集合缩水。事件触发的 `arguments` 过滤同理：只有 `=,!=,>,<,>=,<=` 这几个算子能经 `--event-filter` 往返，`between`/`include` 会在导出时被丢弃并打印警告。要保留完整多值集合或这些算子，别用导出脚本重放，改用 `rule view` 的整图 JSON round-trip。
 
 ### A.3 25 类节点 props / inputs / outputs 速查
