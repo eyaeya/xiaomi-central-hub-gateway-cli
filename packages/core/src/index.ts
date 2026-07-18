@@ -7,6 +7,11 @@ const packageMetadata = require('../package.json') as { version: string };
 /** Runtime version of the installed `@eyaeya/xgg-core` package. */
 export const VERSION = packageMetadata.version;
 
+export {
+  DEFAULT_MAX_INNER_COMPRESSED_BYTES,
+  DEFAULT_MAX_INNER_JSON_BYTES,
+} from './crypto/deflate.js';
+export type { InnerJsonLimits } from './crypto/deflate.js';
 export * from './agent/index.js';
 export * from './resources/index.js';
 export * from './session/index.js';
@@ -22,3 +27,4 @@ export {
   runPasscodeHandshake,
   toWsUrl,
 } from './transport/index.js';
+export type { SessionChannelOptions } from './transport/index.js';

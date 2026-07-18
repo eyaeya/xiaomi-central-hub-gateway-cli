@@ -127,10 +127,14 @@ export class JsonRpcRouter {
       try {
         response = this.opts.channel.recvJson(frame) as JsonRpcResponse;
       } catch (e) {
-        // unrecoverable wire-level failure (bad GCM tag, wrong type byte, …)
+        // Unrecoverable wire-level failure (bad GCM tag, malformed/oversized
+        // compressed JSON, wrong type byte, …). Close the transport so callers
+        // cannot accidentally continue on a session whose receive counter and
+        // protocol state can no longer be trusted.
         this.failAllPending(
-          new NetworkError(`session decrypt failed: ${(e as Error).message ?? e}`),
+          new NetworkError(`session decode failed: ${(e as Error).message ?? e}`),
         );
+        this.opts.transport.close();
         return;
       }
       const pending = this.pending.get(response.id);

@@ -7,7 +7,13 @@ export {
   GCM_SALT_LEN,
   GCM_TAG_LEN,
 } from './gcm.js';
-export { packInnerJson, unpackInnerJson } from './deflate.js';
+export {
+  DEFAULT_MAX_INNER_COMPRESSED_BYTES,
+  DEFAULT_MAX_INNER_JSON_BYTES,
+  packInnerJson,
+  unpackInnerJson,
+} from './deflate.js';
+export type { InnerJsonLimits } from './deflate.js';
 export { JpakeParty } from './jpake.js';
 export type { JpakeOptions } from './jpake.js';
 export {
