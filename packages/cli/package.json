@@ -12,9 +12,9 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/cli.d.ts",
-      "import": "./dist/cli.js",
-      "default": "./dist/cli.js"
+      "types": "./dist/program.d.ts",
+      "import": "./dist/program.js",
+      "default": "./dist/program.js"
     }
   },
   "files": ["dist", "LICENSE", "README.md", "skills"],
