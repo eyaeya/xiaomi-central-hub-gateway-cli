@@ -1,9 +1,11 @@
+import { isUtf8 } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { z } from 'zod';
 import { SessionFile, StoredSession } from '../schemas/session.js';
-import { AuthRequiredError } from '../transport/errors.js';
+import { AuthRequiredError, SchemaError } from '../transport/errors.js';
 
 export interface SessionStoreOptions {
   path: string;
@@ -34,19 +36,51 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 class LegacySessionFileError extends AuthRequiredError {}
 
+// Verified against the original v1 schema at e499290a98c425416a2e76e07f31ef9a9ccbd03f
+// and its v2 migration at 28535f6f65a2f0e9898b1f78ee8811e1fbadf51b.
+// The historical schemas were permissive Zod objects, but deletion must be
+// stricter than parsing: any extra or mismatched data is preserved for manual
+// recovery instead of being guessed to be a disposable legacy session.
+const LegacyStoredSession = z
+  .object({
+    host: z.string().url(),
+    passcode: z.string().regex(/^\d{6,8}$/),
+    createdAt: z.string().datetime(),
+    lastValidatedAt: z.string().datetime(),
+  })
+  .strict();
+
+const LegacySessionFile = z
+  .object({
+    version: z.literal(1),
+    sessions: z.record(z.string(), LegacyStoredSession),
+  })
+  .strict()
+  .superRefine((file, context) => {
+    for (const [host, session] of Object.entries(file.sessions)) {
+      if (host !== session.host) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'session record key must match session host',
+          path: ['sessions', host, 'host'],
+        });
+      }
+    }
+  });
+
 /**
  * Per-host session persistence backed by a single JSON file (mode 0600).
  *
  * The on-disk layout is `{ version: 2, sessions: { [host]: StoredSession } }`,
  * holding the per-host agent endpoint (pid + socketPath) — never the passcode,
- * which is single-use on the gateway side. Reading a v1 file (the M2 shape that
- * stored a passcode) deletes it and raises `AuthRequiredError` so the CLI can
- * prompt the user to `xgg login` again.
+ * which is single-use on the gateway side. An exact structural match for the
+ * verified v1 envelope is deleted because its passcodes have already been
+ * consumed. Every near-v1, unknown, or future format is preserved instead.
  *
  * Every mutation takes a filesystem lock next to the session file, re-reads
  * while holding that cross-process lock, and replaces the file with a fully
  * written same-directory temporary file. Ordinary reads rely on atomic rename;
- * legacy-file cleanup rechecks under the mutation lock before unlinking.
+ * unknown, malformed, and future-version files are never replaced.
  */
 export class SessionStore {
   private readonly path: string;
@@ -56,24 +90,24 @@ export class SessionStore {
   }
 
   async write(session: StoredSession): Promise<void> {
-    StoredSession.parse(session);
+    const validatedSession = StoredSession.parse(session);
     await this.withLock(async (path) => {
       let file: SessionFile;
       try {
-        file = await this.readFile(path, true);
+        file = await this.readFile(path);
       } catch (e) {
-        // F47 (2026-05-30) — narrow the swallow window. ENOENT (file
-        // doesn't exist yet) and AuthRequiredError (v1 legacy file just
-        // deleted by readFile) are the canonical "start fresh" signals.
+        // F47 (2026-05-30) — narrow the swallow window. ENOENT and the
+        // explicitly verified legacy envelope are the only "start fresh"
+        // signals.
         // Anything else (corrupt JSON, EACCES, ZodError on a different
         // host's entry) was previously masked by the catch-all — the
         // previous behavior reset the file and wrote OUR session,
         // destroying every other host's stored entry. Surface the
         // failure so the user can decide whether to discard.
-        if (!isMissingFile(e) && !(e instanceof AuthRequiredError)) throw e;
+        if (!isMissingFile(e) && !(e instanceof LegacySessionFileError)) throw e;
         file = { version: 2, sessions: {} };
       }
-      file.sessions[session.host] = session;
+      file.sessions[validatedSession.host] = validatedSession;
       await this.replaceFile(path, file);
     });
   }
@@ -83,8 +117,9 @@ export class SessionStore {
     try {
       file = await this.readFileForRead();
     } catch (e) {
-      if (e instanceof AuthRequiredError) throw e;
-      throw new AuthRequiredError(`No session file at ${this.path}`);
+      if (e instanceof LegacySessionFileError) throw e;
+      if (isMissingFile(e)) throw new AuthRequiredError(`No session file at ${this.path}`);
+      throw e;
     }
     const entry = file.sessions[host];
     if (!entry) {
@@ -95,8 +130,9 @@ export class SessionStore {
 
   /**
    * Return all host keys currently stored in the session file.
-   * Returns `[]` when the file is missing, empty, or a legacy v1 file
-   * (which is deleted as a side-effect of readFile).
+   * Returns `[]` when the file is missing or after an exact legacy v1 cleanup.
+   * Invalid or unknown files raise a schema error and remain byte-for-byte
+   * unchanged.
    */
   async hosts(): Promise<string[]> {
     let file: SessionFile;
@@ -104,10 +140,9 @@ export class SessionStore {
       file = await this.readFileForRead();
     } catch (e) {
       // F47 (2026-05-30) — see write() for the narrowing rationale.
-      // ENOENT + AuthRequiredError mean "no usable session file"; any
-      // other error (corruption, EACCES, schema parse failure) deserves
-      // to surface so errorToExit can produce the right SCHEMA exit.
-      if (!isMissingFile(e) && !(e instanceof AuthRequiredError)) throw e;
+      // ENOENT and verified-v1 cleanup mean "no usable session file"; any
+      // other error (corruption, EACCES, schema parse failure) surfaces.
+      if (!isMissingFile(e) && !(e instanceof LegacySessionFileError)) throw e;
       return [];
     }
     return Object.keys(file.sessions);
@@ -117,14 +152,12 @@ export class SessionStore {
     await this.withLock(async (path) => {
       let file: SessionFile;
       try {
-        file = await this.readFile(path, true);
+        file = await this.readFile(path);
       } catch (e) {
-        // F47 (2026-05-30) — same shape as hosts()/write(): ENOENT and
-        // v1-legacy (AuthRequiredError) are best-effort no-ops, everything
-        // else surfaces. Logout's auto-resolve relies on this distinction
-        // — silent corruption used to make `xgg logout` report success
-        // while leaving a stale entry intact.
-        if (!isMissingFile(e) && !(e instanceof AuthRequiredError)) throw e;
+        // F47 (2026-05-30) — same shape as hosts()/write(): ENOENT and an
+        // already-cleaned verified v1 are best-effort no-ops. Every invalid
+        // schema or I/O failure surfaces instead.
+        if (!isMissingFile(e) && !(e instanceof LegacySessionFileError)) throw e;
         return;
       }
       delete file.sessions[host];
@@ -137,22 +170,29 @@ export class SessionStore {
       return await this.readFile(this.path, false);
     } catch (e) {
       if (!(e instanceof LegacySessionFileError)) throw e;
-      // Legacy cleanup is itself a mutation. Re-read under the same lock used
-      // by write/delete so a concurrent v2 replacement is never unlinked.
+      // Legacy cleanup is a mutation. Re-read under the same lock used by
+      // write/delete so a concurrent v2 replacement is never unlinked.
       return this.withLock((path) => this.readFile(path, true));
     }
   }
 
-  private async readFile(path: string, removeLegacy: boolean): Promise<SessionFile> {
-    const raw = await fs.readFile(path, 'utf8');
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'version' in parsed &&
-      (parsed as { version: unknown }).version !== 2
-    ) {
-      if (removeLegacy) await fs.unlink(path).catch(() => {});
+  private async readFile(path: string, removeLegacy = true): Promise<SessionFile> {
+    const bytes = await fs.readFile(path);
+    if (!isUtf8(bytes)) throw sessionSchemaError(this.path, 'invalid_utf8');
+    const raw = bytes.toString('utf8');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      if (e instanceof SyntaxError) throw sessionSchemaError(this.path, 'invalid_json');
+      throw e;
+    }
+
+    const result = SessionFile.safeParse(parsed);
+    if (result.success) return result.data;
+
+    if (LegacySessionFile.safeParse(parsed).success) {
+      if (removeLegacy) await fs.unlink(path);
       throw new LegacySessionFileError(
         'legacy v1 session file detected; agent endpoint not available',
         {
@@ -160,7 +200,8 @@ export class SessionStore {
         },
       );
     }
-    return SessionFile.parse(parsed);
+
+    throw sessionSchemaError(this.path, 'schema_mismatch');
   }
 
   private async replaceFile(path: string, file: SessionFile): Promise<void> {
@@ -529,6 +570,22 @@ async function syncDirectory(path: string): Promise<void> {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function sessionSchemaError(
+  path: string,
+  reason: 'invalid_utf8' | 'invalid_json' | 'schema_mismatch',
+): SchemaError {
+  const description =
+    reason === 'invalid_utf8'
+      ? 'contains invalid UTF-8'
+      : reason === 'invalid_json'
+        ? 'contains invalid JSON'
+        : 'is not a v2 session file';
+  return new SchemaError(`Session file at ${path} ${description}`, {
+    sessionPath: path,
+    reason,
+  });
 }
 
 /** True when the error is a Node.js fs ENOENT (file/dir missing). */
