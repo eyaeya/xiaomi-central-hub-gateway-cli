@@ -1,14 +1,21 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { AuthExpiredError, AuthRequiredError, NetworkError } from '../transport/errors.js';
+import {
+  AuthExpiredError,
+  AuthRequiredError,
+  ConfigError,
+  NetworkError,
+} from '../transport/errors.js';
 
 export interface SpawnAgentOptions {
   /** Absolute path to the binary that runs the agent's child mode (typically `process.execPath`). */
   binary: string;
   /** Args passed to the binary — e.g. `[cliEntry, 'agent', '--serve', '--host', host]`. */
   args: string[];
-  /** Environment for the child. Defaults to inheriting from parent. Pass the
-   * single-use login code here (XGG_LOGIN_CODE) so it stays out of `ps`. */
+  /** Single-use login code written to the child's anonymous stdin pipe. */
+  passcode: string;
+  /** Environment for the child. Defaults to inheriting from parent, except
+   * `XGG_LOGIN_CODE` is always removed before spawn. */
   env?: NodeJS.ProcessEnv;
   /** Max time to wait for the child's READY line before failing the spawn. */
   readyTimeoutMs?: number;
@@ -38,10 +45,22 @@ interface ReadyPayload {
  * all.
  */
 export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentResult> {
+  if (!/^\d{6,8}$/.test(opts.passcode)) {
+    throw new ConfigError('agent login code must contain 6–8 digits');
+  }
+
+  // A caller may itself have received the code via XGG_LOGIN_CODE. Never
+  // forward any case variant of that inherited key to the detached child.
+  const childEnv: NodeJS.ProcessEnv = Object.fromEntries(
+    Object.entries(opts.env ?? process.env).filter(
+      ([key]) => key.toUpperCase() !== 'XGG_LOGIN_CODE',
+    ),
+  );
+
   const child: ChildProcess = spawn(opts.binary, opts.args, {
     detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: opts.env ?? process.env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: childEnv,
   });
 
   return new Promise<SpawnAgentResult>((resolve, reject) => {
@@ -95,6 +114,25 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
       input: child.stdout,
       crlfDelay: Number.POSITIVE_INFINITY,
     });
+
+    if (!child.stdin) {
+      settle(() => {
+        child.kill('SIGTERM');
+        reject(new NetworkError('child stdin pipe missing'));
+      });
+      return;
+    }
+
+    // Write exactly one bounded secret payload, close the pipe immediately,
+    // and wipe the mutable parent-side buffer after it has flushed. EPIPE is
+    // intentionally left to the existing child exit/READY-timeout paths so an
+    // auth JSON envelope on stderr keeps its established error mapping.
+    const passcodePayload = Buffer.from(opts.passcode, 'utf8');
+    const wipePasscodePayload = (): void => {
+      passcodePayload.fill(0);
+    };
+    child.stdin.once('error', wipePasscodePayload);
+    child.stdin.end(passcodePayload, wipePasscodePayload);
 
     const unrefStream = (s: NodeJS.ReadableStream | null): void => {
       if (!s) return;

@@ -1,4 +1,10 @@
-import { ConfigError, type RunAgentMainOptions, runAgentMain } from '@eyaeya/xgg-core';
+import type { Readable } from 'node:stream';
+import {
+  ConfigError,
+  type RunAgentMainHandle,
+  type RunAgentMainOptions,
+  runAgentMain,
+} from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 
 interface AgentServeOpts {
@@ -7,14 +13,18 @@ interface AgentServeOpts {
   idleMs?: string;
 }
 
+export interface AgentCommandDeps {
+  input?: Readable;
+  startAgent?: (opts: RunAgentMainOptions) => Promise<RunAgentMainHandle>;
+}
+
 /**
  * Hidden subcommand the CLI re-execs itself into when starting the per-host
- * agent. The parent spawns `node <cli-entry> agent serve --host <host>` with
- * `XGG_LOGIN_CODE` in the environment (so the single-use code never appears in
- * `ps`), waits for the `READY <json>` line on the child's stdout, then `unref`s
- * the child and exits.
+ * agent. The parent spawns `node <cli-entry> agent serve --host <host>`, sends
+ * the single-use code over an anonymous stdin pipe, waits for the `READY
+ * <json>` line on the child's stdout, then `unref`s the child and exits.
  */
-export function agentCommand(): Command {
+export function agentCommand(deps: AgentCommandDeps = {}): Command {
   const cmd = new Command('agent').description('(internal) per-host agent daemon');
 
   cmd
@@ -29,9 +39,9 @@ export function agentCommand(): Command {
     // hint lookup in errors.ts does not apply to this internal subcommand.
     .action(async (opts: AgentServeOpts) => {
       const host = opts.host;
-      const passcode = process.env.XGG_LOGIN_CODE;
       if (!host) throw new ConfigError('agent serve: missing --host');
-      if (!passcode) throw new ConfigError('agent serve: missing XGG_LOGIN_CODE in env');
+      // Consume and close the one-shot pipe before any gateway connection.
+      let passcode = await readOneShotLoginCode(deps.input ?? process.stdin);
       const idleMs = opts.idleMs ? Number(opts.idleMs) : undefined;
       if (idleMs !== undefined && (!Number.isFinite(idleMs) || idleMs <= 0)) {
         throw new ConfigError('agent serve: --idle-ms must be a positive number');
@@ -43,12 +53,15 @@ export function agentCommand(): Command {
       };
       if (opts.sessionFile) mainOpts.sessionFile = opts.sessionFile;
       if (idleMs !== undefined) mainOpts.idleMs = idleMs;
-      const handle = await runAgentMain(mainOpts);
-      // Wipe the env so it doesn't show in `/proc/<pid>/environ` for the
-      // remainder of the agent's lifetime. `= undefined` would coerce to the
-      // literal string "undefined" on process.env — delete is the only way.
-      // biome-ignore lint/performance/noDelete: process.env requires real delete to remove the var
-      delete process.env.XGG_LOGIN_CODE;
+      let handle: RunAgentMainHandle;
+      try {
+        handle = await (deps.startAgent ?? runAgentMain)(mainOpts);
+      } finally {
+        // runAgentMain consumes the code during handshake. Drop references
+        // before this async action waits for the long-lived daemon to exit.
+        passcode = '';
+        mainOpts.passcode = '';
+      }
       // Graceful shutdown: when `xgg logout` sends SIGTERM (or the user
       // presses Ctrl-C), invoke the agent's stop chain so the IPC server
       // can unlink the Unix socket before the process exits.
@@ -57,8 +70,43 @@ export function agentCommand(): Command {
       };
       process.once('SIGTERM', shutdown);
       process.once('SIGINT', shutdown);
-      await handle.done;
+      try {
+        await handle.done;
+      } finally {
+        process.off('SIGTERM', shutdown);
+        process.off('SIGINT', shutdown);
+      }
     });
 
   return cmd;
+}
+
+const MAX_LOGIN_CODE_BYTES = 8;
+
+/** Read the internal one-shot login-code pipe, then destroy and wipe buffers. */
+export async function readOneShotLoginCode(input: Readable): Promise<string> {
+  const secret = Buffer.alloc(MAX_LOGIN_CODE_BYTES);
+  let length = 0;
+
+  try {
+    for await (const chunk of input) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (length + bytes.length > MAX_LOGIN_CODE_BYTES) {
+        bytes.fill(0);
+        throw new ConfigError('agent serve: login code pipe must contain 6–8 digits');
+      }
+      bytes.copy(secret, length);
+      length += bytes.length;
+      bytes.fill(0);
+    }
+
+    const passcode = secret.subarray(0, length).toString('utf8');
+    if (!/^\d{6,8}$/.test(passcode)) {
+      throw new ConfigError('agent serve: login code pipe must contain 6–8 digits');
+    }
+    return passcode;
+  } finally {
+    secret.fill(0);
+    input.destroy();
+  }
 }

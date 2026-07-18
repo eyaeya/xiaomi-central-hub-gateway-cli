@@ -51,6 +51,9 @@ interface ReadyPayload {
  * just `await`s `handle.done` and exits.
  */
 export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentMainHandle> {
+  // Keep only the non-secret host in the long-lived `done` closure below; the
+  // passcode in `opts` must be collectible once the handshake finishes.
+  const host = opts.host;
   const socketBaseDir = opts.socketBaseDir ?? defaultAgentRuntimeDir();
   if (process.platform !== 'win32') await ensurePrivateRuntimeDir(socketBaseDir);
   const endpoint = resolveAgentEndpoint({
@@ -133,7 +136,7 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
   // process is going down anyway and the parent has already moved on.
   const done = agent.done.then(async () => {
     try {
-      await store.delete(opts.host);
+      await store.delete(host);
     } catch {
       // best-effort: tolerate fs errors during shutdown
     }
