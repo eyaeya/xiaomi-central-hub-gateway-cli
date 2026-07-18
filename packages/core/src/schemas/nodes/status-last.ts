@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Connection, NodeId, Position } from './common.js';
+import { DurationUnitSchema, DurationValueSchema, refineDurationConsistency } from './duration.js';
 
 export const StatusLastCfg = z
   .object({
@@ -7,8 +8,8 @@ export const StatusLastCfg = z
     pos: Position,
     name: z.string(),
     version: z.number(),
-    unit: z.string(),
-    value: z.number(),
+    unit: DurationUnitSchema,
+    value: DurationValueSchema,
   })
   .strict();
 export type StatusLastCfg = z.infer<typeof StatusLastCfg>;
@@ -45,5 +46,8 @@ export const StatusLastNode = z
     outputs: StatusLastOutputs,
     props: StatusLastProps,
   })
-  .strict();
+  .strict()
+  .superRefine((node, ctx) => {
+    refineDurationConsistency(node.cfg, 'timeout', node.props.timeout, ctx);
+  });
 export type StatusLastNode = z.infer<typeof StatusLastNode>;

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Connection, NodeId, Position } from './common.js';
+import { DurationUnitSchema, DurationValueSchema, refineDurationConsistency } from './duration.js';
 
 export const EventSequenceCfg = z
   .object({
@@ -7,8 +8,8 @@ export const EventSequenceCfg = z
     pos: Position,
     name: z.string(),
     version: z.number(),
-    unit: z.string(),
-    value: z.number(),
+    unit: DurationUnitSchema,
+    value: DurationValueSchema,
   })
   .strict();
 export type EventSequenceCfg = z.infer<typeof EventSequenceCfg>;
@@ -46,5 +47,8 @@ export const EventSequenceNode = z
     outputs: EventSequenceOutputs,
     props: EventSequenceProps,
   })
-  .strict();
+  .strict()
+  .superRefine((node, ctx) => {
+    refineDurationConsistency(node.cfg, 'timeout', node.props.timeout, ctx);
+  });
 export type EventSequenceNode = z.infer<typeof EventSequenceNode>;
