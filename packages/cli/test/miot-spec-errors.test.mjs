@@ -102,19 +102,23 @@ test('timed-out MIoT request is a NETWORK error and preserves its cause privatel
 });
 
 test('timed-out MIoT response body remains a NETWORK error', async (t) => {
+  const bodyTimeoutMs = 250;
   const baseUrl = `${await startRegistry(t, (_request, response) => {
     response.writeHead(200, { 'content-type': 'application/json' });
+    response.flushHeaders();
     response.write('{"services":');
   })}/spec`;
   const urn = `${urnPrefix}:body-timeout`;
   __resetSpecCache();
-  const error = await captureRejection(() => fetchMiotSpec(urn, { baseUrl, timeoutMs: 20 }));
+  const error = await captureRejection(() =>
+    fetchMiotSpec(urn, { baseUrl, timeoutMs: bodyTimeoutMs }),
+  );
 
   assert.ok(error instanceof MiotSpecFetchError);
   assert.ok(error instanceof NetworkError);
   assert.equal(error.status, 200);
   assert.equal(error.details.status, 200);
-  assert.equal(error.details.timeoutMs, 20);
+  assert.equal(error.details.timeoutMs, bodyTimeoutMs);
   assertRegistryUrl(error, baseUrl, urn);
   assertPublicClassification(error, 'NETWORK', 1);
 });
