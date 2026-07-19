@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { type Server, type Socket, createServer } from 'node:net';
 import { createInterface } from 'node:readline';
 import {
@@ -12,6 +13,11 @@ import {
   XggError,
   type XggErrorCode,
 } from '../transport/errors.js';
+import { isKnownGatewayWriteMethod } from './gateway-write-methods.js';
+import {
+  type MutationLeaseCoordinator,
+  createInMemoryMutationLeaseCoordinator,
+} from './mutation-lease.js';
 
 export interface IpcRequest {
   method: string;
@@ -20,13 +26,28 @@ export interface IpcRequest {
   timeoutMs?: number;
   /** Whether the call mutates gateway state — drives the timeout error class. */
   kind?: 'read' | 'write';
+  /** Connection-bound mutation workflow lease. */
+  leaseId?: string;
 }
 
-export type IpcHandler = (req: IpcRequest) => Promise<unknown>;
+export interface IpcHandlerContext {
+  connectionId: string;
+  leaseId?: string;
+  /** Preserve the active lease after an ambiguous write until daemon shutdown. */
+  fenceMutation: (reason: string) => void;
+}
+
+export type IpcHandler = (req: IpcRequest, context: IpcHandlerContext) => Promise<unknown>;
 
 export interface IpcServerOptions {
   path: string;
   handler: IpcHandler;
+  /** Production injects a cross-process coordinator; fake servers use an in-memory one. */
+  mutationLeases?: MutationLeaseCoordinator;
+  /** Let the owning agent close leases after its gateway transport stops. */
+  closeMutationLeases?: boolean;
+  /** Production callback for a prepared, identity-pinned IPC self-shutdown. */
+  onShutdown?: () => void;
 }
 
 export interface IpcServerHandle {
@@ -49,9 +70,11 @@ interface ErrorEnvelope {
  */
 export async function createIpcServer(opts: IpcServerOptions): Promise<IpcServerHandle> {
   const isPipe = opts.path.startsWith('\\\\.\\pipe\\');
+  const mutationLeases = opts.mutationLeases ?? createInMemoryMutationLeaseCoordinator();
 
   const liveSockets = new Set<Socket>();
   const server: Server = createServer((socket: Socket) => {
+    const connectionId = randomUUID();
     liveSockets.add(socket);
     const rl = createInterface({ input: socket, crlfDelay: Number.POSITIVE_INFINITY });
     socket.on('error', () => {
@@ -61,6 +84,7 @@ export async function createIpcServer(opts: IpcServerOptions): Promise<IpcServer
     socket.on('close', () => {
       liveSockets.delete(socket);
       rl.close();
+      mutationLeases.connectionClosed(connectionId);
     });
     rl.on('error', () => {
       // readline forwards input stream errors on its own EventEmitter. Without
@@ -68,7 +92,14 @@ export async function createIpcServer(opts: IpcServerOptions): Promise<IpcServer
       socket.destroy();
     });
     rl.on('line', (line) => {
-      void handleLine(line, socket, opts.handler).catch(() => {
+      void handleLine(
+        line,
+        socket,
+        opts.handler,
+        mutationLeases,
+        connectionId,
+        opts.onShutdown,
+      ).catch(() => {
         // handleLine serialises normal handler failures. Any remaining failure
         // belongs to this connection and must not escape to the daemon process.
         socket.destroy();
@@ -104,14 +135,25 @@ export async function createIpcServer(opts: IpcServerOptions): Promise<IpcServer
         for (const s of liveSockets) s.destroy();
         liveSockets.clear();
         await new Promise<void>((resolve) => server.close(() => resolve()));
+        if (opts.closeMutationLeases !== false) await mutationLeases.close();
       })();
       return closePromise;
     },
   };
 }
 
-async function handleLine(line: string, socket: Socket, handler: IpcHandler): Promise<void> {
+async function handleLine(
+  line: string,
+  socket: Socket,
+  handler: IpcHandler,
+  mutationLeases: MutationLeaseCoordinator,
+  connectionId: string,
+  onShutdown: (() => void) | undefined,
+): Promise<void> {
   let id: number | undefined;
+  let exitLeaseRequest: (() => void) | undefined;
+  let write = false;
+  let leaseId: string | undefined;
   try {
     const parsed = JSON.parse(line) as {
       id: number;
@@ -119,19 +161,111 @@ async function handleLine(line: string, socket: Socket, handler: IpcHandler): Pr
       params: unknown;
       timeoutMs?: number;
       kind?: 'read' | 'write';
+      leaseId?: string;
     };
     id = parsed.id;
-    const result = await handler({
-      method: parsed.method,
-      params: parsed.params,
-      ...(parsed.timeoutMs !== undefined && { timeoutMs: parsed.timeoutMs }),
-      ...(parsed.kind !== undefined && { kind: parsed.kind }),
-    });
-    await writeLine(socket, { id, result });
+    leaseId = parsed.leaseId;
+    if (parsed.method === '$mutation.acquire') {
+      const params = parseMutationAcquireParams(parsed.params);
+      const acquired = await mutationLeases.acquire(
+        connectionId,
+        params.operation,
+        params.waitTimeoutMs,
+      );
+      await writeLine(socket, { id, result: { leaseId: acquired } });
+      return;
+    }
+    if (parsed.method === '$shutdown.prepare') {
+      const waitTimeoutMs = parseWaitTimeout(parsed.params, '$shutdown.prepare');
+      await mutationLeases.prepareShutdown(connectionId, waitTimeoutMs);
+      await writeLine(socket, { id, result: { ok: true } });
+      return;
+    }
+    if (parsed.method === '$shutdown.commit') {
+      mutationLeases.commitShutdown(connectionId);
+      await writeLine(socket, { id, result: { ok: true } });
+      // Flush the acknowledgement before shutdown destroys this connection.
+      // The owner check above pins authorization to the same IPC connection
+      // whose full daemon identity logout already verified.
+      onShutdown?.();
+      return;
+    }
+    if (parsed.method === '$mutation.release') {
+      const releasedLeaseId = parseLeaseId(parsed.params);
+      await mutationLeases.release(connectionId, releasedLeaseId);
+      await writeLine(socket, { id, result: { ok: true } });
+      return;
+    }
+    if (parsed.method === '$mutation.fence') {
+      const fencedLeaseId = parseLeaseId(parsed.params);
+      mutationLeases.fence(connectionId, fencedLeaseId, 'client reported unconfirmed write');
+      await writeLine(socket, { id, result: { ok: true } });
+      return;
+    }
+    write = parsed.kind === 'write' || isKnownGatewayWriteMethod(parsed.method);
+    exitLeaseRequest = await mutationLeases.enter(connectionId, leaseId, write);
+    const result = await handler(
+      {
+        method: parsed.method,
+        params: parsed.params,
+        ...(parsed.timeoutMs !== undefined && { timeoutMs: parsed.timeoutMs }),
+        ...(write
+          ? { kind: 'write' as const }
+          : parsed.kind !== undefined && { kind: parsed.kind }),
+        ...(leaseId !== undefined && { leaseId }),
+      },
+      {
+        connectionId,
+        ...(leaseId !== undefined && { leaseId }),
+        fenceMutation: (reason) => mutationLeases.fence(connectionId, leaseId, reason),
+      },
+    );
+    const written = await writeLine(socket, { id, result });
+    if (write && !written) {
+      mutationLeases.fence(connectionId, leaseId, 'write acknowledgement was not delivered');
+    }
   } catch (e) {
     const env = errorEnvelope(e);
     await writeLine(socket, id === undefined ? { id: 0, error: env } : { id, error: env });
+  } finally {
+    exitLeaseRequest?.();
   }
+}
+
+function parseMutationAcquireParams(params: unknown): { operation: string; waitTimeoutMs: number } {
+  if (params === null || typeof params !== 'object' || Array.isArray(params)) {
+    throw new ConfigError('$mutation.acquire requires object params');
+  }
+  const value = params as Record<string, unknown>;
+  if (typeof value.operation !== 'string' || value.operation.length === 0) {
+    throw new ConfigError('$mutation.acquire requires a non-empty operation');
+  }
+  if (!Number.isSafeInteger(value.waitTimeoutMs) || (value.waitTimeoutMs as number) <= 0) {
+    throw new ConfigError('$mutation.acquire requires a positive integer waitTimeoutMs');
+  }
+  return { operation: value.operation, waitTimeoutMs: value.waitTimeoutMs as number };
+}
+
+function parseWaitTimeout(params: unknown, method: string): number {
+  if (params === null || typeof params !== 'object' || Array.isArray(params)) {
+    throw new ConfigError(`${method} requires object params`);
+  }
+  const waitTimeoutMs = (params as Record<string, unknown>).waitTimeoutMs;
+  if (!Number.isSafeInteger(waitTimeoutMs) || (waitTimeoutMs as number) <= 0) {
+    throw new ConfigError(`${method} requires a positive integer waitTimeoutMs`);
+  }
+  return waitTimeoutMs as number;
+}
+
+function parseLeaseId(params: unknown): string {
+  if (params === null || typeof params !== 'object' || Array.isArray(params)) {
+    throw new ConfigError('mutation lease operation requires object params');
+  }
+  const leaseId = (params as Record<string, unknown>).leaseId;
+  if (typeof leaseId !== 'string' || leaseId.length === 0) {
+    throw new ConfigError('mutation lease operation requires leaseId');
+  }
+  return leaseId;
 }
 
 /**

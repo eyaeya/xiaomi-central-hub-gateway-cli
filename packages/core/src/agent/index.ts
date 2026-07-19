@@ -1,7 +1,19 @@
 export { createIpcClient } from './ipc-client.js';
 export type { IpcClient, IpcClientOptions } from './ipc-client.js';
 export { createIpcServer } from './ipc-server.js';
-export type { IpcServerHandle, IpcServerOptions } from './ipc-server.js';
+export type {
+  IpcHandlerContext,
+  IpcServerHandle,
+  IpcServerOptions,
+} from './ipc-server.js';
+export {
+  createFileMutationLeaseCoordinator,
+  createInMemoryMutationLeaseCoordinator,
+} from './mutation-lease.js';
+export type {
+  MutationLeaseCoordinator,
+  MutationLeaseStatus,
+} from './mutation-lease.js';
 export { assertAgentIdentity } from './identity.js';
 export type { AgentPingIdentity } from './identity.js';
 export {

@@ -6,6 +6,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -38,15 +39,18 @@ export function attachRename(cmd: Command): void {
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
-        const snapshotPath = !guard.snapshotEnabled
-          ? null
-          : await dumpBeforeWrite({
-              baseUrl: deps.baseUrl,
-              store: deps.store,
-              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-              ...(snapshotsDir !== undefined && { snapshotsDir }),
-            });
-        await renameRule(id, opts.name, deps);
+        const snapshotPath = await runMutationWorkflow('rule.rename', deps, async () => {
+          const snapshot = !guard.snapshotEnabled
+            ? null
+            : await dumpBeforeWrite({
+                baseUrl: deps.baseUrl,
+                store: deps.store,
+                ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+                ...(snapshotsDir !== undefined && { snapshotsDir }),
+              });
+          await renameRule(id, opts.name, deps);
+          return snapshot;
+        });
         emit(
           { ok: true, id, name: opts.name, snapshot: snapshotPath },
           { pretty: opts.pretty === true },

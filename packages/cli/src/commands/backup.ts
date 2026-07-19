@@ -1,6 +1,7 @@
 import {
   type BackupItem,
   ConfigError,
+  NotConfirmedError,
   createBackup,
   createStore,
   deleteBackup,
@@ -19,7 +20,11 @@ import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
 import { parsePositiveTimerMs } from '../local-input.js';
 import { type TableColumn, emit, emitList } from '../output.js';
-import { type ResolvedMutationGuard, assertAgentModeOrSnapshotsDir } from './_mutation-guard.js';
+import {
+  type ResolvedMutationGuard,
+  assertAgentModeOrSnapshotsDir,
+  runMutationWorkflow,
+} from './_mutation-guard.js';
 
 interface BackupOpts {
   baseUrl?: string;
@@ -27,7 +32,8 @@ interface BackupOpts {
   timeout: string;
   pretty?: boolean;
   from: string;
-  // Optional poll-to-100 on create/download/load.
+  // Optional poll-to-100 on create/download; load always waits, and this flag
+  // controls whether terminal progress is included in its JSON output.
   wait?: boolean;
   pollIntervalMs?: string;
   pollTimeoutMs?: string;
@@ -68,7 +74,7 @@ interface ParsedWaitOptions {
   pollTimeoutMs?: number;
 }
 
-type BackupWaitOperation = 'backup.create' | 'backup.download' | 'backup.load';
+type BackupWaitOperation = 'backup.create' | 'backup.download';
 
 function makeDeps(opts: BackupOpts) {
   const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
@@ -100,13 +106,20 @@ function addTargetOptions(cmd: Command): Command {
     .option('--self', 'include self=true in the backup reference');
 }
 
-// `--wait` polls the returned progress_id to 100% before the command returns; a
-// progress_id of 0 (local-cache hit) resolves instantly.
+// `--wait` polls create/download to 100%. Restore always waits inside core;
+// there this flag requests the terminal progress object in command output.
+// A progress_id of 0 (synchronous/local-cache hit) resolves instantly.
 function addWaitOptions(cmd: Command): Command {
   return cmd
-    .option('--wait', 'poll the operation progress to 100% before returning')
-    .option('--poll-interval-ms <ms>', 'progress poll interval when --wait (default 1000)')
-    .option('--poll-timeout-ms <ms>', 'progress poll timeout when --wait (default 60000)');
+    .option('--wait', 'poll to 100% (load always waits; this includes progress in output)')
+    .option(
+      '--poll-interval-ms <ms>',
+      'progress poll interval (default 1000; requires --wait except for load)',
+    )
+    .option(
+      '--poll-timeout-ms <ms>',
+      'progress poll timeout (default 60000; requires --wait except for load)',
+    );
 }
 
 async function maybeWaitForProgress(
@@ -118,14 +131,33 @@ async function maybeWaitForProgress(
 ): Promise<{ progress: number } | undefined> {
   if (!waitOpts.enabled) return undefined;
   const progressId = extractBackupProgressId(result);
-  // Nothing pollable (e.g. loadBackup returned {} / true) — surface as-is.
-  if (progressId === null) return undefined;
-  return waitForBackupProgress({ from, progressId, operation }, deps, {
+  if (progressId === null) {
+    if (isExactEmptyObject(result)) return { progress: 100 };
+    throw new NotConfirmedError(
+      `${operation} returned no confirmable progress handle while --wait was requested`,
+      {
+        operation,
+        from,
+        hint: 'inspect backup state before retrying the operation',
+      },
+    );
+  }
+  const progress = await waitForBackupProgress({ from, progressId, operation }, deps, {
     ...(waitOpts.pollIntervalMs !== undefined && {
       pollIntervalMs: waitOpts.pollIntervalMs,
     }),
     ...(waitOpts.pollTimeoutMs !== undefined && { pollTimeoutMs: waitOpts.pollTimeoutMs }),
   });
+  return waitOpts.enabled ? progress : undefined;
+}
+
+function isExactEmptyObject(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  );
 }
 
 function addSnapshotOptions(cmd: Command): Command {
@@ -155,19 +187,18 @@ function parseOptionalNumber(raw: string | undefined, flag: string): number | un
   return value;
 }
 
-function parseWaitOptions(opts: BackupOpts): ParsedWaitOptions {
+function parseWaitOptions(opts: BackupOpts, alwaysWait = false): ParsedWaitOptions {
   const suppliedPollFlags = [
     ...(opts.pollIntervalMs !== undefined ? ['--poll-interval-ms'] : []),
     ...(opts.pollTimeoutMs !== undefined ? ['--poll-timeout-ms'] : []),
   ];
-  if (opts.wait !== true) {
+  if (opts.wait !== true && !alwaysWait) {
     if (suppliedPollFlags.length > 0) {
       throw new ConfigError(`${suppliedPollFlags.join(' and ')} require --wait`);
     }
-    return { enabled: false };
   }
   return {
-    enabled: true,
+    enabled: opts.wait === true,
     ...(opts.pollIntervalMs !== undefined && {
       pollIntervalMs: parsePositiveTimerMs(opts.pollIntervalMs, '--poll-interval-ms'),
     }),
@@ -249,14 +280,21 @@ export function backupCommand(): Command {
       const waitOpts = parseWaitOptions(opts);
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps);
-      const result = await createBackup({ from: opts.from, fileName: opts.fileName }, deps);
-      const progress = await maybeWaitForProgress(
-        opts.from,
+      const { snapshot, result, progress } = await runMutationWorkflow(
         'backup.create',
-        waitOpts,
-        result,
         deps,
+        async () => {
+          const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps);
+          const result = await createBackup({ from: opts.from, fileName: opts.fileName }, deps);
+          const progress = await maybeWaitForProgress(
+            opts.from,
+            'backup.create',
+            waitOpts,
+            result,
+            deps,
+          );
+          return { snapshot, result, progress };
+        },
       );
       emit(
         { ok: true, snapshot, result, ...(progress && { progress }) },
@@ -298,14 +336,21 @@ export function backupCommand(): Command {
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const target = backupRef(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
-      const result = await downloadBackup({ from: opts.from, backup: target }, deps);
-      const progress = await maybeWaitForProgress(
-        opts.from,
+      const { snapshot, result, progress } = await runMutationWorkflow(
         'backup.download',
-        waitOpts,
-        result,
         deps,
+        async () => {
+          const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
+          const result = await downloadBackup({ from: opts.from, backup: target }, deps);
+          const progress = await maybeWaitForProgress(
+            opts.from,
+            'backup.download',
+            waitOpts,
+            result,
+            deps,
+          );
+          return { snapshot, result, progress };
+        },
       );
       emit(
         { ok: true, snapshot, result, ...(progress && { progress }) },
@@ -344,13 +389,31 @@ export function backupCommand(): Command {
     ),
   ).action(
     wrap('backup.load', async (opts: SnapshotOpts) => {
-      const waitOpts = parseWaitOptions(opts);
+      const waitOpts = parseWaitOptions(opts, true);
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const target = backupRef(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
-      const result = await loadBackup({ from: opts.from, backup: target }, deps);
-      const progress = await maybeWaitForProgress(opts.from, 'backup.load', waitOpts, result, deps);
+      const { snapshot, result, progress } = await runMutationWorkflow(
+        'backup.load',
+        deps,
+        async () => {
+          const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
+          const completed = await loadBackup({ from: opts.from, backup: target }, deps, {
+            includeProgress: true,
+            ...(waitOpts.pollIntervalMs !== undefined && {
+              pollIntervalMs: waitOpts.pollIntervalMs,
+            }),
+            ...(waitOpts.pollTimeoutMs !== undefined && {
+              pollTimeoutMs: waitOpts.pollTimeoutMs,
+            }),
+          });
+          return {
+            snapshot,
+            result: completed.result,
+            progress: waitOpts.enabled ? completed.progress : undefined,
+          };
+        },
+      );
       emit(
         { ok: true, snapshot, result, ...(progress && { progress }) },
         { pretty: opts.pretty === true },
@@ -373,8 +436,11 @@ export function backupCommand(): Command {
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const target = backupRef(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
-      const result = await deleteBackup({ from: opts.from, backup: target }, deps);
+      const { snapshot, result } = await runMutationWorkflow('backup.delete', deps, async () => {
+        const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
+        const result = await deleteBackup({ from: opts.from, backup: target }, deps);
+        return { snapshot, result };
+      });
       emit({ ok: true, snapshot, result }, { pretty: opts.pretty === true });
     }),
   );
@@ -412,14 +478,21 @@ export function backupCommand(): Command {
       const autoBackupLimit = parseOptionalNumber(opts.autoBackupLimit, '--auto-backup-limit');
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps);
-      const result = await setBackupConfig(
-        {
-          from: opts.from,
-          autoBackup,
-          ...(autoBackupLimit !== undefined && { autoBackupLimit }),
-        },
+      const { snapshot, result } = await runMutationWorkflow(
+        'backup.config.set',
         deps,
+        async () => {
+          const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps);
+          const result = await setBackupConfig(
+            {
+              from: opts.from,
+              autoBackup,
+              ...(autoBackupLimit !== undefined && { autoBackupLimit }),
+            },
+            deps,
+          );
+          return { snapshot, result };
+        },
       );
       emit({ ok: true, snapshot, result }, { pretty: opts.pretty === true });
     }),

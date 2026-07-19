@@ -520,7 +520,7 @@ xgg backup create --from fds --file-name "<名字>" --wait   # 轮询进度到 1
 
 `--from fds` 指小米云存储。Agent 模式同样受快照目录约束。
 
-`create` / `download` / `load` 默认立即返回网关给的 `progress_id`，操作仍在后台进行。加 `--wait` 让命令轮询该 `progress_id` 到 100% 再返回，并在 JSON 输出里附带 `progress` 字段；`progress_id` 为 0（命中网关本地缓存）时立即完成。可选 `--poll-interval-ms`（默认 1000）调轮询间隔、`--poll-timeout-ms`（默认 60000）调超时。
+`create` / `download` 默认立即返回网关给的 `progress_id`，操作可在后台继续；加 `--wait` 会轮询到 100% 并在 JSON 输出里附带 `progress`。`load` 是 restore，ACK 只表示已接受，因此无论是否带 `--wait` 都会在 mutation workflow 租约内等到 100% 后才返回；`--wait` 只额外把 terminal `progress` 写入输出。`progress_id` 为 0（同步完成或命中网关本地缓存）时立即完成。可选 `--poll-interval-ms`（默认 1000）调轮询间隔、`--poll-timeout-ms`（默认 60000）调超时。
 
 ## 十三、常见踩坑
 

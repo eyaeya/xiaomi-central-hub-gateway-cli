@@ -1,4 +1,4 @@
-import { ConfigError } from '@eyaeya/xgg-core';
+import { ConfigError, type SessionStore, withMutationWorkflow } from '@eyaeya/xgg-core';
 import { type Command, Option } from 'commander';
 import {
   AGENT_MODE_NO_SNAPSHOT_FORBIDDEN_MESSAGE,
@@ -16,6 +16,23 @@ export interface ResolvedMutationGuard {
   snapshotsDir: string | undefined;
   /** false ⇒ caller must skip the pre-write dump. */
   snapshotEnabled: boolean;
+}
+
+/** Hold the per-gateway lease across every live read/write in a CLI mutation. */
+export function runMutationWorkflow<T>(
+  operation: string,
+  deps: { baseUrl: string; store: SessionStore; timeoutMs?: number },
+  run: () => Promise<T>,
+): Promise<T> {
+  return withMutationWorkflow(
+    {
+      baseUrl: deps.baseUrl,
+      store: deps.store,
+      operation,
+      ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+    },
+    run,
+  );
 }
 
 /**

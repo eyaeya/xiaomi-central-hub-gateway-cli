@@ -72,7 +72,7 @@ export class JsonRpcRouter {
 
   async stop(): Promise<void> {
     this.running = false;
-    this.opts.transport.close();
+    const physicalClose = Promise.resolve(this.opts.transport.close());
     if (this.loop) {
       try {
         await this.loop;
@@ -81,6 +81,7 @@ export class JsonRpcRouter {
       }
       this.loop = null;
     }
+    await physicalClose;
     for (const p of this.pending.values()) {
       clearTimeout(p.timer);
       p.reject(new NetworkError('router stopped'));
@@ -168,7 +169,9 @@ export class JsonRpcRouter {
     this.failAllPending(error);
     if (closeTransport) {
       try {
-        this.opts.transport.close();
+        void Promise.resolve(this.opts.transport.close()).catch(() => {
+          // Preserve the protocol/read failure as the root cause.
+        });
       } catch {
         // Preserve the protocol/read failure as the root cause.
       }

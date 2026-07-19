@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   NotConfirmedError,
+  createInMemoryMutationLeaseCoordinator,
   createIpcServer,
   waitForBackupProgress,
 } from '../../core/dist/index.js';
@@ -25,18 +26,24 @@ function endpointPath(dir) {
   return join(dir, 'agent.sock');
 }
 
-async function startFakeAgent(t) {
+async function startFakeAgent(t, responses = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'xgg-backup-lifecycle-'));
   const socketPath = endpointPath(dir);
   const sessionFile = join(dir, 'session.json');
   const snapshotsDir = join(dir, 'snapshots');
   const calls = [];
+  const mutationLeases = createInMemoryMutationLeaseCoordinator();
   await mkdir(snapshotsDir);
 
   const server = await createIpcServer({
     path: socketPath,
+    mutationLeases,
     handler: async (request) => {
       calls.push(request);
+      if (Object.hasOwn(responses, request.method)) {
+        const response = responses[request.method];
+        return typeof response === 'function' ? response(request) : response;
+      }
       switch (request.method) {
         case '$ping':
           return { host: testHost, agentStartedAt };
@@ -81,7 +88,7 @@ async function startFakeAgent(t) {
     await rm(dir, { recursive: true, force: true });
   });
 
-  return { calls, sessionFile, snapshotsDir };
+  return { calls, mutationLeases, sessionFile, snapshotsDir };
 }
 
 function runCli(args, sessionFile) {
@@ -183,6 +190,61 @@ test('create, download, and load validate wait options before gateway or snapsho
   assert.deepEqual(fake.calls, []);
 });
 
+test('create/download --wait accepts only explicit synchronous completion without a handle', async (t) => {
+  const operations = [
+    {
+      method: '/api/createBackup',
+      args: ['backup', 'create', '--file-name', 'probe'],
+    },
+    {
+      method: '/api/downloadBackup',
+      args: ['backup', 'download', '--did', 'd', '--ts', 't', '--file-name', 'f'],
+    },
+  ];
+
+  for (const operation of operations) {
+    const sync = await startFakeAgent(t, { [operation.method]: {} });
+    const success = await runCli(
+      [
+        ...operation.args,
+        '--snapshots-dir',
+        sync.snapshotsDir,
+        '--wait',
+        '--poll-interval-ms=1',
+        '--poll-timeout-ms=100',
+      ],
+      sync.sessionFile,
+    );
+    assert.equal(success.status, 0, success.stderr);
+    assert.deepEqual(JSON.parse(success.stdout).progress, { progress: 100 });
+    assert.equal(
+      sync.calls.some(({ method }) => method === '/api/getBackupProgress'),
+      false,
+    );
+
+    for (const response of [true, -1, 1.5]) {
+      const ambiguous = await startFakeAgent(t, { [operation.method]: response });
+      const failure = await runCli(
+        [
+          ...operation.args,
+          '--snapshots-dir',
+          ambiguous.snapshotsDir,
+          '--wait',
+          '--poll-interval-ms=1',
+          '--poll-timeout-ms=100',
+        ],
+        ambiguous.sessionFile,
+      );
+      assertJsonFailure(failure, 'NOT_CONFIRMED', 2);
+      assert.equal(
+        ambiguous.calls.some(({ method }) => method === '/api/getBackupProgress'),
+        false,
+      );
+      assert.equal(ambiguous.mutationLeases.status().fenced, true);
+    }
+  }
+});
+
 test('backup polling timeout is NotConfirmed with actionable details and exit 2', async (t) => {
   const fake = await startFakeAgent(t);
   const result = await runCli(
@@ -251,4 +313,120 @@ test('waitForBackupProgress exposes NotConfirmedError to the CLI exit mapper', a
       return true;
     },
   );
+});
+
+test('backup load without progress_id is NOT_CONFIRMED and fences the workflow', async (t) => {
+  const fake = await startFakeAgent(t, { '/api/loadBackup': {} });
+  const result = await runCli(
+    [
+      'backup',
+      'load',
+      '--did',
+      'd',
+      '--ts',
+      't',
+      '--file-name',
+      'f',
+      '--snapshots-dir',
+      fake.snapshotsDir,
+    ],
+    fake.sessionFile,
+  );
+  const payload = assertJsonFailure(result, 'NOT_CONFIRMED', 2);
+  assert.match(payload.error.message, /without a progress_id/);
+  assert.equal(fake.mutationLeases.status().fenced, true);
+  assert.equal(
+    fake.calls.some(({ method }) => method === '/api/getBackupProgress'),
+    false,
+  );
+});
+
+test('backup load confirms terminal progress exactly once and reuses it for --wait output', async (t) => {
+  let progressReads = 0;
+  const fake = await startFakeAgent(t, {
+    '/api/loadBackup': { progress_id: 7 },
+    '/api/getBackupProgress': () => {
+      progressReads += 1;
+      if (progressReads > 1) throw new Error('terminal progress handle was polled twice');
+      return { progress: 100, speed: 12 };
+    },
+  });
+  const result = await runCli(
+    [
+      'backup',
+      'load',
+      '--did',
+      'd',
+      '--ts',
+      't',
+      '--file-name',
+      'f',
+      '--snapshots-dir',
+      fake.snapshotsDir,
+      '--wait',
+      '--poll-interval-ms=1',
+      '--poll-timeout-ms=100',
+    ],
+    fake.sessionFile,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  const payload = JSON.parse(result.stdout);
+  assert.deepEqual(payload.result, { progress_id: 7 });
+  assert.deepEqual(payload.progress, { progress: 100, speed: 12 });
+  assert.equal(progressReads, 1);
+});
+
+test('backup load accepts polling controls without --wait and omits progress output', async (t) => {
+  let progressReads = 0;
+  const fake = await startFakeAgent(t, {
+    '/api/loadBackup': { progress_id: 7 },
+    '/api/getBackupProgress': () => {
+      progressReads += 1;
+      return { progress: 100 };
+    },
+  });
+  const result = await runCli(
+    [
+      'backup',
+      'load',
+      '--did',
+      'd',
+      '--ts',
+      't',
+      '--file-name',
+      'f',
+      '--snapshots-dir',
+      fake.snapshotsDir,
+      '--poll-interval-ms=1',
+      '--poll-timeout-ms=100',
+    ],
+    fake.sessionFile,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  const payload = JSON.parse(result.stdout);
+  assert.deepEqual(payload.result, { progress_id: 7 });
+  assert.equal(Object.hasOwn(payload, 'progress'), false);
+  assert.equal(progressReads, 1);
+});
+
+test('raw loadBackup without progress_id is NOT_CONFIRMED and fenced', async (t) => {
+  const fake = await startFakeAgent(t, { '/api/loadBackup': true });
+  const result = await runCli(
+    [
+      'api',
+      '/api/loadBackup',
+      '--kind',
+      'write',
+      '--params',
+      JSON.stringify({ from: 'fds', params: { did: 'd', ts: 't', fileName: 'f' } }),
+      '--snapshots-dir',
+      fake.snapshotsDir,
+    ],
+    fake.sessionFile,
+  );
+  const payload = assertJsonFailure(result, 'NOT_CONFIRMED', 2);
+  assert.match(payload.error.message, /without a progress_id/);
+  assert.equal(fake.mutationLeases.status().fenced, true);
 });

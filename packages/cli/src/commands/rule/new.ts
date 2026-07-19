@@ -13,6 +13,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -71,15 +72,18 @@ export function attachNew(cmd: Command): void {
             enable: opts.enable,
           },
         };
-        const snapshotPath = !guard.snapshotEnabled
-          ? null
-          : await dumpBeforeWrite({
-              baseUrl: deps.baseUrl,
-              store: deps.store,
-              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-              ...(snapshotsDir !== undefined && { snapshotsDir }),
-            });
-        await createRule(body, deps);
+        const snapshotPath = await runMutationWorkflow('rule.new', deps, async () => {
+          const snapshot = !guard.snapshotEnabled
+            ? null
+            : await dumpBeforeWrite({
+                baseUrl: deps.baseUrl,
+                store: deps.store,
+                ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+                ...(snapshotsDir !== undefined && { snapshotsDir }),
+              });
+          await createRule(body, deps);
+          return snapshot;
+        });
         const payloadBase = { ok: true, id, snapshot: snapshotPath } as Record<string, unknown>;
         const hints = buildNextSteps('rule.new', { id, ...opts }, opts);
         emit(nextHintOptedOut(opts) ? payloadBase : withNextSteps(payloadBase, hints), {

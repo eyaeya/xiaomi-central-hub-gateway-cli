@@ -1,14 +1,19 @@
+import { dirname } from 'node:path';
 import { NetworkError, NotConfirmedError } from '../transport/errors.js';
 import type { HandshakeResult } from '../transport/handshake.js';
 import type { BinaryTransport } from '../transport/index.js';
 import { JsonRpcRouter, SessionChannel } from '../transport/index.js';
+import { defaultAgentRuntimeDir } from './ipc-path.js';
 import { type IpcServerHandle, createIpcServer } from './ipc-server.js';
+import { createFileMutationLeaseCoordinator } from './mutation-lease.js';
 
 export interface RunAgentOptions {
   host: string;
   transport: BinaryTransport;
   handshake: HandshakeResult;
   socketPath: string;
+  /** Stable runtime directory shared by replacement daemons for the host lease. */
+  mutationLockDir?: string;
   /** Inactivity window after which the agent exits cleanly. */
   idleMs: number;
   /** Optional per-call timeout for forwarded JSON-RPC requests. Default 10_000. */
@@ -50,6 +55,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
     channel,
     defaultTimeoutMs: opts.rpcTimeoutMs ?? 10_000,
   });
+  const mutationLeases = createFileMutationLeaseCoordinator({
+    host: opts.host,
+    baseDir:
+      opts.mutationLockDir ??
+      (opts.socketPath.startsWith('\\\\.\\pipe\\')
+        ? defaultAgentRuntimeDir()
+        : dirname(opts.socketPath)),
+  });
   let stopping = false;
   let cleanupPromise: Promise<void> | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -69,6 +82,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
       const errors: unknown[] = [];
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = null;
+      // Freeze the current ticket before stopping accept. Durable write fences
+      // remain owned until the old gateway router/transport is fully stopped.
+      mutationLeases.beginDaemonShutdown();
       if (server) {
         try {
           await server.close();
@@ -77,16 +93,23 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
         }
         server = null;
       }
+      let transportQuiesced = false;
       try {
         await router.stop();
+        transportQuiesced = true;
       } catch (e) {
         errors.push(e);
       }
-      try {
-        opts.transport.close();
-      } catch (e) {
-        errors.push(e);
+      if (transportQuiesced) {
+        try {
+          await mutationLeases.close();
+        } catch (e) {
+          errors.push(e);
+        }
       }
+      // Otherwise fail closed: an unverified physical transport close may
+      // still flush old frames. Preserve the ticket/fence until process death
+      // makes it stale-reclaimable instead of admitting a replacement daemon.
       resolveDone();
       if (errors.length > 0) {
         throw new AggregateError(errors, 'agent cleanup failed');
@@ -101,7 +124,15 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
     idleDeadline = Date.now() + opts.idleMs;
     lastActivityAt = new Date().toISOString();
     idleTimer = setTimeout(() => {
-      void cleanup().catch(() => {});
+      // A live holder must not lose its lease halfway through a slow gateway
+      // workflow. A fenced holder is intentionally recoverable via explicit
+      // logout, so idle expiry stops its transport while preserving the
+      // durable fence for that recovery path.
+      if (mutationLeases.status().active && !mutationLeases.status().fenced) {
+        resetIdle();
+      } else {
+        void cleanup().catch(() => {});
+      }
     }, opts.idleMs);
   };
 
@@ -109,7 +140,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
     router.start();
     server = await (opts.createServer ?? createIpcServer)({
       path: opts.socketPath,
-      handler: async ({ method, params, timeoutMs, kind }) => {
+      mutationLeases,
+      closeMutationLeases: false,
+      onShutdown: () => {
+        void cleanup().catch(() => {});
+      },
+      handler: async ({ method, params, timeoutMs, kind }, context) => {
         const isMeta = method.startsWith('$');
         // Only renew the idle window on real gateway traffic. Cheap meta probes
         // (status, health checks) must not keep the daemon alive indefinitely.
@@ -120,9 +156,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
             host: opts.host,
             agentStartedAt: opts.meta?.agentStartedAt ?? null,
             agentVersion: opts.meta?.agentVersion ?? null,
+            shutdownViaIpc: true,
             idleMs: opts.idleMs,
             idleMsRemaining: Math.max(0, idleDeadline - Date.now()),
             lastActivityAt,
+            mutationLease: mutationLeases.status(),
           };
         }
         // Forward to the gateway honouring the caller's deadline (so `--timeout`
@@ -130,16 +168,23 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
         // by call kind: a write that times out *after* being sent is "not
         // confirmed" (state may or may not have applied), not a plain network
         // failure. That distinction survives the IPC boundary via reviveError.
-        return router.request(method, params, {
-          ...(timeoutMs !== undefined && { timeoutMs }),
-          onTimeout: (ms) =>
-            kind === 'write'
-              ? new NotConfirmedError(
-                  `gateway call ${method} was not confirmed within ${ms}ms (the write may or may not have applied)`,
-                  { method },
-                )
-              : new NetworkError(`gateway call ${method} timed out after ${ms}ms`),
-        });
+        try {
+          return await router.request(method, params, {
+            ...(timeoutMs !== undefined && { timeoutMs }),
+            onTimeout: (ms) =>
+              kind === 'write'
+                ? new NotConfirmedError(
+                    `gateway call ${method} was not confirmed within ${ms}ms (the write may or may not have applied)`,
+                    { method },
+                  )
+                : new NetworkError(`gateway call ${method} timed out after ${ms}ms`),
+          });
+        } catch (error) {
+          if (error instanceof NotConfirmedError) {
+            context?.fenceMutation(`gateway write ${method} was not confirmed`);
+          }
+          throw error;
+        }
       },
     });
 

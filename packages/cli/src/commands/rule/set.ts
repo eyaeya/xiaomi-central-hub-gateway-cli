@@ -14,6 +14,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -68,23 +69,26 @@ export function attachSet(cmd: Command): void {
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
-        const snapshotPath = !guard.snapshotEnabled
-          ? null
-          : await dumpBeforeWrite({
-              baseUrl: deps.baseUrl,
-              store: deps.store,
-              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-              ...(snapshotsDir !== undefined && { snapshotsDir }),
-            });
-        // W-B (2026-05-29 save-flow parity): read-merge-write. Preserve the
-        // live rule's enable/uiType/userData (bumping lastUpdateTime) so a
-        // hand-edited / stale body can't silently disable a rule or roll its
-        // timestamp backward — mirroring the UI save() flow. --allow-cfg-overwrite
-        // opts into writing the body's cfg verbatim.
-        const result = await upsertGraph(body, deps, {
-          validate: opts.validate !== false,
-          ...(opts.allowCfgOverwrite === true && { allowCfgOverwrite: true }),
-          ...(opts.expectAbsent === true && { expectAbsent: true }),
+        const { snapshotPath, result } = await runMutationWorkflow('rule.set', deps, async () => {
+          const snapshotPath = !guard.snapshotEnabled
+            ? null
+            : await dumpBeforeWrite({
+                baseUrl: deps.baseUrl,
+                store: deps.store,
+                ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+                ...(snapshotsDir !== undefined && { snapshotsDir }),
+              });
+          // W-B (2026-05-29 save-flow parity): read-merge-write. Preserve the
+          // live rule's enable/uiType/userData (bumping lastUpdateTime) so a
+          // hand-edited / stale body cannot silently disable a rule or roll its
+          // timestamp backward — mirroring the UI save() flow. --allow-cfg-overwrite
+          // opts into writing the body's cfg verbatim.
+          const result = await upsertGraph(body, deps, {
+            validate: opts.validate !== false,
+            ...(opts.allowCfgOverwrite === true && { allowCfgOverwrite: true }),
+            ...(opts.expectAbsent === true && { expectAbsent: true }),
+          });
+          return { snapshotPath, result };
         });
         if (result.cfgEnableIgnored) {
           process.stderr.write(

@@ -165,6 +165,12 @@ export async function connectWs(opts: ConnectWsOptions): Promise<BinaryTransport
   let rejectNext: ((e: unknown) => void) | null = null;
   let receiveError: NetworkError | null = null;
   let cancelKeepalive: (() => void) | null = null;
+  let resolvePhysicalClose!: () => void;
+  let rejectPhysicalClose!: (error: Error) => void;
+  const physicalClose = new Promise<void>((resolve, reject) => {
+    resolvePhysicalClose = resolve;
+    rejectPhysicalClose = reject;
+  });
 
   const failTransport = (err: NetworkError, terminate = false): void => {
     if (receiveError) return;
@@ -265,6 +271,7 @@ export async function connectWs(opts: ConnectWsOptions): Promise<BinaryTransport
 
   ws.on('close', () => {
     failTransport(new NetworkError('ws closed by peer'));
+    resolvePhysicalClose();
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -328,7 +335,9 @@ export async function connectWs(opts: ConnectWsOptions): Promise<BinaryTransport
 
   return {
     send(frame: Buffer): void {
-      if (ws.readyState !== WebSocket.OPEN) throw new NetworkError('ws not open');
+      if (receiveError || ws.readyState !== WebSocket.OPEN) {
+        throw new NetworkError('ws not open');
+      }
       ws.send(frame, { binary: true });
     },
     receive(): Promise<Buffer> {
@@ -343,13 +352,24 @@ export async function connectWs(opts: ConnectWsOptions): Promise<BinaryTransport
         rejectNext = reject;
       });
     },
-    close(): void {
+    close(): Promise<void> {
       failTransport(new NetworkError('ws closed by client'));
-      try {
-        ws.close();
-      } catch {
-        // already closing/closed — nothing to do
+      if (ws.readyState === WebSocket.CLOSED) {
+        resolvePhysicalClose();
+      } else {
+        try {
+          // Shutdown must discard Sender-queued frames, not gracefully flush
+          // them after the cross-daemon mutation ticket is released.
+          ws.terminate();
+        } catch (error) {
+          rejectPhysicalClose(
+            new NetworkError(
+              `ws physical close failed: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+          );
+        }
       }
+      return physicalClose;
     },
   };
 }

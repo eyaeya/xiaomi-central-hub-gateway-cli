@@ -90,6 +90,8 @@ function createGateway(id = '123') {
     ipcClient: () => ({
       request: async (method, params, options) => {
         if (method === '$ping') return { host: baseUrl, agentStartedAt: startedAt };
+        if (method === '$mutation.acquire') return { leaseId: 'test-lease' };
+        if (method === '$mutation.release' || method === '$mutation.fence') return { ok: true };
         calls.push({ method, params, options });
         if (method === '/api/getDevList') return { devList: { [did]: device } };
         if (method === '/api/getGraphList') return [structuredClone(state.summary)];

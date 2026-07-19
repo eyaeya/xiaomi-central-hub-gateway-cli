@@ -17,9 +17,11 @@ import {
   BackupTargetInput,
   BackupTargetRequest,
 } from '../schemas/backup.js';
-import { NotConfirmedError, parseOrThrow } from '../transport/errors.js';
+import { notConfirmedAfterAcknowledgement } from '../transport/confirmation.js';
+import { ConfigError, NotConfirmedError, parseOrThrow } from '../transport/errors.js';
 import { agentCall } from '../usecases/agent-call.js';
 import type { ResourceDeps } from './index.js';
+import { withResourceMutationWorkflow } from './mutation-workflow.js';
 
 type CallKind = 'read' | 'write';
 
@@ -59,7 +61,7 @@ export async function listBackups(from: string, deps: ResourceDeps): Promise<Bac
   return normalizeList(parseOrThrow(BackupListResponse, raw, 'BackupListResponse'));
 }
 
-export async function createBackup(
+async function createBackupWithinWorkflow(
   input: BackupCreateInput,
   deps: ResourceDeps,
 ): Promise<BackupOperationResponse> {
@@ -73,7 +75,17 @@ export async function createBackup(
   return parseOrThrow(BackupOperationResponse, raw, 'BackupCreateResponse');
 }
 
-export async function downloadBackup(
+export async function createBackup(
+  input: BackupCreateInput,
+  deps: ResourceDeps,
+): Promise<BackupOperationResponse> {
+  parseOrThrow(BackupCreateInput, input, 'BackupCreateInput');
+  return withResourceMutationWorkflow(deps, 'backup.create', () =>
+    createBackupWithinWorkflow(input, deps),
+  );
+}
+
+async function downloadBackupWithinWorkflow(
   input: BackupTargetInput,
   deps: ResourceDeps,
 ): Promise<BackupOperationResponse> {
@@ -84,6 +96,16 @@ export async function downloadBackup(
     'write',
   );
   return parseOrThrow(BackupOperationResponse, raw, 'BackupDownloadResponse');
+}
+
+export async function downloadBackup(
+  input: BackupTargetInput,
+  deps: ResourceDeps,
+): Promise<BackupOperationResponse> {
+  targetRequest(input, 'BackupDownload');
+  return withResourceMutationWorkflow(deps, 'backup.download', () =>
+    downloadBackupWithinWorkflow(input, deps),
+  );
 }
 
 // generateBackup is a state-coupled READ — see schemas/backup.ts comment.
@@ -97,20 +119,111 @@ export async function generateBackup(
   return parseOrThrow(BackupContent, raw, 'BackupGenerateResponse');
 }
 
-export async function loadBackup(
+async function loadBackupWithinWorkflow(
   input: BackupTargetInput,
   deps: ResourceDeps,
-): Promise<BackupOperationResponse> {
+  opts: LoadBackupOptions,
+): Promise<BackupLoadCompletion> {
   const raw = await callBackup(
     deps,
     '/api/loadBackup',
     targetRequest(input, 'BackupLoad'),
     'write',
   );
-  return parseOrThrow(BackupOperationResponse, raw, 'BackupLoadResponse');
+  let result: BackupOperationResponse;
+  try {
+    result = parseOrThrow(BackupOperationResponse, raw, 'BackupLoadResponse');
+  } catch (error) {
+    throw notConfirmedAfterAcknowledgement(
+      error,
+      'backup load was acknowledged but its response could not be interpreted; restore completion is not confirmed',
+      {
+        operation: 'backup.load',
+        phase: 'ack-parse',
+        from: input.from,
+        hint: 'log out, log in again, and inspect live state before retrying or making any later mutation',
+      },
+    );
+  }
+  const progressId = extractBackupProgressId(result);
+  if (progressId === null) {
+    throw new NotConfirmedError(
+      'backup load was accepted without a progress_id; restore completion is not confirmed',
+      {
+        operation: 'backup.load',
+        from: input.from,
+        hint: 'log out, log in again, and inspect live state before any later mutation',
+      },
+    );
+  }
+  let progress: BackupProgressResponse;
+  try {
+    progress = await waitForBackupProgress(
+      { from: input.from, progressId, operation: 'backup.load' },
+      deps,
+      {
+        ...(opts.pollIntervalMs !== undefined && { pollIntervalMs: opts.pollIntervalMs }),
+        ...(opts.pollTimeoutMs !== undefined && { pollTimeoutMs: opts.pollTimeoutMs }),
+      },
+    );
+  } catch (error) {
+    throw notConfirmedAfterAcknowledgement(
+      error,
+      'backup load was acknowledged but terminal restore progress could not be confirmed',
+      {
+        operation: 'backup.load',
+        phase: 'progress-confirmation',
+        from: input.from,
+        progressId,
+        hint: 'log out, log in again, and inspect live state before retrying or making any later mutation',
+      },
+    );
+  }
+  return { result, progress };
 }
 
-export async function deleteBackup(
+/**
+ * Restore a backup and keep the mutation workflow leased until the gateway
+ * reports terminal progress. The initial response is only an acknowledgement;
+ * releasing after it would let a later mutation race an unfinished restore.
+ */
+export interface BackupLoadCompletion {
+  result: BackupOperationResponse;
+  progress: BackupProgressResponse;
+}
+
+export function loadBackup(
+  input: BackupTargetInput,
+  deps: ResourceDeps,
+  opts: LoadBackupOptions & { includeProgress: true },
+): Promise<BackupLoadCompletion>;
+export function loadBackup(
+  input: BackupTargetInput,
+  deps: ResourceDeps,
+  opts?: LoadBackupOptions & { includeProgress?: false },
+): Promise<BackupOperationResponse>;
+export function loadBackup(
+  input: BackupTargetInput,
+  deps: ResourceDeps,
+  opts: LoadBackupOptions,
+): Promise<BackupOperationResponse | BackupLoadCompletion>;
+export async function loadBackup(
+  input: BackupTargetInput,
+  deps: ResourceDeps,
+  opts: LoadBackupOptions = {},
+): Promise<BackupOperationResponse | BackupLoadCompletion> {
+  targetRequest(input, 'BackupLoad');
+  assertBackupPollOptions(opts);
+  const completion = await withResourceMutationWorkflow(deps, 'backup.load', () =>
+    loadBackupWithinWorkflow(input, deps, {
+      ...(opts.pollIntervalMs !== undefined && { pollIntervalMs: opts.pollIntervalMs }),
+      ...(opts.pollTimeoutMs !== undefined && { pollTimeoutMs: opts.pollTimeoutMs }),
+    }),
+  );
+  return opts.includeProgress === true ? completion : completion.result;
+}
+
+async function deleteBackupWithinWorkflow(
   input: BackupTargetInput,
   deps: ResourceDeps,
 ): Promise<BackupOperationResponse> {
@@ -121,6 +234,16 @@ export async function deleteBackup(
     'write',
   );
   return parseOrThrow(BackupOperationResponse, raw, 'BackupDeleteResponse');
+}
+
+export async function deleteBackup(
+  input: BackupTargetInput,
+  deps: ResourceDeps,
+): Promise<BackupOperationResponse> {
+  targetRequest(input, 'BackupDelete');
+  return withResourceMutationWorkflow(deps, 'backup.delete', () =>
+    deleteBackupWithinWorkflow(input, deps),
+  );
 }
 
 export async function getBackupProgress(
@@ -141,13 +264,24 @@ export async function getBackupProgress(
 // returns a bare number, `{progress_id}`, or `{progressId}`; `{}` / null mean
 // "no async progress to track"). Returns null when there is nothing pollable.
 export function extractBackupProgressId(resp: unknown): number | null {
-  if (typeof resp === 'number' && Number.isFinite(resp)) return resp;
+  if (isBackupProgressId(resp)) return resp;
   if (resp !== null && typeof resp === 'object') {
     const r = resp as Record<string, unknown>;
-    if (typeof r.progress_id === 'number') return r.progress_id;
-    if (typeof r.progressId === 'number') return r.progressId;
+    if (isBackupProgressId(r.progress_id)) return r.progress_id;
+    if (isBackupProgressId(r.progressId)) return r.progressId;
   }
   return null;
+}
+
+function isBackupProgressId(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+export interface LoadBackupOptions {
+  pollIntervalMs?: number;
+  pollTimeoutMs?: number;
+  /** Return the real terminal progress together with the preserved gateway acknowledgement. */
+  includeProgress?: boolean;
 }
 
 export interface WaitForBackupOptions {
@@ -155,6 +289,26 @@ export interface WaitForBackupOptions {
   pollTimeoutMs?: number;
   /** Test seam — inject a getBackupProgress stub. */
   _getBackupProgress?: typeof getBackupProgress;
+}
+
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** Internal shared guard for every loop that may hold a mutation lease. */
+export function assertBackupPollOptions(opts: LoadBackupOptions): void {
+  for (const [name, value] of [
+    ['pollIntervalMs', opts.pollIntervalMs],
+    ['pollTimeoutMs', opts.pollTimeoutMs],
+  ] as const) {
+    if (
+      value !== undefined &&
+      (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMER_MS)
+    ) {
+      throw new ConfigError(`${name} must be a positive integer <= ${MAX_TIMER_MS}`, {
+        option: name,
+        value,
+      });
+    }
+  }
 }
 
 // Poll getBackupProgress until it reaches 100, used by the backup command's
@@ -166,7 +320,10 @@ export async function waitForBackupProgress(
   deps: ResourceDeps,
   opts: WaitForBackupOptions = {},
 ): Promise<BackupProgressResponse> {
-  if (input.progressId === 0) return { progress: 100 };
+  assertBackupPollOptions(opts);
+  if (input.progressId === 0) {
+    return { progress: 100 };
+  }
   const poll = opts._getBackupProgress ?? getBackupProgress;
   const pollIntervalMs = opts.pollIntervalMs ?? 1000;
   const pollTimeoutMs = opts.pollTimeoutMs ?? 60_000;
@@ -199,7 +356,7 @@ export async function getBackupConfig(
   return parseOrThrow(BackupConfigResponse, raw, 'BackupConfigResponse');
 }
 
-export async function setBackupConfig(
+async function setBackupConfigWithinWorkflow(
   input: BackupSetConfigInput,
   deps: ResourceDeps,
 ): Promise<BackupOperationResponse> {
@@ -217,4 +374,14 @@ export async function setBackupConfig(
   );
   const raw = await callBackup(deps, '/api/setBackupConfig', params, 'write');
   return parseOrThrow(BackupOperationResponse, raw, 'BackupSetConfigResponse');
+}
+
+export async function setBackupConfig(
+  input: BackupSetConfigInput,
+  deps: ResourceDeps,
+): Promise<BackupOperationResponse> {
+  parseOrThrow(BackupSetConfigInput, input, 'BackupSetConfigInput');
+  return withResourceMutationWorkflow(deps, 'backup.config.set', () =>
+    setBackupConfigWithinWorkflow(input, deps),
+  );
 }

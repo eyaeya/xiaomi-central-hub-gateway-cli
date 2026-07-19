@@ -81,6 +81,8 @@ function statefulGateway(id = 'rule1') {
       ipcClient: () => ({
         request: async (method, params) => {
           if (method === '$ping') return { host: baseUrl, agentStartedAt };
+          if (method === '$mutation.acquire') return { leaseId: 'test-lease' };
+          if (method === '$mutation.release' || method === '$mutation.fence') return { ok: true };
           calls.push({ method, params });
           if (method === '/api/getGraphList') return [structuredClone(state.summary)];
           if (method === '/api/getGraph') {

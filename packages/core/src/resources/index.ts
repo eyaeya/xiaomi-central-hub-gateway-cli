@@ -31,6 +31,8 @@ export {
   setBackupConfig,
   waitForBackupProgress,
 } from './backup.js';
+export type { LoadBackupOptions, WaitForBackupOptions } from './backup.js';
+export type { BackupLoadCompletion } from './backup.js';
 export type {
   BackupConfigResponse,
   BackupCreateInput,

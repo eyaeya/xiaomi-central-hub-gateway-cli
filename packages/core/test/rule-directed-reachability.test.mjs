@@ -298,6 +298,8 @@ function fakeDeps(respond) {
           if (method === '$ping') {
             return { host: fakeBaseUrl, agentStartedAt: fakeAgentStartedAt };
           }
+          if (method === '$mutation.acquire') return { leaseId: 'test-lease' };
+          if (method === '$mutation.release' || method === '$mutation.fence') return { ok: true };
           calls.push({ method, params, options });
           return respond(method, params);
         },

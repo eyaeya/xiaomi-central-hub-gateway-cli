@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  ConfigError,
+  NotConfirmedError,
   SchemaError,
   createBackup,
   downloadBackup,
   extractBackupProgressId,
   loadBackup,
+  waitForBackupProgress,
 } from '../dist/index.js';
 import { BackupOperationResponse } from '../dist/schemas/backup.js';
 
@@ -44,7 +47,14 @@ const malformedObjects = [
   { name: 'unnamed progress object', value: { progress: 50 } },
 ];
 
-const operations = [
+const unconfirmableProgressHandles = [
+  { name: 'negative bare progress id', value: -1 },
+  { name: 'fractional bare progress id', value: 1.5 },
+  { name: 'negative snake-case progress id', value: { progress_id: -1 } },
+  { name: 'fractional camel-case progress id', value: { progressId: 1.5 } },
+];
+
+const ackOperations = [
   {
     name: 'createBackup',
     responseLabel: 'BackupCreateResponse',
@@ -55,12 +65,14 @@ const operations = [
     responseLabel: 'BackupDownloadResponse',
     invoke: (deps) => downloadBackup({ from: 'fds', backup }, deps),
   },
-  {
-    name: 'loadBackup',
-    responseLabel: 'BackupLoadResponse',
-    invoke: (deps) => loadBackup({ from: 'fds', backup }, deps),
-  },
 ];
+
+const loadOperation = {
+  name: 'loadBackup',
+  responseLabel: 'BackupLoadResponse',
+  invoke: (deps) =>
+    loadBackup({ from: 'fds', backup }, deps, { pollIntervalMs: 1, pollTimeoutMs: 100 }),
+};
 
 function depsReturning(response) {
   const session = {
@@ -74,6 +86,9 @@ function depsReturning(response) {
   const client = {
     request: async (method) => {
       if (method === '$ping') return { host: baseUrl, agentStartedAt };
+      if (method === '$mutation.acquire') return { leaseId: 'test-lease' };
+      if (method === '$mutation.release' || method === '$mutation.fence') return { ok: true };
+      if (method === '/api/getBackupProgress') return { progress: 100 };
       return response;
     },
     close: () => {},
@@ -100,8 +115,16 @@ test('BackupOperationResponse rejects malformed and unknown nonempty objects', (
   }
 });
 
+test('invalid numeric progress handles are parseable acknowledgements but not pollable ids', () => {
+  for (const variant of unconfirmableProgressHandles) {
+    const parsed = BackupOperationResponse.safeParse(variant.value);
+    assert.equal(parsed.success, true, variant.name);
+    assert.equal(extractBackupProgressId(parsed.data), null, variant.name);
+  }
+});
+
 test('backup operation usecases preserve every documented response variant', async () => {
-  for (const operation of operations) {
+  for (const operation of ackOperations) {
     for (const variant of validVariants) {
       const result = await operation.invoke(depsReturning(variant.value));
       assert.deepEqual(result, variant.value, `${operation.name}: ${variant.name}`);
@@ -109,8 +132,24 @@ test('backup operation usecases preserve every documented response variant', asy
   }
 });
 
-test('backup operation usecases reject malformed progress before wait handling', async () => {
-  for (const operation of operations) {
+test('loadBackup preserves progress responses only after terminal confirmation', async () => {
+  for (const variant of validVariants.filter((entry) => entry.progressId !== null)) {
+    const result = await loadOperation.invoke(depsReturning(variant.value));
+    assert.deepEqual(result, variant.value, variant.name);
+  }
+});
+
+test('loadBackup fences acknowledgement variants without a progress handle', async () => {
+  for (const variant of [
+    ...validVariants.filter((entry) => entry.progressId === null),
+    ...unconfirmableProgressHandles,
+  ]) {
+    await assert.rejects(loadOperation.invoke(depsReturning(variant.value)), NotConfirmedError);
+  }
+});
+
+test('backup create/download reject malformed progress before wait handling', async () => {
+  for (const operation of ackOperations) {
     for (const variant of malformedObjects) {
       await assert.rejects(
         operation.invoke(depsReturning(variant.value)),
@@ -121,4 +160,39 @@ test('backup operation usecases reject malformed progress before wait handling',
       );
     }
   }
+});
+
+test('loadBackup classifies malformed acknowledged responses as NOT_CONFIRMED', async () => {
+  for (const variant of malformedObjects) {
+    await assert.rejects(
+      loadOperation.invoke(depsReturning(variant.value)),
+      (error) =>
+        error instanceof NotConfirmedError &&
+        error.details?.phase === 'ack-parse' &&
+        error.details?.causeCode === 'SCHEMA' &&
+        error.details?.causeMessage === `${loadOperation.responseLabel} parse failed`,
+      variant.name,
+    );
+  }
+});
+
+test('waitForBackupProgress rejects unsafe timer values before polling', async () => {
+  let polls = 0;
+  for (const value of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+    await assert.rejects(
+      waitForBackupProgress(
+        { from: 'fds', progressId: 7 },
+        { baseUrl, store: {} },
+        {
+          pollIntervalMs: value,
+          _getBackupProgress: async () => {
+            polls += 1;
+            return { progress: 100 };
+          },
+        },
+      ),
+      ConfigError,
+    );
+  }
+  assert.equal(polls, 0);
 });

@@ -17,7 +17,8 @@ export interface BinaryTransport {
   send(frame: Buffer): void;
   /** Resolves with the next frame received. Rejects if the transport is closed while waiting. */
   receive(): Promise<Buffer>;
-  close(): void;
+  /** Resolves only when the underlying transport is physically quiescent. */
+  close(): void | Promise<void>;
 }
 
 class PipeTransport implements BinaryTransport {
@@ -61,7 +62,7 @@ class PipeTransport implements BinaryTransport {
     });
   }
 
-  close(): void {
+  async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     if (this.rejectNext) {
@@ -74,7 +75,7 @@ class PipeTransport implements BinaryTransport {
     // this, a peer awaiting receive() would hang forever once the writer side
     // is dead.
     if (this.peer && !this.peer.closed) {
-      this.peer.close();
+      void this.peer.close();
     }
   }
 }
@@ -124,7 +125,7 @@ export class StubGatewayServer {
 
   async stop(): Promise<void> {
     this.running = false;
-    this.opts.transport.close();
+    await this.opts.transport.close();
     try {
       await this.done;
     } catch {
