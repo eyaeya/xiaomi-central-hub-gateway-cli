@@ -35,6 +35,9 @@ const propertyBase = {
   did: z.string(),
   siid: z.number().int(),
   piid: z.number().int(),
+  // Legacy gateway graphs may omit this field. Typed authoring canonicalises
+  // omission to the official new-card default (`false`) while preserving both
+  // explicit boolean values on read/export.
   preload: z.boolean().optional(),
 };
 

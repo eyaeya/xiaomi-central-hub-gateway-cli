@@ -213,6 +213,66 @@ test('property comparison flag misuse fails before Agent guards, snapshots, or I
   }
 });
 
+test('preload flag misuse fails before Agent guards, snapshots, or IPC', async (t) => {
+  const agent = await startFakeAgent(t);
+  const scenarios = [
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'deviceInput',
+      '--device-did',
+      'd',
+      '--device-event',
+      'changed',
+      '--preload',
+    ],
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'deviceInputSetVar',
+      '--device-did',
+      'd',
+      '--device-event',
+      'changed',
+      '--event-arg-var',
+      '1=global.captured',
+      '--no-preload',
+    ],
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'deviceGet',
+      '--device-did',
+      'd',
+      '--device-property',
+      'level',
+      '--preload',
+    ],
+    ['rule', 'node', 'add', '--rule-id', 'r', '--type', 'varGet', '--no-preload'],
+    ['rule', 'node', 'add', '--rule-id', 'r', '--type', 'onLoad', '--preload'],
+    ['rule', 'node', 'add', '--rule-id', 'r', '--type', 'varChange', '--cfg', '{}', '--no-preload'],
+  ];
+
+  for (const args of scenarios) {
+    agent.frames.length = 0;
+    const payload = assertSingleConfig(await runCli(args, agent));
+    assert.match(payload.error.message, /preload/);
+    assert.deepEqual(agent.frames, []);
+  }
+});
+
 test('exprHeight position rejects unsupported card types before Agent guards or IPC', async (t) => {
   const agent = await startFakeAgent(t);
   const result = await runCli(

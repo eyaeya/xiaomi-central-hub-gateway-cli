@@ -35,6 +35,8 @@ const DeviceInputSetVarPropertyProps = z
     dtype: SetVarDtype,
     scope: z.string(),
     id: z.string(),
+    // Optional for legacy graph compatibility; typed authoring emits an
+    // explicit boolean and defaults to the official UI value (`false`).
     preload: z.boolean().optional(),
   })
   .strict();

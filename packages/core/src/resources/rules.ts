@@ -741,6 +741,12 @@ export interface AddNodeShortcut {
   // deviceInput shortcuts. The validator otherwise refuses thresholds
   // outside the spec range to save a round-trip + dead rule.
   forceOutOfRange?: boolean;
+  // Official UI "规则启用时查询一次" switch. It is supported only by
+  // deviceInput property mode, deviceInputSetVar property mode, and
+  // varChange. Omission follows the official new-card default (`false`);
+  // callers that relied on xgg's historical eager deviceInput default must
+  // now pass `preload: true` explicitly.
+  preload?: boolean;
   // ---- non-device-side fields (M10 F17) ----
   // logicAnd / logicOr: number of inputs (default 2 → input0..inputN-1).
   inputs?: number;
@@ -880,12 +886,29 @@ function simplifiedCfgFromShortcut(shortcut: AddNodeShortcut): { simplified?: bo
   return shortcut.simplified === undefined ? {} : { simplified: shortcut.simplified };
 }
 
+function assertShortcutPreloadUsage(shortcut: AddNodeShortcut): void {
+  if (shortcut.preload === undefined) return;
+  if (shortcut.type === 'varChange') return;
+  if (
+    (shortcut.type === 'deviceInput' || shortcut.type === 'deviceInputSetVar') &&
+    shortcut.deviceProperty !== undefined &&
+    shortcut.deviceEvent === undefined
+  ) {
+    return;
+  }
+  throw new ConfigError(
+    'preload only applies to deviceInput/deviceInputSetVar property-mode shortcuts and varChange',
+    { type: shortcut.type },
+  );
+}
+
 function preflightAddNode(input: AddNodeInput): void {
   let localNode: unknown;
   if (input.shortcut !== undefined) {
     assertShortcutVariableIdentifiers(input.shortcut);
     assertShortcutPositionUsage(input.shortcut);
     assertShortcutSimplified(input.shortcut);
+    assertShortcutPreloadUsage(input.shortcut);
     if (
       input.shortcut.propertyValue !== undefined &&
       !(
@@ -1005,6 +1028,7 @@ async function addNodeWithinWorkflow(
     assertShortcutVariableIdentifiers(input.shortcut);
     assertShortcutPositionUsage(input.shortcut);
     assertShortcutSimplified(input.shortcut);
+    assertShortcutPreloadUsage(input.shortcut);
     if (
       input.shortcut.propertyValue !== undefined &&
       !(
@@ -1711,7 +1735,6 @@ function synthesizePropertyComparison(
       dtype,
       operator,
       v1: shortcut.propertyValue,
-      preload: true,
     };
   }
 
@@ -1789,7 +1812,6 @@ function synthesizePropertyComparison(
         ? [thresholdValue]
         : thresholdValue,
     ...(isBetween && { v2: shortcut.threshold2 }),
-    preload: true,
   };
 }
 
@@ -1873,6 +1895,7 @@ function synthesizeNodeFromShortcut(
       siid: service.iid,
       piid: property.iid,
       ...synthesizePropertyComparison(shortcut, property, shortcut.deviceProperty, spec.type),
+      preload: shortcut.preload ?? false,
     };
     return {
       id,
@@ -2238,6 +2261,9 @@ function synthesizeNodeFromShortcut(
         dtype: mapFormatToSetVarDtype(property.format),
         scope: shortcut.varScope,
         id: shortcut.varId,
+        ...(shortcut.type === 'deviceInputSetVar' && {
+          preload: shortcut.preload ?? false,
+        }),
       },
     };
     return shortcut.type === 'deviceInputSetVar'
@@ -2494,7 +2520,7 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
       }
       const v1 = varComparisonV1FromShortcut(shortcut, 'varChange');
       const props: Record<string, unknown> = {
-        preload: false,
+        preload: shortcut.preload ?? false,
         id: shortcut.varId,
         scope: shortcut.varScope,
         varType: shortcut.varType,

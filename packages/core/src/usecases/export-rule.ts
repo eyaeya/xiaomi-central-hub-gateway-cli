@@ -538,6 +538,11 @@ function appendDeviceSiidFlag(flags: ExportFlag[], rawSiid: unknown): void {
   }
 }
 
+function appendPreloadFlag(flags: ExportFlag[], rawPreload: unknown): void {
+  if (rawPreload === true) flags.push({ name: '--preload' });
+  else if (rawPreload === false) flags.push({ name: '--no-preload' });
+}
+
 function appendPropertyComparisonFlags(
   flags: ExportFlag[],
   props: Record<string, unknown>,
@@ -662,6 +667,7 @@ async function renderDeviceInput(
     } else {
       appendPropertyComparisonFlags(flags, props, projectedDtype, 'deviceInput', n.id, warnings);
     }
+    appendPreloadFlag(flags, props.preload);
   } else {
     warnings.push(
       `deviceInput node ${n.id}: neither piid nor eiid in props; cannot infer trigger kind`,
@@ -822,6 +828,7 @@ async function renderDeviceSetVar(
 
   if (typeof props.scope === 'string') flags.push({ name: '--var-scope', value: props.scope });
   if (typeof props.id === 'string') flags.push({ name: '--var-id', value: props.id });
+  if (n.type === 'deviceInputSetVar') appendPreloadFlag(flags, props.preload);
 
   return {
     kind: 'node-add',
@@ -1087,6 +1094,7 @@ function renderVarChange(n: {
   if (typeof props.v1 === 'number') flags.push({ name: '--threshold', value: String(props.v1) });
   else if (typeof props.v1 === 'string') flags.push({ name: '--var-value', value: props.v1 });
   if (typeof props.v2 === 'number') flags.push({ name: '--threshold2', value: String(props.v2) });
+  appendPreloadFlag(flags, props.preload);
   return { kind: 'node-add', nodeId: n.id, type: 'varChange', flags, comment: 'varChange' };
 }
 
