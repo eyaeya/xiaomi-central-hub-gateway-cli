@@ -308,6 +308,8 @@ xgg rule device replace --rule-id <rule-id> --node-id <node-id> \
 
 替换支持五类设备卡（`deviceInput` / `deviceGet` / `deviceOutput` / `deviceInputSetVar` / `deviceGetSetVar`），会比较 URN 前五段、dtype、value-range、value-list、事件参数与动作入参。属性卡用 `--target-piid`，事件卡改用 `--target-eiid`，动作卡改用 `--target-aiid`，三者互斥；使用 selector 必须同时给 `--target-did`。目标存在多个兼容 mapping 时必须按 discovery 结果消歧。`replace` 默认 dry-run，只有完全相同的 selector 计划确认后才加 `--apply`；写路径在同一 mutation lease 内强制快照、fresh spec/graph 复核、严格校验和写后 readback。网关没有 CAS，应用期间不要同时编辑网页画布。
 
+默认 replacement discovery 会排除 ghost device。若显式用 `--target-did` 聚焦 ghost 做诊断，候选会返回 `eligible:false` 及原因，但不会生成 `planId`，因此不可应用。`--apply` 还会在快照后重新读取设备清单；即使目标在 dry-run 时可用、应用前变成 ghost，也会在 `setGraph` 前硬拒绝。
+
 ### 验证证据分级
 
 - **离线确定性检查：** CLI `--help`、schema、unit/integration test、`rule validate --body/--stdin` 和 bundle 对照，证明命令形状、序列化与静态约束。
@@ -401,7 +403,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 
 - 在已审计的极客版网页 bundle 控制路径中，规则、变量、设备与备份操作走加密 WebSocket 二进制协议承载的 RPC；`xgg` 复用了这条路径，登录使用米家 App 提供的 6 位码。这不是对所有固件、服务或未来版本“绝不存在 HTTP API”的证明。
 - 已打开的网关网页不会自动看到 CLI 写入的规则、变量或 scope。CLI 写入后请刷新网页，再判断 UI 是否同步。
-- `xgg device list` 默认排除 ghost device。不要把网页标为“设备已丢失”的设备作为 `deviceOutput` 目标。
+- `xgg device list` 与默认 replacement discovery 都排除 ghost device。显式聚焦 ghost 的替换 dry-run 仅返回 `eligible:false` 诊断结果且没有 `planId`；不要把网页标为“设备已丢失”的设备作为规则目标。
 - 变量类型只有 `number` 和 `string`。开关状态建议用数字 `1/0` 或字符串表示。
 - 变量命令的 `--value` 按变量类型处理：`number` 使用数值转换；`string` 原样保存收到的 argv 文本。`--value Seed` 保存 `Seed`，而 `--value '"Seed"'` 会把双引号也作为数据保存；不要为字符串额外添加 JSON 引号。
 - `variable get-config` 读取单个变量的配置；`set-config` 只更新显示名，不改类型或当前值，并按其他写命令一样执行 snapshot guard。

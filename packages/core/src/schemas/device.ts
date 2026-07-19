@@ -21,6 +21,16 @@ export const Device = z
   .passthrough();
 export type Device = z.infer<typeof Device>;
 
+export type DeviceEligibilityFields = Pick<Device, 'online' | 'specV2Access' | 'specV3Access'>;
+
+/**
+ * The web UI hides this inventory bucket and autoLocal cannot route to it.
+ * Keep the predicate in Core so read views and write-safety funnels agree.
+ */
+export function isGhostDevice(device: DeviceEligibilityFields): boolean {
+  return device.online && !device.specV2Access && !device.specV3Access;
+}
+
 export const DeviceListResponse = z.object({
   devList: z.record(Device),
 });

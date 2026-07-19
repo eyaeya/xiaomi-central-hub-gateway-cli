@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: 2026-07-20-action-input-index-domain-v4 -->
+<!-- xgg-skill-content-build: 2026-07-20-action-input-index-domain-v4-replacement-ghost-eligibility-v1 -->
 
 # xgg 自动化编写 Skill
 
@@ -367,6 +367,8 @@ xgg rule device replace --rule-id <rid> --node-id <nid> \
 
 `--target-piid` / `--target-eiid` / `--target-aiid` 三选一，并与目标卡家族匹配；selectors 必须配 `--target-did`。同一目标有多个兼容 mapping 时必须按 dry-run 建议消歧。兼容性比较 URN 前五段、dtype、value-range min/max/step、value-list values、event arguments 与 action inputs。
 
+默认 replacement discovery 排除 ghost device。显式用 `--target-did` 聚焦 ghost 做清单差异诊断时，候选会明确返回 `eligible:false` 与原因，不生成可应用的 `planId`。不要尝试把该诊断结果推进写路径。
+
 只有用户确认 dry-run 后才写：
 
 ```bash
@@ -375,7 +377,7 @@ xgg rule device replace --rule-id <rid> --node-id <nid> \
   --apply --confirm-target-did <target-did> --snapshots-dir "$PWD/snapshots"
 ```
 
-写路径固定强制 rollback snapshot，在同一 mutation lease 内 fresh reload spec、复查 live graph、严格校验、`setGraph` 并 readback；不支持 `--no-snapshot`。网关没有 CAS，应用期间让用户停止编辑网页画布。不要在家庭网关上为了“验证命令”随意替换真实设备卡。
+写路径固定强制 rollback snapshot，在同一 mutation lease 内 fresh 读取设备清单、reload spec、复查 live graph、严格校验、`setGraph` 并 readback；若目标从 dry-run 到 apply 之间变成 ghost，会在 `setGraph` 前硬拒绝。不支持 `--no-snapshot`。网关没有 CAS，应用期间让用户停止编辑网页画布。不要在家庭网关上为了“验证命令”随意替换真实设备卡。
 
 ## 八、典型需求模板
 

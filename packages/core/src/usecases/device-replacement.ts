@@ -6,7 +6,7 @@ import type {
   MiotProperty,
   MiotService,
 } from '../schemas/device-spec.js';
-import type { Device } from '../schemas/device.js';
+import { type Device, isGhostDevice } from '../schemas/device.js';
 import { ConfigError } from '../transport/errors.js';
 
 export const DEVICE_REPLACEMENT_NODE_TYPES = [
@@ -96,6 +96,10 @@ export interface DeviceReplacementCandidate {
   name: string;
   model: string;
   urn: string;
+  /** False when the gateway inventory says autoLocal cannot route to this DID. */
+  eligible: boolean;
+  /** Routeability failures, kept separate from MIoT capability compatibility. */
+  eligibilityReasons: string[];
   compatible: boolean;
   evaluations: DeviceReplacementEvaluation[];
   reasons: string[];
@@ -616,23 +620,31 @@ export function evaluateDeviceReplacementCandidate(
 ): DeviceReplacementCandidate {
   const targets = capabilitiesFor(targetSpec, source.capability.kind, source.usage);
   const evaluations = targets.map((target) => evaluateCapability(source.capability, target));
-  const compatible = evaluations.some((entry) => entry.compatible);
-  const reasons =
+  const eligible = !isGhostDevice(device);
+  const capabilityCompatible = evaluations.some((entry) => entry.compatible);
+  const capabilityReasons =
     evaluations.length === 0
       ? [`target exposes no ${source.usage} ${source.capability.kind} capabilities`]
-      : compatible
+      : capabilityCompatible
         ? []
         : [
             `all ${evaluations.length} ${source.usage} ${source.capability.kind} mappings are incompatible`,
           ];
+  const eligibilityReasons = eligible
+    ? []
+    : [
+        'target is ineligible: ghost device is online without MIoT spec access and autoLocal cannot route to it',
+      ];
   return {
     did: device.did,
     name: device.name,
     model: device.model,
     urn: device.urn,
-    compatible,
+    eligible,
+    eligibilityReasons,
+    compatible: capabilityCompatible,
     evaluations,
-    reasons,
+    reasons: capabilityReasons,
   };
 }
 
@@ -640,11 +652,19 @@ export function replacementCandidateWithSpecError(
   device: Device & { did: string },
   message: string,
 ): DeviceReplacementCandidate {
+  const eligible = !isGhostDevice(device);
+  const eligibilityReasons = eligible
+    ? []
+    : [
+        'target is ineligible: ghost device is online without MIoT spec access and autoLocal cannot route to it',
+      ];
   return {
     did: device.did,
     name: device.name,
     model: device.model,
     urn: device.urn,
+    eligible,
+    eligibilityReasons,
     compatible: false,
     evaluations: [],
     reasons: [`target MIoT spec could not be checked: ${message}`],
@@ -673,6 +693,16 @@ export function selectDeviceReplacementMapping(
   candidate: DeviceReplacementCandidate,
   selector: DeviceReplacementSelector = {},
 ): DeviceReplacementEvaluation {
+  if (!candidate.eligible) {
+    throw new ConfigError(
+      `device ${candidate.did} is ineligible for replacement because it is a ghost device that autoLocal cannot route to`,
+      {
+        did: candidate.did,
+        eligible: candidate.eligible,
+        eligibilityReasons: candidate.eligibilityReasons,
+      },
+    );
+  }
   const compatible = candidate.evaluations.filter(
     (entry) => entry.compatible && selectorMatches(entry.target, selector),
   );
