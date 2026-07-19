@@ -15,6 +15,7 @@ import {
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { durationToMilliseconds, isDurationUnit } from '../schemas/nodes/duration.js';
+import { nodeSchemaForType } from '../schemas/nodes/registry.js';
 import { isValidVariableIdentifier } from '../schemas/variable-identifier.js';
 import { isValidVariableScopeName } from '../schemas/variable.js';
 import { ConfigError, NotFoundError } from '../transport/errors.js';
@@ -44,7 +45,15 @@ export type ExportedCommand =
       /** Clone replay must create this rule id, never upsert an existing target. */
       expectAbsent?: boolean;
     }
-  | { kind: 'node-add'; nodeId: string; type: string; flags: ExportFlag[]; comment: string }
+  | {
+      kind: 'node-add';
+      nodeId: string;
+      type: string;
+      flags: ExportFlag[];
+      comment: string;
+      /** The command carries an opaque full-node --cfg fallback for an unmodeled type. */
+      opaqueRaw?: boolean;
+    }
   | { kind: 'edge-add'; from: string; to: string }
   | { kind: 'rule-enable' }
   | { kind: 'warning'; message: string };
@@ -187,7 +196,12 @@ export async function exportRuleFromView(
     // round-trip. Emit a warning (and in strict mode, throw) so the
     // caller knows exactly which keys were lost.
     const n = node as { id?: unknown; type?: unknown; cfg?: unknown };
-    if (isRecord(n.cfg) && typeof n.id === 'string' && typeof n.type === 'string') {
+    if (
+      isRecord(n.cfg) &&
+      typeof n.id === 'string' &&
+      typeof n.type === 'string' &&
+      nodeSchemaForType(n.type) !== undefined
+    ) {
       const dropped = unknownCfgKeys(n.cfg);
       if (dropped.length > 0) {
         const msg = `node ${n.id} (${n.type}) carries cfg keys the exporter drops on round-trip: ${dropped.join(', ')}`;
@@ -221,8 +235,8 @@ export async function exportRuleFromView(
   // 4. Re-enable if source was enabled.
   if (view.cfg.enable) commands.push({ kind: 'rule-enable' });
 
-  // 5. Bubble up any per-node warnings (e.g. unknown node types we passed
-  //    through as raw cfg) so the CLI can stderr them.
+  // 5. Bubble up any per-node warnings (e.g. unknown node types preserved
+  //    through the opaque raw cfg fallback) so the CLI can stderr them.
   for (const w of nodeWarnings) commands.push({ kind: 'warning', message: w });
 
   const exported: ExportedRule = {
@@ -403,7 +417,7 @@ async function renderNode(
     props?: Record<string, unknown>;
     inputs?: Record<string, unknown>;
     outputs?: Record<string, unknown>;
-  };
+  } & Record<string, unknown>;
   switch (n.type) {
     case 'deviceInput':
       return renderDeviceInput(n, deps, specCache, warnings);
@@ -449,17 +463,57 @@ async function renderNode(
     case 'alarmClock':
       return renderAlarmClock(n);
     default:
-      // Unknown / not-yet-supported type — leave a warning so the user knows
-      // to hand-port that node. Returning null skips emitting any command
-      // for this node.
+      // Unknown future types are deliberately accepted by UnknownNode. Replay
+      // the complete opaque tuple through the CLI's legacy --cfg path instead
+      // of dropping the endpoint while still emitting edges that reference it.
+      // Output target arrays are emptied here because every edge is restored
+      // once, after all nodes exist, by the edge-add pass below.
       warnings.push(
-        `node "${n.id}" (type "${n.type}") has no c-shortcut equivalent yet; recreate it manually with \`xgg rule node add --type ${n.type} --cfg '<JSON>'\``,
+        `node "${n.id}" (type "${n.type}") is unmodeled; it is preserved through the opaque raw --cfg fallback and will be validated by the target gateway during replay`,
       );
-      return {
-        kind: 'warning',
-        message: `unhandled node type "${n.type}" (id ${n.id})`,
-      };
+      return renderOpaqueRawNode(n);
   }
+}
+
+function renderOpaqueRawNode(
+  n: Record<string, unknown> & {
+    id: string;
+    type: string;
+    cfg?: Record<string, unknown>;
+    inputs?: Record<string, unknown>;
+    outputs?: Record<string, unknown>;
+    props?: Record<string, unknown>;
+  },
+): ExportedCommand {
+  const { id: _id, type: _type, ...opaque } = n;
+  const rawTuple: Record<string, unknown> = {
+    ...opaque,
+    cfg: n.cfg ?? {},
+    inputs: n.inputs ?? {},
+    outputs: clearOpaqueOutputTargets(n.outputs),
+    props: n.props ?? {},
+  };
+  return {
+    kind: 'node-add',
+    nodeId: n.id,
+    type: n.type,
+    flags: [
+      { name: '--id', value: n.id },
+      { name: '--type', value: n.type },
+      { name: '--cfg', value: JSON.stringify(rawTuple), needsQuoting: true },
+    ],
+    comment: `${n.type} (opaque raw fallback; output edges restored below)`,
+    opaqueRaw: true,
+  };
+}
+
+function clearOpaqueOutputTargets(
+  outputs: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (outputs === undefined) return {};
+  return Object.fromEntries(
+    Object.entries(outputs).map(([pin, targets]) => [pin, Array.isArray(targets) ? [] : targets]),
+  );
 }
 
 // Operators the CLI's `--event-filter <piid><op><v1>` parser accepts.
@@ -1426,6 +1480,24 @@ export function applyRename(exported: ExportedRule, rename: RenameOptions): Expo
   const sourceScope = `R${exported.ruleId}`;
   const targetScope = `R${finalId}`;
   if (rename.targetId !== undefined) {
+    const opaqueNodes = exported.commands.filter(
+      (command): command is Extract<ExportedCommand, { kind: 'node-add' }> =>
+        command.kind === 'node-add' && command.opaqueRaw === true,
+    );
+    if (opaqueNodes.length > 0) {
+      throw new ConfigError(
+        `cannot clone export for rule ${exported.ruleId} to ${finalId}: opaque raw node(s) ${opaqueNodes
+          .map((node) => `${node.nodeId} (${node.type})`)
+          .join(
+            ', ',
+          )} may contain rule-local references that xgg cannot safely identify or remap. Replay with the original id, or model those node types before using --target-id.`,
+        {
+          sourceRuleId: exported.ruleId,
+          targetRuleId: finalId,
+          nodeIds: opaqueNodes.map((node) => node.nodeId),
+        },
+      );
+    }
     assertRenameHasCompleteVariablePlan(exported, sourceScope, targetScope);
   }
 
