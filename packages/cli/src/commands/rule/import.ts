@@ -46,8 +46,8 @@ export function attachImport(cmd: Command): void {
       'after',
       `
 Examples:
-  $ xgg rule import --from-file rule.json
-      # Re-render the script identical to what \`xgg rule export\` would emit.
+  $ xgg rule import --from-file rule.json > replay.sh
+      # Render for review. Its first target-graph write stages enable=false.
 
   $ xgg rule import --from-file rule.json --target-id 9999999999999 | bash
       # Clone the saved rule into a new rule id; name becomes "[Cloned] <orig>".
@@ -64,6 +64,14 @@ Notes:
   - Import deliberately emits no live next-step hint: rendering stdout does
     not prove that the script was executed. After a successful replay, run
     \`xgg rule validate --rule-id <id>\`, then strict lint before enabling.
+  - Replay preflights captured local variables. Its first target-graph write is
+    the exported empty shell with cfg overwrite and enable=false; same-id and
+    create-only clone guards determine when compatible variables are prepared.
+    It rebuilds nodes/edges while disabled and appends a final
+    rule enable only when the export was enabled. Same-id replay is destructive
+    and each command is a separate transaction: review the script, keep every
+    web/xgg/API writer away from the target, and restore from rollback snapshots
+    if a post-staging failure leaves the expected disabled partial graph.
   - Cloning rewrites only R<source-id> to R<target-id>. Captured local
     variables are fully preflighted before any write. The empty target is then
     created with expect-absent semantics before local variables are prepared,
