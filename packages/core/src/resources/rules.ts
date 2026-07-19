@@ -7,6 +7,7 @@ import type {
   MiotProperty,
   MiotService,
 } from '../schemas/device-spec.js';
+import { Device as DeviceSchema } from '../schemas/device.js';
 import {
   MIOT_COMPARISON_CONTRACT,
   isMiotEventWireOperator,
@@ -30,6 +31,7 @@ import {
 import {
   type AvailableVariable,
   type VarEntry,
+  VarEntry as VarEntrySchema,
   isValidVariableScopeName,
 } from '../schemas/variable.js';
 import {
@@ -361,6 +363,10 @@ function replacementCheckpointError(
   return new ConfigError(message, { rollbackSnapshotPath, ruleId });
 }
 
+function isCheckpointRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 async function readReplacementCheckpoint(
   rollbackSnapshotPath: string,
   ruleId: string,
@@ -382,14 +388,14 @@ async function readReplacementCheckpoint(
       ruleId,
     );
   }
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+  if (!isCheckpointRecord(raw)) {
     throw replacementCheckpointError(
       'device replacement rollback snapshot is not an object',
       rollbackSnapshotPath,
       ruleId,
     );
   }
-  const snapshot = raw as Record<string, unknown>;
+  const snapshot = raw;
   if (snapshot.kind !== 'xgg-pre-write-rollback' || snapshot.schemaVersion !== 1) {
     throw replacementCheckpointError(
       'device replacement requires an xgg pre-write rollback snapshot at schema version 1',
@@ -404,13 +410,70 @@ async function readReplacementCheckpoint(
       ruleId,
     );
   }
-  const rule = snapshot.rules.find(
-    (entry) =>
-      entry !== null &&
-      typeof entry === 'object' &&
-      !Array.isArray(entry) &&
-      (entry as Record<string, unknown>).id === ruleId,
-  ) as Record<string, unknown> | undefined;
+  if (!isCheckpointRecord(snapshot.devices)) {
+    throw replacementCheckpointError(
+      'device replacement rollback snapshot has no complete devices inventory',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+  for (const [did, device] of Object.entries(snapshot.devices)) {
+    parseOrThrow(DeviceSchema, device, `DeviceReplacement.rollbackSnapshot.devices.${did}`);
+  }
+  if (!isCheckpointRecord(snapshot.variables)) {
+    throw replacementCheckpointError(
+      'device replacement rollback snapshot has no complete variables inventory',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+  for (const [scope, variables] of Object.entries(snapshot.variables)) {
+    if (!isCheckpointRecord(variables)) {
+      throw replacementCheckpointError(
+        `device replacement rollback snapshot variable scope ${scope} is not a variable map`,
+        rollbackSnapshotPath,
+        ruleId,
+      );
+    }
+    for (const [id, variable] of Object.entries(variables)) {
+      parseOrThrow(
+        VarEntrySchema,
+        variable,
+        `DeviceReplacement.rollbackSnapshot.variables.${scope}.${id}`,
+      );
+    }
+  }
+  if (
+    typeof snapshot.capturedAt !== 'string' ||
+    Number.isNaN(Date.parse(snapshot.capturedAt)) ||
+    new Date(snapshot.capturedAt).toISOString() !== snapshot.capturedAt
+  ) {
+    throw replacementCheckpointError(
+      'device replacement rollback snapshot has no valid ISO capturedAt timestamp',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+
+  const parsedRules: RuleView[] = [];
+  const seenRuleIds = new Set<string>();
+  for (const [index, entry] of snapshot.rules.entries()) {
+    const parsed = parseOrThrow(
+      GraphSetRequest,
+      entry,
+      `DeviceReplacement.rollbackSnapshot.rules[${index}]`,
+    );
+    if (seenRuleIds.has(parsed.id)) {
+      throw replacementCheckpointError(
+        `device replacement rollback snapshot contains duplicate rule ${parsed.id}`,
+        rollbackSnapshotPath,
+        ruleId,
+      );
+    }
+    seenRuleIds.add(parsed.id);
+    parsedRules.push({ id: parsed.id, cfg: parsed.cfg, nodes: parsed.nodes });
+  }
+  const rule = parsedRules.find((entry) => entry.id === ruleId);
   if (rule === undefined) {
     throw replacementCheckpointError(
       `device replacement rollback snapshot does not contain rule ${ruleId}`,
@@ -418,12 +481,7 @@ async function readReplacementCheckpoint(
       ruleId,
     );
   }
-  const parsed = parseOrThrow(
-    GraphSetRequest,
-    { id: rule.id, cfg: rule.cfg, nodes: rule.nodes },
-    'DeviceReplacement.rollbackSnapshot.rule',
-  );
-  return { id: parsed.id, cfg: parsed.cfg, nodes: parsed.nodes };
+  return rule;
 }
 
 async function replaceDeviceWithinWorkflow(

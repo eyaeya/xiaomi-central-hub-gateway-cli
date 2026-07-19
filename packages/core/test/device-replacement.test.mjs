@@ -552,27 +552,26 @@ function fakeGateway(node = deviceInputProperty()) {
   return { calls, control, deps, state };
 }
 
-async function writeCheckpoint(t, gateway) {
+async function writeCheckpoint(t, gateway, mutate = undefined) {
   const directory = await mkdtemp(join(tmpdir(), 'xgg-device-replacement-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'dump.json');
-  await writeFile(
-    path,
-    JSON.stringify({
-      kind: 'xgg-pre-write-rollback',
-      schemaVersion: 1,
-      devices: {},
-      rules: [
-        {
-          id: ruleId,
-          cfg: structuredClone(gateway.state.cfg),
-          nodes: structuredClone(gateway.state.nodes),
-        },
-      ],
-      variables: {},
-      capturedAt: new Date().toISOString(),
-    }),
-  );
+  const payload = {
+    kind: 'xgg-pre-write-rollback',
+    schemaVersion: 1,
+    devices: {},
+    rules: [
+      {
+        id: ruleId,
+        cfg: structuredClone(gateway.state.cfg),
+        nodes: structuredClone(gateway.state.nodes),
+      },
+    ],
+    variables: {},
+    capturedAt: new Date().toISOString(),
+  };
+  mutate?.(payload);
+  await writeFile(path, JSON.stringify(payload));
   return path;
 }
 
@@ -732,6 +731,84 @@ test('write rejects a missing rollback checkpoint before any gateway graph read 
     gateway.calls.some((call) => call.method === '/api/setGraph'),
     false,
   );
+});
+
+test('write rejects partial or malformed rollback envelopes before gateway reads or writes', async (t) => {
+  const cases = [
+    {
+      name: 'missing devices',
+      mutate: (payload) => {
+        payload.devices = undefined;
+      },
+      message: /complete devices inventory/,
+    },
+    {
+      name: 'missing variables',
+      mutate: (payload) => {
+        payload.variables = undefined;
+      },
+      message: /complete variables inventory/,
+    },
+    {
+      name: 'invalid capturedAt',
+      mutate: (payload) => {
+        payload.capturedAt = 'yesterday';
+      },
+      message: /valid ISO capturedAt/,
+    },
+    {
+      name: 'invalid variable entry',
+      mutate: (payload) => {
+        payload.variables = { global: { broken: { type: 'number', value: 'not-a-number' } } };
+      },
+      message: /DeviceReplacement\.rollbackSnapshot\.variables\.global\.broken/,
+    },
+    {
+      name: 'duplicate rule id',
+      mutate: (payload) => {
+        payload.rules.push(structuredClone(payload.rules[0]));
+      },
+      message: /duplicate rule/,
+    },
+  ];
+
+  for (const scenario of cases) {
+    const gateway = fakeGateway();
+    const initial = await planDeviceReplacement(
+      { ruleId, nodeId: 'input-property', targetDid },
+      gateway.deps,
+      { getDeviceSpec: fixedSpecs },
+    );
+    const rollbackSnapshotPath = await writeCheckpoint(t, gateway, scenario.mutate);
+    const callsBeforeWriteAttempt = gateway.calls.length;
+    await assert.rejects(
+      replaceDevice(
+        {
+          ruleId,
+          nodeId: 'input-property',
+          targetDid,
+          expectedPlanId: initial.planId,
+          rollbackSnapshotPath,
+        },
+        gateway.deps,
+        { getDeviceSpec: fixedSpecs },
+      ),
+      (error) =>
+        (error?.code === 'CONFIG' || error?.code === 'SCHEMA') &&
+        scenario.message.test(error.message),
+      scenario.name,
+    );
+    assert.equal(
+      gateway.calls.slice(callsBeforeWriteAttempt).some((call) => call.method === '/api/getGraph'),
+      false,
+      scenario.name,
+    );
+    assert.equal(
+      gateway.calls.some((call) => call.method === '/api/setGraph'),
+      false,
+      scenario.name,
+    );
+  }
 });
 
 test('write rejects when the rollback checkpoint no longer matches the live graph', async (t) => {
