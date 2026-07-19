@@ -210,5 +210,8 @@ test('validate help states the offline contract and explicit spec-aware option',
   assert.match(result.stdout, /--body\/--stdin perform deterministic local validation only/i);
   assert.match(result.stdout, /no session, daemon, or spec fetch/i);
   assert.match(result.stdout, /public MIoT registry I\/O/i);
-  assert.match(result.stdout, /action\.in \/ props\.ins contract checks/i);
+  assert.match(
+    result.stdout,
+    /action\.in \/ props\.ins index, short-name and numeric-domain checks/i,
+  );
 });

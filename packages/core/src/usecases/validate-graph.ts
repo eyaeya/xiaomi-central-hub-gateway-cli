@@ -1,11 +1,18 @@
 import { MiotSpecFetchError } from '../http-client.js';
 import type { DeviceSpec, MiotProperty } from '../schemas/device-spec.js';
 import {
+  findDuplicateMiotActionInputPiids,
+  findMiotActionInputParamCollisions,
+  isMiotActionIntegerFormat,
+  miotActionVariableDtype,
+} from '../schemas/miot-action.js';
+import {
   MIOT_COMPARISON_CONTRACT,
   type MiotComparisonDtype,
   hasMiotValueList,
   isMiotWireOperator,
   miotNumericOperandDomainIssue,
+  miotNumericValueRangeIssue,
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
@@ -122,24 +129,13 @@ function findProperty(spec: DeviceSpec, siid: number, piid: number): MiotPropert
   return service?.properties?.find((p) => p.iid === piid);
 }
 
-function actionVariableDtype(format: string): 'number' | 'string' | 'boolean' {
-  if (format === 'string') return 'string';
-  if (format === 'bool') return 'boolean';
-  return 'number';
-}
-
-function isActionIntegerFormat(format: string): boolean {
-  return format !== 'string' && format !== 'bool' && format !== 'float' && format !== 'double';
-}
-
 function checkActionLiteral(
   input: Record<string, unknown>,
   property: MiotProperty,
   path: string,
 ): LintIssue[] {
   const value = input.value;
-  const hasValueList = Array.isArray(property['value-list']) && property['value-list'].length > 0;
-  const numeric = hasValueList || (property.format !== 'string' && property.format !== 'bool');
+  const numeric = property.format !== 'string' && property.format !== 'bool';
 
   if (numeric) {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -150,7 +146,7 @@ function checkActionLiteral(
         ),
       ];
     }
-    if (isActionIntegerFormat(property.format) && !Number.isSafeInteger(value)) {
+    if (isMiotActionIntegerFormat(property.format) && !Number.isSafeInteger(value)) {
       return [
         issue(
           `${path}.value`,
@@ -210,7 +206,7 @@ function checkActionVariableRef(
       ),
     );
   }
-  const expectedDtype = actionVariableDtype(property.format);
+  const expectedDtype = miotActionVariableDtype(property.format);
   if (input.dtype !== expectedDtype) {
     issues.push(
       issue(
@@ -243,6 +239,11 @@ function checkActionVariableRef(
         `卡片配置有误: action input piid=${input.piid} cannot use a number variable because MIoT property ${property.type} declares no value-range`,
       ),
     );
+    return issues;
+  }
+  const rangeIssue = miotNumericValueRangeIssue(property);
+  if (rangeIssue !== null) {
+    issues.push(issue(path, `卡片配置有误: action input piid=${input.piid} ${rangeIssue.message}`));
     return issues;
   }
   if (
@@ -286,16 +287,30 @@ export function checkDeviceOutputActionInputContract(
 
   const ins = Array.isArray(props.ins) ? props.ins : [];
   const expectedPiids = new Set<number>();
-  for (const piid of action.in) {
-    if (expectedPiids.has(piid)) {
-      issues.push(
-        issue(
-          path,
-          `卡片配置有误: MIoT action siid=${props.siid} aiid=${props.aiid} declares duplicate input piid=${piid}`,
-        ),
-      );
-    }
-    expectedPiids.add(piid);
+  for (const piid of action.in) expectedPiids.add(piid);
+  for (const piid of findDuplicateMiotActionInputPiids(action.in)) {
+    issues.push(
+      issue(
+        path,
+        `卡片配置有误: MIoT action siid=${props.siid} aiid=${props.aiid} declares duplicate input piid=${piid}`,
+      ),
+    );
+  }
+
+  const resolvedInputs: Array<{ piid: number; property: MiotProperty }> = [];
+  for (const piid of expectedPiids) {
+    const property = service?.properties?.find((candidate) => candidate.iid === piid);
+    if (property !== undefined) resolvedInputs.push({ piid, property });
+  }
+  for (const collision of findMiotActionInputParamCollisions(resolvedInputs)) {
+    issues.push(
+      issue(
+        path,
+        `卡片配置有误: MIoT action siid=${props.siid} aiid=${props.aiid} has duplicate parameter short-name "${collision.paramName}" for ${collision.piids
+          .map((piid) => `piid=${piid}`)
+          .join(', ')}; typed --params cannot represent those inputs independently`,
+      ),
+    );
   }
 
   const inputIndexes = new Map<number, number[]>();
@@ -336,22 +351,41 @@ export function checkDeviceOutputActionInputContract(
           ),
         );
       }
-      continue;
     }
+  }
 
-    const property = service?.properties?.find((candidate) => candidate.iid === piid);
+  if (ins.length !== action.in.length) {
+    issues.push(
+      issue(
+        `${path}.ins`,
+        `卡片配置有误: action input count ${ins.length} must equal action.in count ${action.in.length}`,
+      ),
+    );
+  }
+  for (let index = 0; index < Math.min(ins.length, action.in.length); index += 1) {
+    const input = ins[index];
+    const expectedPiid = action.in[index] as number;
+    const actualPiid = isRecord(input) ? input.piid : undefined;
+    if (actualPiid !== expectedPiid) {
+      issues.push(
+        issue(
+          `${path}.ins[${index}].piid`,
+          `卡片配置有误: action input index ${index} requires piid=${expectedPiid} from action.in[${index}], got piid=${String(actualPiid)}`,
+        ),
+      );
+    }
+    const property = service?.properties?.find((candidate) => candidate.iid === expectedPiid);
     if (property === undefined) {
       issues.push(
         issue(
-          `${path}.ins[${indexes[0]}]`,
-          `卡片配置有误: action input piid=${piid} is missing from service siid=${props.siid} properties`,
+          `${path}.ins[${index}]`,
+          `卡片配置有误: action input piid=${expectedPiid} is missing from service siid=${props.siid} properties`,
         ),
       );
       continue;
     }
-    const input = ins[indexes[0] as number];
     if (!isRecord(input)) continue;
-    const inputPath = `${path}.ins[${indexes[0]}]`;
+    const inputPath = `${path}.ins[${index}]`;
     issues.push(
       ...(isVarValueShape(input)
         ? checkActionVariableRef(input, property, inputPath)

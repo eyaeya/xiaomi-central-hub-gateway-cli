@@ -9,10 +9,20 @@ import type {
 } from '../schemas/device-spec.js';
 import { Device as DeviceSchema } from '../schemas/device.js';
 import {
+  type MiotActionVariableDtype,
+  findDuplicateMiotActionInputPiids,
+  findMiotActionInputParamCollisions,
+  isMiotActionIntegerFormat,
+  miotActionInputParamName,
+  miotActionVariableDtype,
+} from '../schemas/miot-action.js';
+import {
   MIOT_COMPARISON_CONTRACT,
   type MiotComparisonWireOperator,
   isMiotEventWireOperator,
   miotNumericOperandDomainError,
+  miotNumericOperandDomainIssue,
+  miotNumericValueRangeIssue,
   miotShortcutOperatorToWire,
   parseFiniteDecimalLiteral,
   parseSafeIntegerDecimalLiteral,
@@ -2255,18 +2265,12 @@ function parseEventArgVar(
 // F16 fix: coerce CLI string value to gateway-storage type per MIoT format.
 // Real-rule "All" property-write deviceOutput stores bool on/off as int 1/0
 // (props.value=1). String formats pass through; numeric formats parse.
-type DeviceOutputVariableDtype = 'number' | 'string' | 'boolean';
+type DeviceOutputVariableDtype = MiotActionVariableDtype;
 
 interface DeviceOutputVariableRef {
   id: string;
   scope: string;
   dtype: DeviceOutputVariableDtype;
-}
-
-function mapFormatToVariableDtype(format: string): DeviceOutputVariableDtype {
-  if (format === 'string') return 'string';
-  if (format === 'bool') return 'boolean';
-  return 'number';
 }
 
 function mapFormatToSetVarDtype(format: string): 'number' | 'string' {
@@ -2344,6 +2348,13 @@ function variableRangeFields(
       { context },
     );
   }
+  const rangeIssue = property === undefined ? null : miotNumericValueRangeIssue(property);
+  if (rangeIssue !== null) {
+    throw new ConfigError(`cannot write a number variable to ${context}: ${rangeIssue.message}`, {
+      context,
+      valueRange: property?.['value-range'],
+    });
+  }
   return range;
 }
 
@@ -2379,10 +2390,6 @@ function coercePropertyValue(raw: string, format: string): number | string | boo
 
 type DeviceOutputActionLiteral = number | string | boolean;
 
-const ACTION_INTEGER_LITERAL = /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/;
-const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
-const MIN_SAFE_INTEGER_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
-
 function actionInputNumber(raw: unknown, context: string): number {
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
   if (typeof raw === 'string') {
@@ -2394,45 +2401,11 @@ function actionInputNumber(raw: unknown, context: string): number {
   });
 }
 
-// Parse the decimal text before converting it to Number. Calling Number()
-// first is insufficient: "9007199254740993" becomes 9007199254740992, and a
-// near-boundary fractional string can round to an apparently integral Number.
-function exactSafeIntegerFromString(raw: string): number | null {
-  const match = ACTION_INTEGER_LITERAL.exec(raw.trim());
-  if (match === null) return null;
-
-  const whole = match[2] ?? '0';
-  const fraction = match[3] ?? match[4] ?? '';
-  let digits = `${whole}${fraction}`;
-  if (/^0+$/.test(digits)) return 0;
-
-  const exponent = BigInt(match[5] ?? '0');
-  const scale = BigInt(fraction.length) - exponent;
-  if (scale > 0n) {
-    if (scale > BigInt(digits.length)) return null;
-    const trailingDigits = Number(scale);
-    if (!digits.endsWith('0'.repeat(trailingDigits))) return null;
-    digits = digits.slice(0, digits.length - trailingDigits);
-  } else if (scale < 0n) {
-    const appendedZeros = -scale;
-    const significantLength = digits.replace(/^0+/, '').length;
-    if (appendedZeros > 16n || BigInt(significantLength) + appendedZeros > 16n) return null;
-    digits += '0'.repeat(Number(appendedZeros));
-  }
-
-  digits = digits.replace(/^0+/, '') || '0';
-  if (digits.length > 16) return null;
-  let exact = BigInt(digits);
-  if (match[1] === '-') exact = -exact;
-  if (exact < MIN_SAFE_INTEGER_BIGINT || exact > MAX_SAFE_INTEGER_BIGINT) return null;
-  return Number(exact);
-}
-
 function actionInputSafeInteger(raw: unknown, format: string, context: string): number {
   if (typeof raw === 'number' && Number.isSafeInteger(raw)) return raw;
   if (typeof raw === 'string') {
-    const parsed = exactSafeIntegerFromString(raw);
-    if (parsed !== null) return parsed;
+    const parsed = parseSafeIntegerDecimalLiteral(raw);
+    if (parsed !== null) return Object.is(parsed, -0) ? 0 : parsed;
   }
   throw new ConfigError(
     `${context} requires an exact safe integer for format ${format} between ${Number.MIN_SAFE_INTEGER} and ${Number.MAX_SAFE_INTEGER}`,
@@ -2440,40 +2413,14 @@ function actionInputSafeInteger(raw: unknown, format: string, context: string): 
   );
 }
 
-function isActionIntegerFormat(format: string): boolean {
-  return format !== 'string' && format !== 'bool' && format !== 'float' && format !== 'double';
-}
-
-function validateActionInputRange(value: number, property: MiotProperty, context: string): void {
-  const range = property['value-range'];
-  if (range === undefined) return;
-  const [min, max, step] = range;
-  if (
-    !Number.isFinite(min) ||
-    !Number.isFinite(max) ||
-    !Number.isFinite(step) ||
-    min > max ||
-    step <= 0
-  ) {
-    throw new ConfigError(`${context} has an invalid MIoT value-range`, {
-      valueRange: range,
-    });
-  }
-  if (value < min || value > max) {
-    throw new ConfigError(`${context} value ${value} is outside value-range [${min}, ${max}]`, {
-      value,
-      valueRange: range,
-    });
-  }
-  const stepsFromMin = (value - min) / step;
-  const stepError = Math.abs(stepsFromMin - Math.round(stepsFromMin));
-  const tolerance = Number.EPSILON * Math.max(1, Math.abs(stepsFromMin)) * 16;
-  if (stepError > tolerance) {
-    throw new ConfigError(
-      `${context} value ${value} does not align with value-range step ${step} from ${min}`,
-      { value, valueRange: range },
-    );
-  }
+function validateActionInputDomain(value: number, property: MiotProperty, context: string): void {
+  const domainError = miotNumericOperandDomainError(property, value);
+  if (domainError === null) return;
+  throw new ConfigError(`${context} ${domainError}`, {
+    value,
+    valueRange: property['value-range'],
+    valueList: property['value-list'],
+  });
 }
 
 function coerceActionInputLiteral(
@@ -2481,25 +2428,6 @@ function coerceActionInputLiteral(
   property: MiotProperty,
   context: string,
 ): DeviceOutputActionLiteral {
-  const valueList = property['value-list'];
-  if (valueList !== undefined && valueList.length > 0) {
-    const value = isActionIntegerFormat(property.format)
-      ? actionInputSafeInteger(raw, property.format, context)
-      : actionInputNumber(raw, context);
-    const allowed = valueList.map((entry) => entry.value);
-    if (!allowed.includes(value)) {
-      throw new ConfigError(
-        `${context} value ${value} is not in value-list [${allowed.join(', ')}]`,
-        {
-          value,
-          allowed,
-        },
-      );
-    }
-    validateActionInputRange(value, property, context);
-    return value;
-  }
-
   if (property.format === 'string') {
     if (typeof raw !== 'string') {
       throw new ConfigError(`${context} requires a string value`, {
@@ -2520,10 +2448,13 @@ function coerceActionInputLiteral(
     });
   }
 
-  const value = isActionIntegerFormat(property.format)
+  // MIoT format owns the persisted JSON type. Some malformed or vendor
+  // extended specs attach a numeric value-list to bool/string properties;
+  // that metadata must not coerce their action inputs into JSON numbers.
+  const value = isMiotActionIntegerFormat(property.format)
     ? actionInputSafeInteger(raw, property.format, context)
     : actionInputNumber(raw, context);
-  validateActionInputRange(value, property, context);
+  validateActionInputDomain(value, property, context);
   return value;
 }
 
@@ -2852,12 +2783,14 @@ function synthesizePropertyComparison(
     );
   }
 
-  const thresholdDomainError = miotNumericOperandDomainError(property, thresholdValue, {
+  const thresholdDomainIssue = miotNumericOperandDomainIssue(property, thresholdValue, {
     skipRange: shortcut.forceOutOfRange === true,
   });
-  if (thresholdDomainError !== null) {
+  if (thresholdDomainIssue !== null) {
+    const canOverride =
+      thresholdDomainIssue.kind === 'range' || thresholdDomainIssue.kind === 'step';
     throw new ConfigError(
-      `--threshold for property "${propertyName}": ${thresholdDomainError} on urn ${specType}${thresholdDomainError.includes('value-range') ? '. Pass --force-out-of-range to override the range check.' : ''}`,
+      `--threshold for property "${propertyName}": ${thresholdDomainIssue.message} on urn ${specType}${canOverride ? '. Pass --force-out-of-range to override the range check.' : ''}`,
       { threshold: thresholdValue, property: propertyName },
     );
   }
@@ -2913,12 +2846,14 @@ function synthesizePropertyComparison(
         { property: propertyName, threshold: thresholdValue, threshold2 },
       );
     }
-    const threshold2DomainError = miotNumericOperandDomainError(property, threshold2, {
+    const threshold2DomainIssue = miotNumericOperandDomainIssue(property, threshold2, {
       skipRange: shortcut.forceOutOfRange === true,
     });
-    if (threshold2DomainError !== null) {
+    if (threshold2DomainIssue !== null) {
+      const canOverride =
+        threshold2DomainIssue.kind === 'range' || threshold2DomainIssue.kind === 'step';
       throw new ConfigError(
-        `--threshold2 for property "${propertyName}": ${threshold2DomainError} on urn ${specType}${threshold2DomainError.includes('value-range') ? '. Pass --force-out-of-range to override the range check.' : ''}`,
+        `--threshold2 for property "${propertyName}": ${threshold2DomainIssue.message} on urn ${specType}${canOverride ? '. Pass --force-out-of-range to override the range check.' : ''}`,
         { threshold2, property: propertyName },
       );
     }
@@ -3055,6 +2990,15 @@ function synthesizeNodeFromShortcut(
       // action.in entry is required by the official editor; fail before write
       // instead of silently emitting a partial action invocation. Resolve the
       // backing property first so literal values retain their native MIoT type.
+      const duplicateInputPiids = findDuplicateMiotActionInputPiids(action.in);
+      if (duplicateInputPiids.length > 0) {
+        throw new ConfigError(
+          `action "${shortcut.deviceAction}" declares duplicate input ${duplicateInputPiids
+            .map((piid) => `piid=${piid}`)
+            .join(', ')}; typed --params cannot address duplicate action.in entries safely`,
+          { action: shortcut.deviceAction, duplicatePiids: duplicateInputPiids },
+        );
+      }
       const actionInputs = action.in.map((piid) => {
         const property = (service.properties ?? []).find((candidate) => candidate.iid === piid);
         if (property === undefined) {
@@ -3063,9 +3007,19 @@ function synthesizeNodeFromShortcut(
             { action: shortcut.deviceAction, siid: service.iid, piid },
           );
         }
-        const paramKey = property.type.split(':')[3] ?? `piid-${piid}`;
+        const paramKey = miotActionInputParamName(property);
         return { piid, property, paramKey };
       });
+      const paramCollisions = findMiotActionInputParamCollisions(actionInputs);
+      const collision = paramCollisions[0];
+      if (collision !== undefined) {
+        throw new ConfigError(
+          `action "${shortcut.deviceAction}" has duplicate parameter short-name "${collision.paramName}" for ${collision.piids
+            .map((piid) => `piid=${piid}`)
+            .join(', ')}; typed --params cannot represent those inputs independently`,
+          { action: shortcut.deviceAction, collisions: paramCollisions },
+        );
+      }
       const expectedKeys = actionInputs.map(({ paramKey }) => paramKey);
       const suppliedParams = shortcut.params ?? {};
       const missingKeys = expectedKeys.filter((key) => !Object.hasOwn(suppliedParams, key));
@@ -3095,10 +3049,7 @@ function synthesizeNodeFromShortcut(
       > = [];
       for (const { piid, property, paramKey } of actionInputs) {
         const rawValue = suppliedParams[paramKey];
-        const varRef = parseVariableParamObject(
-          rawValue,
-          mapFormatToVariableDtype(property.format),
-        );
+        const varRef = parseVariableParamObject(rawValue, miotActionVariableDtype(property.format));
         if (varRef)
           ins.push({
             piid,
@@ -3161,7 +3112,7 @@ function synthesizeNodeFromShortcut(
       const escapedLiteral = shortcut.value.startsWith('$$') ? shortcut.value.slice(1) : null;
       const varRef =
         escapedLiteral === null && shortcut.value.startsWith('$')
-          ? parseVariableReference(shortcut.value, mapFormatToVariableDtype(property.format))
+          ? parseVariableReference(shortcut.value, miotActionVariableDtype(property.format))
           : null;
       const coerced =
         varRef === null

@@ -81,7 +81,7 @@ export function attachValidate(cmd: Command): void {
     .option('--stdin', 'offline: read graph JSON from stdin')
     .option(
       '--spec-aware',
-      'query the public MIoT spec registry for property/event dtype and action input contract checks (external network I/O)',
+      'query the public MIoT spec registry for property/event dtype and ordered action input contract checks (external network I/O)',
     )
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
@@ -104,7 +104,7 @@ Exit codes:
 Local input contract:
   --body/--stdin perform deterministic local validation only: no session, daemon, or spec fetch.
   --spec-aware explicitly enables public MIoT registry I/O for any input mode,
-  including deviceOutput action.in / props.ins contract checks.
+  including deviceOutput action.in / props.ins index, short-name and numeric-domain checks.
   --rule-id always reads the gateway graph and available variables from the daemon.`,
     )
     .action(

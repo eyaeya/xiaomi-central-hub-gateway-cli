@@ -43,7 +43,7 @@ export function attachExport(cmd: Command): void {
     .option('--pretty', 'pretty-print JSON output (only with --format json)')
     .option(
       '--strict-roundtrip',
-      'fail on modeled-node warnings that signal semantic loss (cfg/spec mapping/operand/action input); unmodeled opaque cards remain allowed for lossless same-id replay, while --target-id clone rejects them',
+      'fail on modeled-node warnings that signal semantic loss (cfg/spec mapping/operand/ordered action input); unmodeled opaque cards remain allowed for lossless same-id replay, while --target-id clone rejects them',
     );
   addNextHintFlag(sub)
     .addHelpText(
@@ -84,7 +84,7 @@ Limitations:
     rollback snapshots to inspect or restore it.
   - --strict-roundtrip rejects modeled-node warnings that would change or omit
     graph semantics, including stale spec mappings, unsupported operands,
-    invalid deviceOutput action.in/props.ins contracts and unknown modeled
+    invalid deviceOutput action.in/props.ins index/name/domain contracts and unknown modeled
     cfg/props keys. Unmodeled future cards are preserved as
     opaque raw nodes and remain valid in strict mode for lossless same-id
     replay; --target-id cloning still rejects them because unknown payloads

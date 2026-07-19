@@ -30,6 +30,7 @@ export {
   isMiotWireOperator,
   miotNumericOperandDomainError,
   miotNumericOperandDomainIssue,
+  miotNumericValueRangeIssue,
   miotShortcutOperatorToWire,
   parseFiniteDecimalLiteral,
   parseSafeIntegerDecimalLiteral,

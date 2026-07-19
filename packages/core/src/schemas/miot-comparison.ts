@@ -17,7 +17,7 @@ const DECIMAL_LITERAL_PARTS = /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
 export type MiotNumericOperandDomainIssue = {
-  kind: 'non-finite' | 'value-list' | 'range' | 'step';
+  kind: 'non-finite' | 'invalid-range' | 'value-list' | 'range' | 'step';
   message: string;
 };
 
@@ -158,8 +158,8 @@ export function isMiotWireOperator(
  * without becoming more permissive as the quotient grows.
  *
  * `skipRange` backs the existing `--force-out-of-range` escape hatch. It does
- * not bypass a closed value-list: choosing a value the device does not expose
- * is a dtype/domain error, not merely an out-of-range probe.
+ * not bypass malformed range metadata or a closed value-list: those are
+ * dtype/domain errors, not merely out-of-range probes.
  */
 export function miotNumericOperandDomainIssue(
   property: Pick<MiotProperty, 'value-list' | 'value-range'>,
@@ -169,6 +169,8 @@ export function miotNumericOperandDomainIssue(
   if (!Number.isFinite(value)) {
     return { kind: 'non-finite', message: `value ${String(value)} is not finite` };
   }
+  const invalidRange = miotNumericValueRangeIssue(property);
+  if (invalidRange !== null) return invalidRange;
   const valueList = property['value-list'];
   if (Array.isArray(valueList) && valueList.length > 0) {
     const allowed = valueList.map((entry) => entry.value);
@@ -214,6 +216,28 @@ export function miotNumericOperandDomainIssue(
         message: `value ${String(value)} is not aligned to MIoT value-range step ${step} from ${min}`,
       };
     }
+  }
+  return null;
+}
+
+/** Validate MIoT `[min, max, step]` metadata independently of an operand. */
+export function miotNumericValueRangeIssue(
+  property: Pick<MiotProperty, 'value-range'>,
+): MiotNumericOperandDomainIssue | null {
+  const range = property['value-range'];
+  if (range === undefined) return null;
+  const [min, max, step] = range;
+  if (
+    !Number.isFinite(min) ||
+    !Number.isFinite(max) ||
+    !Number.isFinite(step) ||
+    min > max ||
+    step <= 0
+  ) {
+    return {
+      kind: 'invalid-range',
+      message: `invalid MIoT value-range [${range.map(String).join(', ')}]; expected finite min <= max and step > 0`,
+    };
   }
   return null;
 }

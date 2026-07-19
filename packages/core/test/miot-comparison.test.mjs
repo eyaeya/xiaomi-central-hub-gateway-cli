@@ -464,6 +464,28 @@ test('large safe-integer steps are checked exactly while decimal steps retain bo
   );
 });
 
+test('malformed numeric value-ranges are rejected even when range override is requested', () => {
+  for (const range of [
+    [0, 10, 0],
+    [0, 10, -1],
+    [10, 0, 1],
+    [Number.NaN, 10, 1],
+    [0, Number.POSITIVE_INFINITY, 1],
+    [0, 10, Number.NaN],
+  ]) {
+    assert.equal(
+      miotNumericOperandDomainIssue({ 'value-range': range }, 5)?.kind,
+      'invalid-range',
+      String(range),
+    );
+    assert.equal(
+      miotNumericOperandDomainIssue({ 'value-range': range }, 5, { skipRange: true })?.kind,
+      'invalid-range',
+      `skipRange: ${String(range)}`,
+    );
+  }
+});
+
 test('string property shortcut creates, validates, exports, and replays without coercion', async () => {
   const source = createStatefulGateway();
   await addShortcut(source, {

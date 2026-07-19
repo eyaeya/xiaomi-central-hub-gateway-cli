@@ -207,7 +207,7 @@ xgg rule node add --rule-id <rule-id> --type nop \
   --text "按钮单击后执行目标动作" --background '#FFD966' --id n-note
 xgg rule edge add --rule-id <rule-id> --from n-click:output --to n-action:trigger
 xgg rule layout <rule-id>
-xgg rule validate --rule-id <rule-id>
+xgg rule validate --rule-id <rule-id> --spec-aware
 xgg rule lint --rule-id <rule-id> --strict
 ```
 
@@ -217,7 +217,7 @@ xgg rule lint --rule-id <rule-id> --strict
 - `deviceInput` 的 `--device-property` 属性模式和 `--device-event` 事件模式二选一，不能混用。事件参数比较只用 `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--op`、`--threshold`、`--threshold2`、`--property-value`、`--property-include`、`--force-out-of-range` 只属于属性模式，event 模式传入时会在读取 session/spec、快照或写网关前拒绝。
 - `deviceOutput --value '$scope.id'` 表示变量引用；字符串字面值若以 `$` 开头，需要把第一个 `$` 写两次，例如 `--value '$$hello'` 实际写入 `$hello`。`rule export` 会自动添加这一层转义。
 - 连线完成后跑 `xgg rule layout <rule-id>`，让可执行卡片按数据流排布；`nop` 的自由位置会保留，避免备注离开它所说明的区域。
-- 启用前跑 `xgg rule validate --rule-id <rule-id>` 和 `xgg rule lint --rule-id <rule-id> --strict`。只有用户授权运行时才执行 `xgg rule enable <rule-id>`，触发后用 `xgg rule logs` 验收；否则用 `rule view` 确认保持 `enable=false`。
+- 启用前跑 `xgg rule validate --rule-id <rule-id> --spec-aware` 和 `xgg rule lint --rule-id <rule-id> --strict`。`deviceOutput` action 必须使用 spec-aware 校验，才能核对当前 `action.in` 契约。只有用户授权运行时才执行 `xgg rule enable <rule-id>`，触发后用 `xgg rule logs` 验收；否则用 `rule view` 确认保持 `enable=false`。
 - 对专门构造、完整下游均为纯软件 marker 的 Agent 探针，可用 `onLoad` 配合 `rule disable` + `rule enable` 重放，不需要人类物理按按钮；既有规则可能从 onLoad 驱动物理动作或业务变量，先审查完整下游并取得授权再重放。
 - `nop` 只给网页画布添加备注，不参与连线或执行。纯文本用 `--text`；要保留标题、粗体、列表、对齐等格式，用 `--delta '<Quill ops JSON>'`（也接受 `{"ops":[...]}`），`rule export` / `rule import` 会无损往返 Delta、背景色、尺寸和位置，`rule layout` 不会搬动它。
 - 严格 lint 与 enable 会按目标 pin 的必需输入语义检查动作可达性，并把状态“可用 / 可能为 true / 可能为 false”分开。独立事件源包括 `onLoad`、`alarmClock`、`timeRange`、`deviceInput`、`deviceInputSetVar`、`varChange`；`timeRange` 同时提供时间窗状态，并在进入窗口时发出事件（没有观察到等价的窗口结束事件）。`condition.condition` 未连线时按 `false` 处理，因此 trigger 可走 `unmet`，但 `met` 不可达。`register` 初值与 `setFalse` 提供 false，只有可达的 `setTrue` 再增加 true；`eventSequence` 的每个事件输入都必须可达；`logicAnd` / `logicOr` / `logicNot` 按布尔语义传播真假状态，`signalOr` 则任一路事件即可。`loop.stop` 与 `onlyNTimes.zero` 是控制输入，不能单独证明下游动作可执行。
@@ -264,9 +264,9 @@ xgg rule node add --rule-id <rule-id> --type deviceOutput \
   --params '{"level":4,"enabled":true,"label":"hello","volume":{"$var":"global.targetVolume"}}'
 ```
 
-`--params` 的 key 必须与 `action.in` 引用的 property short-name 一一对应，不能缺失、额外或重复。整数动作入参只接受 JavaScript 安全整数，避免 `int64` / `uint64` 在 JSON number 中静默舍入；超出范围时命令会拒绝，不能声称已无损覆盖 64 位整数全集。
+`--params` 的 key 必须与 `action.in` 引用的 property short-name 一一对应，不能缺失、额外或重复；`action.in` 不能重复 PIID，不同 PIID 的 short-name 也必须唯一。持久化 `props.ins[i].piid` 必须严格等于 `action.in[i]`，因为网关 bundle 按索引绑定参数。原生 JSON 类型完全由 MIoT format 决定；只有数值 format 才应用数值 value-list/value-range/step，即使异常或厂商扩展 spec 给 bool/string 附带 numeric value-list，也不能把它们持久化成 number。非有限边界、`min > max` 或 `step <= 0` 的 range 会拒绝，number 变量还必须有同一份有效 min/max/step。整数动作入参只接受 JavaScript 安全整数，避免 `int64` / `uint64` 在 JSON number 中静默舍入；超出范围时命令会拒绝，不能声称已无损覆盖 64 位整数全集。
 
-数值 property 比较确需越过异常 spec 的 range/step 时，`deviceInput` / `deviceGet` 可显式用 `--force-out-of-range`；它不绕过 value-list、finite/safe-integer、operator 或 operand shape 校验，不能当作通用关闭校验。
+数值 property 比较确需越过有效 spec 的 range/step 时，`deviceInput` / `deviceGet` 可显式用 `--force-out-of-range`；它不绕过无效 range metadata（非有限、min>max、step<=0）、value-list、finite/safe-integer、operator 或 operand shape 校验，不能当作通用关闭校验。
 
 ### 导出、导入与未来节点
 
@@ -282,7 +282,7 @@ xgg rule import --from-file rule-export.json --target-id <new-rule-id> > clone.s
 
 脚本先只读预检已捕获的规则内变量；若导出包含规则内变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 也在这里生效）。clone 保留 `--expect-absent`，先成功创建禁用空壳，再准备 `R<target-id>` 变量。此后所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，源规则禁用时保持禁用。same-ID 重放会替换目标图，而且整段脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg 进程或 API 客户端并发修改目标；staging 后失败会留下禁用的 partial graph，用逐写快照检查或恢复。
 
-对当前 spec 有效、已建模的节点，完整 typed `include` / `between`、`preload`、`simplified`、`nop`、动作原生参数与规则内变量可在 `--strict-roundtrip` 下往返。strict export 会先核对持久化 `deviceOutput.props.ins` 与 `action.in` 的一一对应、原生 literal 类型/取值域及变量 dtype/range；任何 typed replay 无法复现的动作输入或其他语义损失 warning 都会拒绝导出。未来新增但当前 CLI 尚未建模的节点会导出成 opaque `--cfg` 结构，允许同 ID 无损重放并给出信息性 warning；CLI 无法安全发现其中的规则内引用，因此带 opaque 节点的导出会拒绝 `--target-id` 克隆。
+对当前 spec 有效、已建模的节点，完整 typed `include` / `between`、`preload`、`simplified`、`nop`、动作原生参数与规则内变量可在 `--strict-roundtrip` 下往返。strict export 会先核对持久化 `deviceOutput.props.ins` 与 `action.in` 的逐索引对应、PIID/short-name 唯一性、原生 literal 类型/取值域及变量 dtype/range；任何 typed replay 无法复现的动作输入或其他语义损失 warning 都会拒绝导出。permissive export 会保留明确 warning，并用索引语义、唯一占位 key 及无原型参数字典避免乱序、重复 key 或 `__proto__` 造成静默丢值。未来新增但当前 CLI 尚未建模的节点会导出成 opaque `--cfg` 结构，允许同 ID 无损重放并给出信息性 warning；CLI 无法安全发现其中的规则内引用，因此带 opaque 节点的导出会拒绝 `--target-id` 克隆。
 
 ### 分区设备与能力感知替换
 
@@ -312,7 +312,7 @@ xgg rule device replace --rule-id <rule-id> --node-id <node-id> \
 
 - **离线确定性检查：** CLI `--help`、schema、unit/integration test、`rule validate --body/--stdin` 和 bundle 对照，证明命令形状、序列化与静态约束。
 - **安全实机探针：** 已验证未接状态的 `condition` 走 `unmet`、同节点 `loop.output → loop.stop` 有限反馈、`timeRange` 在窗口进入时发出事件并提供独立状态；这些探针只写临时规则/变量，不驱动物理设备。
-- **目标网关验收：** 真实 property/event/action、分区型号、设备替换、物理触发和恢复操作依赖具体设备与固件，必须在用户网关上重新跑 `spec → validate → lint → trigger/log/readback`，不能从离线测试推断“全部实机验证”。
+- **目标网关验收：** 真实 property/event/action、分区型号、设备替换、物理触发和恢复操作依赖具体设备与固件，必须在用户网关上重新跑 `spec → validate --spec-aware → lint → trigger/log/readback`，不能从离线测试推断“全部实机验证”。
 
 ### 离线校验候选规则
 
@@ -323,7 +323,7 @@ xgg rule validate --body candidate.json
 jq '.' candidate.json | xgg rule validate --stdin
 ```
 
-需要额外核对设备 property/event 参数与 dtype，或 `deviceOutput` action 的 `action.in`/`props.ins` 输入契约时，显式加 `--spec-aware`。动作检查覆盖 missing/extra/duplicate PIID、literal 原生类型与取值域、变量 dtype 与 number range metadata；property-write 节点保持原有行为。该选项会访问公网 MIoT spec registry；404 会作为 warning 告知该 URN 的 spec 检查已跳过，超时、5xx 或无效 spec 会作为独立 error issue 返回，同时保留同一次运行已发现的本地结构/表达式问题：
+需要额外核对设备 property/event 参数与 dtype，或 `deviceOutput` action 的 `action.in`/`props.ins` 输入契约时，显式加 `--spec-aware`；设备 action 图的主验收流程必须使用它。动作检查覆盖 missing/extra/duplicate PIID、逐索引顺序、重复 short-name、literal 原生类型与统一数值域、变量 dtype 与有效 number range metadata；property-write 节点保持原有行为。该选项会访问公网 MIoT spec registry；404 会作为 warning 告知该 URN 的 spec 检查已跳过，超时、5xx 或无效 spec 会作为独立 error issue 返回，同时保留同一次运行已发现的本地结构/表达式问题：
 
 ```bash
 xgg rule validate --body candidate.json --spec-aware
