@@ -250,8 +250,13 @@ test('only a clean single-rule strict lint suggests enable', async (t) => {
   assertNoHint(advisoryWarning, 1);
 
   const strictWarning = await runCli(['rule', 'lint', '--rule-id', 'warning', '--strict'], agent);
-  assert.equal(strictWarning.payload.summary.errors > 0, true);
-  assertNoHint(strictWarning, 2);
+  assert.equal(strictWarning.payload.summary.errors, 0);
+  assert.equal(strictWarning.payload.summary.warnings > 0, true);
+  assert.equal(
+    strictWarning.payload.issues.some((issue) => issue.message.includes('self-loop')),
+    true,
+  );
+  assertNoHint(strictWarning, 1);
 
   const strictError = await runCli(
     ['rule', 'lint', '--rule-id', 'disconnected', '--strict'],

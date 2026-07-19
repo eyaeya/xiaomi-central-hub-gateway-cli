@@ -175,9 +175,13 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
         const sourceId = node.id as string;
         if (targetId === sourceId) {
           issues.push({
-            severity: input.strict === true ? 'error' : 'warn',
+            // GitHub #96 — the official canvas permits same-node feedback,
+            // and some cards have finite control paths (for example
+            // loop.output -> loop.stop). Keep the risk visible in every lint
+            // mode without treating all self-loops as invalid topology.
+            severity: 'warn',
             path: edgePath,
-            message: 'self-loop (gateway accepts; suspicious)',
+            message: 'self-loop (gateway and canvas accept; verify feedback terminates)',
           });
         }
 

@@ -533,14 +533,6 @@ test('valid snapshots keep graph guard hints actionable and prevent setGraph', a
   const agent = await startFakeAgent(t);
   const cases = [
     {
-      name: 'self-loop',
-      nodes: [delay('wait')],
-      from: 'wait:output',
-      to: 'wait:input',
-      message: /self-loop:/,
-      hint: /cannot connect to itself/i,
-    },
-    {
       name: 'invalid-target-pin',
       nodes: [onLoad('start'), delay('wait')],
       from: 'start:output',
