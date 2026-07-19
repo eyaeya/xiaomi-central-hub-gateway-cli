@@ -6,6 +6,7 @@ import {
   nodeSchemaForType,
   parseEventArgVarTarget,
   parseFiniteDecimalLiteral,
+  parseSafeIntegerDecimalLiteral,
   parseVarSetExpr,
 } from '@eyaeya/xgg-core';
 import type { AddNodeShortcut } from '@eyaeya/xgg-core';
@@ -134,9 +135,12 @@ function assertNopOptionUsage(opts: NodeAddOpts): void {
     ...(opts.deviceAction !== undefined ? ['--device-action'] : []),
     ...(opts.deviceEvent !== undefined ? ['--device-event'] : []),
     ...((opts.eventFilter?.length ?? 0) > 0 ? ['--event-filter'] : []),
+    ...((opts.eventFilterInclude?.length ?? 0) > 0 ? ['--event-filter-include'] : []),
+    ...((opts.eventFilterBetween?.length ?? 0) > 0 ? ['--event-filter-between'] : []),
     ...((opts.eventArgVar?.length ?? 0) > 0 ? ['--event-arg-var'] : []),
     ...(opts.threshold !== undefined ? ['--threshold'] : []),
     ...(opts.propertyValue !== undefined ? ['--property-value'] : []),
+    ...(opts.propertyInclude !== undefined ? ['--property-include'] : []),
     ...(opts.op !== undefined ? ['--op'] : []),
     ...(opts.params !== undefined ? ['--params'] : []),
     ...(opts.value !== undefined ? ['--value'] : []),
@@ -174,12 +178,17 @@ function assertNopOptionUsage(opts: NodeAddOpts): void {
   }
 }
 
-function parseFiniteDecimal(raw: string): number {
+interface ParsedDecimalOption {
+  literal: string;
+  value: number;
+}
+
+function parseFiniteDecimal(raw: string): ParsedDecimalOption {
   const parsed = parseFiniteDecimalLiteral(raw);
   if (parsed === null) {
     throw new InvalidArgumentError(`expected a finite decimal number (got "${raw}")`);
   }
-  return parsed;
+  return { literal: raw.trim(), value: parsed };
 }
 
 function parseBooleanLiteral(raw: string): boolean {
@@ -195,8 +204,8 @@ function parseFiniteIntegerList(raw: string): number[] {
       `expected one or more comma-separated finite integers (got "${raw}")`,
     );
   }
-  const values = tokens.map((token) => parseFiniteDecimalLiteral(token));
-  if (values.some((value) => value === null || !Number.isSafeInteger(value))) {
+  const values = tokens.map((token) => parseSafeIntegerDecimalLiteral(token));
+  if (values.some((value) => value === null)) {
     throw new InvalidArgumentError(
       `expected one or more comma-separated finite integers within JavaScript's safe range (got "${raw}")`,
     );
@@ -284,6 +293,21 @@ function assertEventFilterUsage(opts: NodeAddOpts): void {
   }
 }
 
+function assertForceOutOfRangeUsage(opts: NodeAddOpts): void {
+  if (opts.forceOutOfRange !== true) return;
+  if (
+    (opts.type !== 'deviceInput' && opts.type !== 'deviceGet') ||
+    opts.deviceDid === undefined ||
+    opts.deviceProperty === undefined ||
+    opts.deviceEvent !== undefined ||
+    opts.cfg !== undefined
+  ) {
+    throw new ConfigError(
+      '--force-out-of-range only applies to typed deviceInput/deviceGet property comparisons',
+    );
+  }
+}
+
 function assertPositionUsage(opts: NodeAddOpts): void {
   if (opts.pos?.exprHeight === undefined) return;
   if (opts.type === 'varSetNumber' || opts.type === 'varSetString') return;
@@ -354,7 +378,7 @@ interface NodeAddOpts extends RuleOpts {
   // (e.g. `1=global.lockOpId`). Used for multi-arg events where each
   // captured event-argument flows into its own destination variable.
   eventArgVar?: string[];
-  threshold?: number;
+  threshold?: ParsedDecimalOption;
   propertyValue?: string;
   propertyInclude?: number[];
   op?: string;
@@ -386,7 +410,7 @@ interface NodeAddOpts extends RuleOpts {
   // --threshold. Forwarded as-is (no Number.parseFloat coercion which
   // would NaN-out any non-numeric input).
   varValue?: string;
-  threshold2?: number;
+  threshold2?: ParsedDecimalOption;
   allowUnknownScope?: boolean;
   at?: string;
   sunrise?: boolean;
@@ -452,7 +476,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--event-filter-include <piid=values>',
-      'deviceInput event-mode safe-int membership filter (repeatable). Form: <piid>=<v1>,<v2>[,...]. The target arg must project to int; every value is checked against value-list/value-range. Example: --event-filter-include 2=1,2,3',
+      'deviceInput event-mode safe-int membership filter (repeatable). Form: <piid>=<v1>[,<v2>...]. The target arg must project to int; every value is checked against value-list/value-range. Example: --event-filter-include 2=1,2,3',
       (v: string, acc: string[] = []) => acc.concat(v),
       [] as string[],
     )
@@ -479,7 +503,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--property-include <N,N,...>',
-      'deviceInput/deviceGet safe-int membership values (one or more, exact order preserved); implies gateway operator include and is mutually exclusive with --op/--threshold/--property-value',
+      'deviceInput/deviceGet safe-int membership values (one or more, exact order preserved); implies gateway operator include and is mutually exclusive with --op/--threshold/--threshold2/--property-value',
       parseFiniteIntegerList,
     )
     .option(
@@ -713,6 +737,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
         assertPropertyValueUsage(opts);
         assertPropertyIncludeUsage(opts);
         assertEventFilterUsage(opts);
+        assertForceOutOfRangeUsage(opts);
         assertPositionUsage(opts);
         assertSimplifiedUsage(opts);
         assertPreloadUsage(opts);
@@ -791,9 +816,9 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             ...(opts.op !== undefined && {
               op: opts.op as 'gt' | 'lt' | 'eq' | 'ne' | 'gte' | 'lte' | 'between',
             }),
-            ...(opts.threshold !== undefined && { threshold: opts.threshold }),
+            ...(opts.threshold !== undefined && { threshold: opts.threshold.value }),
             ...(opts.varValue !== undefined && { varValue: opts.varValue }),
-            ...(opts.threshold2 !== undefined && { threshold2: opts.threshold2 }),
+            ...(opts.threshold2 !== undefined && { threshold2: opts.threshold2.value }),
             ...(opts.preload !== undefined && { preload: opts.preload }),
             ...(opts.allowUnknownScope === true && { allowUnknownScope: true }),
             ...(opts.at !== undefined && { at: opts.at }),
@@ -853,7 +878,10 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
               }),
             ...(opts.eventArgVar !== undefined &&
               opts.eventArgVar.length > 0 && { deviceEventArgVars: opts.eventArgVar }),
-            ...(opts.threshold !== undefined && { threshold: opts.threshold }),
+            ...(opts.threshold !== undefined && {
+              threshold: opts.threshold.value,
+              thresholdLiteral: opts.threshold.literal,
+            }),
             ...(opts.propertyValue !== undefined && { propertyValue: opts.propertyValue }),
             ...(opts.propertyInclude !== undefined && {
               propertyInclude: opts.propertyInclude,
@@ -861,7 +889,10 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             // F49 (2026-05-30) — --threshold2 must reach device-shortcut
             // path too (used by deviceInput/deviceGet `--op between`).
             // Previously only forwarded inside the non-device branch.
-            ...(opts.threshold2 !== undefined && { threshold2: opts.threshold2 }),
+            ...(opts.threshold2 !== undefined && {
+              threshold2: opts.threshold2.value,
+              threshold2Literal: opts.threshold2.literal,
+            }),
             ...(opts.op !== undefined && {
               op: opts.op as 'gt' | 'lt' | 'eq' | 'ne' | 'gte' | 'lte' | 'between',
             }),

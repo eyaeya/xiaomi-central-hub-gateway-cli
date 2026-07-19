@@ -15,6 +15,7 @@ import {
   miotNumericOperandDomainError,
   miotShortcutOperatorToWire,
   parseFiniteDecimalLiteral,
+  parseSafeIntegerDecimalLiteral,
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { type DurationRange, parseDurationLiteral } from '../schemas/nodes/duration.js';
@@ -785,6 +786,13 @@ export interface SetGraphOptions {
   listAvailVars?: (ruleId: string) => Promise<AvailableVariable[]>;
   /** Resource-level final precondition run after validation, immediately before setGraph. */
   beforeWrite?: () => Promise<void>;
+  /**
+   * Node-local authoring intent for numeric values that deliberately exceed
+   * the current MIoT value-range (or do not align to its step). This metadata
+   * is never persisted in the graph and never bypasses dtype, finite-number,
+   * safe-integer, value-list, or comparison-shape validation.
+   */
+  forceOutOfRangeNodeIds?: ReadonlySet<string>;
   // F66a (2026-05-31) — skip ONLY the lintGraph canvas-predicate gate while
   // keeping validateGraphOrThrow active. Subtractive internal mutators
   // (removeNode no-cascade, removeEdge, …) may write a graph whose edges the
@@ -809,7 +817,12 @@ async function preflightGraphMutation(req: GraphSetRequest, opts: SetGraphOption
   }
   // Keep deterministic schema/per-card checks ahead of session access. Live
   // variable/spec callbacks remain inside the leased implementation below.
-  await validateGraphOrThrow({ graph: params });
+  await validateGraphOrThrow({
+    graph: params,
+    ...(opts.forceOutOfRangeNodeIds !== undefined && {
+      forceOutOfRangeNodeIds: opts.forceOutOfRangeNodeIds,
+    }),
+  });
 }
 
 async function setGraphWithinWorkflow(
@@ -846,6 +859,9 @@ async function setGraphWithinWorkflow(
       graph: params,
       ...(opts.getDeviceSpec !== undefined && { getDeviceSpec: opts.getDeviceSpec }),
       ...(opts.listAvailVars !== undefined && { listAvailVars: opts.listAvailVars }),
+      ...(opts.forceOutOfRangeNodeIds !== undefined && {
+        forceOutOfRangeNodeIds: opts.forceOutOfRangeNodeIds,
+      }),
     });
   }
   await opts.beforeWrite?.();
@@ -1224,6 +1240,9 @@ export interface AddNodeShortcut {
   // service.properties[piid].format → SetVarDtype.
   deviceEventArgVars?: string[];
   threshold?: number;
+  // Original CLI decimal token retained until the MIoT dtype is known. This
+  // prevents a fractional/unsafe token from first rounding to a safe integer.
+  thresholdLiteral?: string;
   // String property comparison literal for deviceInput/deviceGet. Kept
   // separate from numeric `threshold` so CLI values never pass through
   // Number.parseFloat and silently become NaN.
@@ -1287,6 +1306,7 @@ export interface AddNodeShortcut {
   // coercion (which would silently NaN-out any non-numeric input).
   varValue?: string;
   threshold2?: number;
+  threshold2Literal?: string;
   allowUnknownScope?: boolean;
   // varSetNumber / varSetString (M14 task F, 2026-05-29): a single
   // user-facing expression string. The synthesizer runs `parseVarSetExpr()`
@@ -1447,6 +1467,7 @@ function assertNopShortcutUsage(shortcut: AddNodeShortcut): void {
     deviceEventBetweens: shortcut.deviceEventBetweens,
     deviceEventArgVars: shortcut.deviceEventArgVars,
     threshold: shortcut.threshold,
+    thresholdLiteral: shortcut.thresholdLiteral,
     propertyValue: shortcut.propertyValue,
     propertyInclude: shortcut.propertyInclude,
     op: shortcut.op,
@@ -1467,6 +1488,7 @@ function assertNopShortcutUsage(shortcut: AddNodeShortcut): void {
     varType: shortcut.varType,
     varValue: shortcut.varValue,
     threshold2: shortcut.threshold2,
+    threshold2Literal: shortcut.threshold2Literal,
     allowUnknownScope: shortcut.allowUnknownScope,
     expr: shortcut.expr,
     defaultExprScope: shortcut.defaultExprScope,
@@ -1547,6 +1569,18 @@ function assertShortcutComparisonUsage(shortcut: AddNodeShortcut): void {
       '--event-filter/--event-filter-include/--event-filter-between only apply to deviceInput event-mode shortcuts',
       { type: shortcut.type },
     );
+  }
+  if (shortcut.forceOutOfRange === true && !propertyMode) {
+    throw new ConfigError(
+      '--force-out-of-range only applies to deviceInput/deviceGet property-mode shortcuts',
+      { type: shortcut.type },
+    );
+  }
+  if (shortcut.thresholdLiteral !== undefined && shortcut.threshold === undefined) {
+    throw new ConfigError('thresholdLiteral requires threshold');
+  }
+  if (shortcut.threshold2Literal !== undefined && shortcut.threshold2 === undefined) {
+    throw new ConfigError('threshold2Literal requires threshold2');
   }
 }
 
@@ -1848,6 +1882,9 @@ async function addNodeWithinWorkflow(
     validate: input.validate !== false,
     skipLint: true,
     ...(input.getDeviceSpec !== undefined && { getDeviceSpec: input.getDeviceSpec }),
+    ...(input.shortcut?.forceOutOfRange === true && {
+      forceOutOfRangeNodeIds: new Set([nodeId]),
+    }),
     ...(input.varCheck !== false && {
       listAvailVars: (ruleId: string) => listAvailVarsForRule(ruleId, deps),
     }),
@@ -1957,8 +1994,8 @@ function parseDeviceEventArg(
         { raw, piid },
       );
     }
-    const values = tokens.map((token) => parseFiniteDecimalLiteral(token));
-    if (values.some((value) => value === null || !Number.isSafeInteger(value))) {
+    const values = tokens.map((token) => parseSafeIntegerDecimalLiteral(token));
+    if (values.some((value) => value === null)) {
       throw new ConfigError(
         `--event-filter-include piid=${piid} values must all be finite integers within JavaScript's safe range (got "${rest}")`,
         { raw, piid },
@@ -1991,7 +2028,9 @@ function parseDeviceEventArg(
         { raw, piid },
       );
     }
-    const parsed = tokens.map((token) => parseFiniteDecimalLiteral(token));
+    const parsed = tokens.map((token) =>
+      dtype === 'int' ? parseSafeIntegerDecimalLiteral(token) : parseFiniteDecimalLiteral(token),
+    );
     const valid = parsed.every(
       (value) => value !== null && (dtype === 'float' || Number.isSafeInteger(value)),
     );
@@ -2059,8 +2098,8 @@ function parseDeviceEventArg(
     return { piid, dtype, operator, v1 };
   }
   // int — all 6 scalar operators legal per F40.
-  const v1 = parseFiniteDecimalLiteral(rest);
-  if (v1 === null || !Number.isSafeInteger(v1)) {
+  const v1 = parseSafeIntegerDecimalLiteral(rest);
+  if (v1 === null) {
     throw new ConfigError(
       `int v1 must be an integer within JavaScript's safe range, got "${rest}"`,
       { raw },
@@ -2597,6 +2636,13 @@ function synthesizePropertyComparison(
 ): Record<string, unknown> {
   const dtype = projectMiotComparisonDtype(property);
 
+  if (shortcut.forceOutOfRange === true && dtype !== 'int' && dtype !== 'float') {
+    throw new ConfigError(
+      `--force-out-of-range only applies to numeric property comparisons (got ${dtype} property "${propertyName}")`,
+      { dtype, property: propertyName },
+    );
+  }
+
   if (shortcut.propertyInclude !== undefined) {
     if (dtype !== 'int') {
       throw new ConfigError(
@@ -2687,14 +2733,55 @@ function synthesizePropertyComparison(
         { property: propertyName },
       );
     }
+    const booleanThreshold =
+      shortcut.thresholdLiteral === undefined
+        ? shortcut.threshold
+        : parseSafeIntegerDecimalLiteral(shortcut.thresholdLiteral);
+    if (booleanThreshold === null) {
+      throw new ConfigError(
+        `boolean property "${propertyName}" requires an exact 0 or 1 --threshold literal (got ${String(shortcut.thresholdLiteral)})`,
+        { thresholdLiteral: shortcut.thresholdLiteral, property: propertyName },
+      );
+    }
+    if (
+      shortcut.thresholdLiteral !== undefined &&
+      shortcut.threshold !== undefined &&
+      !Object.is(shortcut.threshold, booleanThreshold)
+    ) {
+      throw new ConfigError('threshold and thresholdLiteral resolve to different values', {
+        threshold: shortcut.threshold,
+        thresholdLiteral: shortcut.thresholdLiteral,
+      });
+    }
     return {
       dtype,
       operator,
-      v1: boolThresholdFromShortcut(shortcut.threshold, propertyName),
+      v1: boolThresholdFromShortcut(booleanThreshold, propertyName),
     };
   }
 
-  const thresholdValue = shortcut.threshold ?? 0;
+  const thresholdValue =
+    shortcut.thresholdLiteral === undefined
+      ? (shortcut.threshold ?? 0)
+      : dtype === 'int'
+        ? parseSafeIntegerDecimalLiteral(shortcut.thresholdLiteral)
+        : parseFiniteDecimalLiteral(shortcut.thresholdLiteral);
+  if (thresholdValue === null) {
+    throw new ConfigError(
+      `${dtype} property "${propertyName}" requires an exact ${dtype === 'int' ? 'safe integer' : 'finite number'} --threshold literal (got ${String(shortcut.thresholdLiteral)})`,
+      { dtype, thresholdLiteral: shortcut.thresholdLiteral, property: propertyName },
+    );
+  }
+  if (
+    shortcut.thresholdLiteral !== undefined &&
+    shortcut.threshold !== undefined &&
+    !Object.is(shortcut.threshold, thresholdValue)
+  ) {
+    throw new ConfigError('threshold and thresholdLiteral resolve to different values', {
+      threshold: shortcut.threshold,
+      thresholdLiteral: shortcut.thresholdLiteral,
+    });
+  }
   const validThreshold =
     dtype === 'int' ? Number.isSafeInteger(thresholdValue) : Number.isFinite(thresholdValue);
   if (!validThreshold) {
@@ -2727,8 +2814,30 @@ function synthesizePropertyComparison(
       { op: rawOp, property: propertyName },
     );
   }
+  let betweenV2: number | undefined;
   if (isBetween) {
-    const threshold2 = shortcut.threshold2 as number;
+    const threshold2 =
+      shortcut.threshold2Literal === undefined
+        ? (shortcut.threshold2 as number)
+        : dtype === 'int'
+          ? parseSafeIntegerDecimalLiteral(shortcut.threshold2Literal)
+          : parseFiniteDecimalLiteral(shortcut.threshold2Literal);
+    if (threshold2 === null) {
+      throw new ConfigError(
+        `${dtype} property "${propertyName}" requires an exact ${dtype === 'int' ? 'safe integer' : 'finite number'} --threshold2 literal (got ${String(shortcut.threshold2Literal)})`,
+        { dtype, threshold2Literal: shortcut.threshold2Literal, property: propertyName },
+      );
+    }
+    if (
+      shortcut.threshold2Literal !== undefined &&
+      shortcut.threshold2 !== undefined &&
+      !Object.is(shortcut.threshold2, threshold2)
+    ) {
+      throw new ConfigError('threshold2 and threshold2Literal resolve to different values', {
+        threshold2: shortcut.threshold2,
+        threshold2Literal: shortcut.threshold2Literal,
+      });
+    }
     const validThreshold2 =
       dtype === 'int' ? Number.isSafeInteger(threshold2) : Number.isFinite(threshold2);
     if (!validThreshold2) {
@@ -2752,6 +2861,7 @@ function synthesizePropertyComparison(
         { threshold2, property: propertyName },
       );
     }
+    betweenV2 = threshold2;
   }
 
   return {
@@ -2761,7 +2871,7 @@ function synthesizePropertyComparison(
       operator === MIOT_COMPARISON_CONTRACT.int.equalityWireOperator
         ? [thresholdValue]
         : thresholdValue,
-    ...(isBetween && { v2: shortcut.threshold2 }),
+    ...(isBetween && { v2: betweenV2 }),
   };
 }
 

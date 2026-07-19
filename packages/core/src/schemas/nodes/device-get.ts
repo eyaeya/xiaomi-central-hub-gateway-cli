@@ -26,6 +26,9 @@ const propertyBase = {
   preload: z.boolean().optional(),
 };
 
+const SafeInteger = z.number().refine(Number.isSafeInteger, 'Expected a safe integer');
+const FiniteNumber = z.number().finite();
+
 const DeviceGetBoolProps = z
   .object({
     ...propertyBase,
@@ -49,7 +52,7 @@ const DeviceGetIntIncludeProps = z
     ...propertyBase,
     dtype: z.literal('int'),
     operator: z.literal(MIOT_COMPARISON_CONTRACT.int.equalityWireOperator),
-    v1: z.array(z.number().int()),
+    v1: z.array(SafeInteger).min(1),
   })
   .strict();
 
@@ -58,17 +61,21 @@ const DeviceGetIntBetweenProps = z
     ...propertyBase,
     dtype: z.literal('int'),
     operator: z.literal('between'),
-    v1: z.number().int(),
-    v2: z.number().int(),
+    v1: SafeInteger,
+    v2: SafeInteger,
   })
-  .strict();
+  .strict()
+  .refine(({ v1, v2 }) => v1 <= v2, {
+    path: ['v2'],
+    message: 'between requires v1 <= v2',
+  });
 
 const DeviceGetIntScalarProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('int'),
     operator: z.enum(MIOT_COMPARISON_CONTRACT.int.scalarWireOperators),
-    v1: z.number().int(),
+    v1: SafeInteger,
   })
   .strict();
 
@@ -77,17 +84,21 @@ const DeviceGetFloatBetweenProps = z
     ...propertyBase,
     dtype: z.literal('float'),
     operator: z.literal('between'),
-    v1: z.number(),
-    v2: z.number(),
+    v1: FiniteNumber,
+    v2: FiniteNumber,
   })
-  .strict();
+  .strict()
+  .refine(({ v1, v2 }) => v1 <= v2, {
+    path: ['v2'],
+    message: 'between requires v1 <= v2',
+  });
 
 const DeviceGetFloatScalarProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('float'),
     operator: z.enum(MIOT_COMPARISON_CONTRACT.float.scalarWireOperators),
-    v1: z.number(),
+    v1: FiniteNumber,
   })
   .strict();
 

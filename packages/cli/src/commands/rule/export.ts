@@ -43,7 +43,7 @@ export function attachExport(cmd: Command): void {
     .option('--pretty', 'pretty-print JSON output (only with --format json)')
     .option(
       '--strict-roundtrip',
-      'fail instead of emitting any node warning that signals semantic round-trip loss (unknown cfg/type/spec mapping/operand)',
+      'fail on modeled-node warnings that signal semantic loss (cfg/spec mapping/operand); unmodeled opaque cards remain allowed for lossless same-id replay, while --target-id clone rejects them',
     );
   addNextHintFlag(sub)
     .addHelpText(
@@ -75,9 +75,12 @@ Examples:
       # Clone with an explicit name.
 
 Limitations:
-  - --strict-roundtrip rejects every node warning that would change or omit
-    graph semantics, including unknown cards/spec mappings/operands and cfg
-    keys. Permissive export still surfaces those warnings on stderr/JSON.
+  - --strict-roundtrip rejects modeled-node warnings that would change or omit
+    graph semantics, including stale spec mappings, unsupported operands and
+    unknown modeled cfg/props keys. Unmodeled future cards are preserved as
+    opaque raw nodes and remain valid in strict mode for lossless same-id
+    replay; --target-id cloning still rejects them because unknown payloads
+    cannot be remapped safely. Permissive export surfaces warnings on stderr/JSON.
   - varSetNumber / varSetString elements must be losslessly expressible in
     the current --expr DSL. Export fails before returning a script when a
     variable/constant boundary would be absorbed or rejected; add an explicit

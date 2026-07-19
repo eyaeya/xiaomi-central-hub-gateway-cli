@@ -12,7 +12,9 @@ import { isMissingScopeError, listVariables } from '../resources/variables.js';
 import type { DeviceSpec, MiotAction, MiotProperty, MiotService } from '../schemas/device-spec.js';
 import {
   type MiotComparisonDtype,
+  isMiotWireOperator,
   miotNumericOperandDomainError,
+  miotNumericOperandDomainIssue,
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { durationToMilliseconds, isDurationUnit } from '../schemas/nodes/duration.js';
@@ -190,6 +192,19 @@ export async function exportRuleFromView(
   const specCache = new Map<string, DeviceSpec>();
   for (const node of view.nodes) {
     const warningCountBefore = nodeWarnings.length;
+    const rawNode = node as { id?: unknown; type?: unknown };
+    const modeledSchema =
+      typeof rawNode.type === 'string' ? nodeSchemaForType(rawNode.type) : undefined;
+    if (modeledSchema !== undefined) {
+      const parsed = modeledSchema.safeParse(node);
+      if (!parsed.success) {
+        const first = parsed.error.issues[0];
+        const where = first?.path.length ? ` at ${first.path.join('.')}` : '';
+        nodeWarnings.push(
+          `node ${String(rawNode.id)} (${String(rawNode.type)}) fails its modeled schema${where}: ${first?.message ?? 'invalid node shape'}; typed replay cannot guarantee semantic fidelity`,
+        );
+      }
+    }
     const result = await renderNode(node, deps, specCache, nodeWarnings);
     if (result) commands.push(result);
     // An opaque-raw command is deliberately lossless for same-id replay: its
@@ -580,6 +595,13 @@ function appendPropertyComparisonFlags(
     );
   }
 
+  if (typeof props.operator !== 'string' || !isMiotWireOperator(projectedDtype, props.operator)) {
+    warnings.push(
+      `${nodeType} node ${nodeId}: operator "${String(props.operator)}" is invalid for projected dtype "${projectedDtype}"; comparison flags were omitted`,
+    );
+    return;
+  }
+
   if (projectedDtype === 'string') {
     const reverseOp = reverseOpSymbol(String(props.operator));
     if (reverseOp !== null) flags.push({ name: '--op', value: reverseOp });
@@ -609,10 +631,7 @@ function appendPropertyComparisonFlags(
       flags.push({ name: '--property-include', value: v1.join(',') });
       if (property !== null) {
         for (const value of v1) {
-          const domainError = miotNumericOperandDomainError(property, value);
-          if (domainError !== null) {
-            warnings.push(`${nodeType} node ${nodeId}: ${domainError}; typed replay will reject`);
-          }
+          appendPropertyDomainIntent(flags, property, value, nodeType, nodeId, warnings);
         }
       }
     } else {
@@ -649,10 +668,7 @@ function appendPropertyComparisonFlags(
   if (typeof threshold === 'number') {
     flags.push({ name: '--threshold', value: String(threshold) });
     if (property !== null) {
-      const domainError = miotNumericOperandDomainError(property, threshold);
-      if (domainError !== null) {
-        warnings.push(`${nodeType} node ${nodeId}: ${domainError}; typed replay will reject`);
-      }
+      appendPropertyDomainIntent(flags, property, threshold, nodeType, nodeId, warnings);
     }
   } else if (typeof threshold === 'boolean') {
     flags.push({ name: '--threshold', value: threshold ? '1' : '0' });
@@ -673,10 +689,7 @@ function appendPropertyComparisonFlags(
   } else if (props.operator === 'between' && typeof props.v2 === 'number') {
     flags.push({ name: '--threshold2', value: String(props.v2) });
     if (property !== null) {
-      const domainError = miotNumericOperandDomainError(property, props.v2);
-      if (domainError !== null) {
-        warnings.push(`${nodeType} node ${nodeId}: ${domainError}; typed replay will reject`);
-      }
+      appendPropertyDomainIntent(flags, property, props.v2, nodeType, nodeId, warnings);
     }
     if (typeof threshold === 'number' && threshold > props.v2) {
       warnings.push(
@@ -688,6 +701,25 @@ function appendPropertyComparisonFlags(
       `${nodeType} node ${nodeId}: between comparison has no numeric v2; --threshold2 was omitted`,
     );
   }
+}
+
+function appendPropertyDomainIntent(
+  flags: ExportFlag[],
+  property: MiotProperty,
+  value: number,
+  nodeType: 'deviceInput' | 'deviceGet',
+  nodeId: string,
+  warnings: string[],
+): void {
+  const domainIssue = miotNumericOperandDomainIssue(property, value);
+  if (domainIssue === null) return;
+  if (domainIssue.kind === 'range' || domainIssue.kind === 'step') {
+    if (!flags.some((flag) => flag.name === '--force-out-of-range')) {
+      flags.push({ name: '--force-out-of-range' });
+    }
+    return;
+  }
+  warnings.push(`${nodeType} node ${nodeId}: ${domainIssue.message}; typed replay will reject`);
 }
 
 async function renderDeviceInput(
@@ -729,7 +761,16 @@ async function renderDeviceInput(
     // instead of the captured filter. Args without an operator are "match any".
     const eventArgs = props.arguments;
     if (Array.isArray(eventArgs)) {
+      const seenPiids = new Set<number>();
       for (const arg of eventArgs) {
+        if (isRecord(arg) && typeof arg.piid === 'number') {
+          if (seenPiids.has(arg.piid)) {
+            warnings.push(
+              `deviceInput node ${n.id}: duplicate event argument piid ${arg.piid}; typed replay rejects ambiguous duplicate filters`,
+            );
+          }
+          seenPiids.add(arg.piid);
+        }
         if (!isRecord(arg) || typeof arg.piid !== 'number' || !('operator' in arg)) continue;
         const argProperty = findPropertyDetails(spec, Number(props.siid), arg.piid)?.property;
         if (argProperty === undefined) {

@@ -29,14 +29,17 @@ export {
   isMiotEventWireOperator,
   isMiotWireOperator,
   miotNumericOperandDomainError,
+  miotNumericOperandDomainIssue,
   miotShortcutOperatorToWire,
   parseFiniteDecimalLiteral,
+  parseSafeIntegerDecimalLiteral,
   projectMiotComparisonDtype,
 } from './schemas/miot-comparison.js';
 export type {
   MiotComparisonDtype,
   MiotComparisonShortcutOperator,
   MiotComparisonWireOperator,
+  MiotNumericOperandDomainIssue,
 } from './schemas/miot-comparison.js';
 export {
   JsonRpcRouter,

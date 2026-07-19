@@ -54,6 +54,9 @@ test('property include preserves safe-integer boundaries and rejects lossy numer
     '',
     '1,,2',
     '1.5,2',
+    '1.0000000000000001,2',
+    '9007199254740990.9',
+    '1e-324',
     '1,2oops',
     '9007199254740992',
     '9007199254740993',
@@ -71,6 +74,17 @@ test('property include preserves safe-integer boundaries and rejects lossy numer
       raw,
     );
   }
+});
+
+test('numeric threshold parser preserves the original decimal token for dtype-aware parsing', () => {
+  const add = nodeAddCommand(buildProgram());
+  assert.ok(add);
+  add.parseOptions(['--threshold', ' 9.007199254740991e15 ', '--threshold2', '1.25e1']);
+  assert.deepEqual(add.opts().threshold, {
+    literal: '9.007199254740991e15',
+    value: Number.MAX_SAFE_INTEGER,
+  });
+  assert.deepEqual(add.opts().threshold2, { literal: '1.25e1', value: 12.5 });
 });
 
 test('node-add exposes explicit preload true/false without hiding omission', () => {

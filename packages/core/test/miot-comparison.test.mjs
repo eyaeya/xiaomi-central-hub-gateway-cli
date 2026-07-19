@@ -9,8 +9,10 @@ import {
   MIOT_COMPARISON_CONTRACT,
   addNode,
   exportRuleFromView,
+  miotNumericOperandDomainIssue,
   nodeSchemaForType,
   parseFiniteDecimalLiteral,
+  parseSafeIntegerDecimalLiteral,
   projectMiotComparisonDtype,
   renderExportedAsShell,
   validateGraph,
@@ -216,9 +218,15 @@ function shortcutFromExport(command) {
   if (propertyInclude !== undefined)
     shortcut.propertyInclude = propertyInclude.split(',').map(Number);
   const threshold = one('--threshold');
-  if (threshold !== undefined) shortcut.threshold = Number(threshold);
+  if (threshold !== undefined) {
+    shortcut.threshold = Number(threshold);
+    shortcut.thresholdLiteral = threshold;
+  }
   const threshold2 = one('--threshold2');
-  if (threshold2 !== undefined) shortcut.threshold2 = Number(threshold2);
+  if (threshold2 !== undefined) {
+    shortcut.threshold2 = Number(threshold2);
+    shortcut.threshold2Literal = threshold2;
+  }
   const eventFilters = flagValues(command, '--event-filter').filter((value) => value !== undefined);
   if (eventFilters.length > 0) shortcut.deviceEventArgs = eventFilters;
   const eventIncludes = flagValues(command, '--event-filter-include').filter(
@@ -231,6 +239,9 @@ function shortcutFromExport(command) {
   if (eventBetweens.length > 0) shortcut.deviceEventBetweens = eventBetweens;
   if (command.flags.some((flag) => flag.name === '--preload')) shortcut.preload = true;
   if (command.flags.some((flag) => flag.name === '--no-preload')) shortcut.preload = false;
+  if (command.flags.some((flag) => flag.name === '--force-out-of-range')) {
+    shortcut.forceOutOfRange = true;
+  }
   return shortcut;
 }
 
@@ -318,6 +329,49 @@ test('shared MIoT projector and contract distinguish enum floats from continuous
   assert.equal(parseFiniteDecimalLiteral(''), null);
   assert.equal(parseFiniteDecimalLiteral('0x10'), null);
   assert.equal(parseFiniteDecimalLiteral('1oops'), null);
+});
+
+test('safe-integer decimal parsing is mathematical rather than IEEE-rounded', () => {
+  for (const [literal, expected] of [
+    ['0', 0],
+    ['-0', -0],
+    ['1.0', 1],
+    ['1e3', 1000],
+    ['1.2300e2', 123],
+    ['9.007199254740991e15', Number.MAX_SAFE_INTEGER],
+    ['-9.007199254740991e15', Number.MIN_SAFE_INTEGER],
+  ]) {
+    assert.equal(parseSafeIntegerDecimalLiteral(literal), expected, literal);
+  }
+  for (const literal of [
+    '1.0000000000000001',
+    '9007199254740990.9',
+    '1e-324',
+    '9.007199254740992e15',
+    '0x10',
+    '1oops',
+  ]) {
+    assert.equal(parseSafeIntegerDecimalLiteral(literal), null, literal);
+  }
+});
+
+test('large safe-integer steps are checked exactly while decimal steps retain bounded tolerance', () => {
+  assert.equal(
+    miotNumericOperandDomainIssue(
+      { 'value-range': [0, Number.MAX_SAFE_INTEGER, 2] },
+      Number.MAX_SAFE_INTEGER,
+    )?.kind,
+    'step',
+  );
+  assert.equal(miotNumericOperandDomainIssue({ 'value-range': [0, 1, 0.1] }, 0.3), null);
+  assert.equal(miotNumericOperandDomainIssue({ 'value-range': [0.01, 100, 0.01] }, 99.99), null);
+  assert.equal(miotNumericOperandDomainIssue({ 'value-range': [0.1, 1, 0.0001] }, 0.3), null);
+  assert.equal(miotNumericOperandDomainIssue({ 'value-range': [0, 1, 0.1] }, 0.1 + 0.2), null);
+  assert.equal(
+    miotNumericOperandDomainIssue({ 'value-range': [0, 10_000_001, 1] }, 10_000_000.000000002)
+      ?.kind,
+    'step',
+  );
 });
 
 test('string property shortcut creates, validates, exports, and replays without coercion', async () => {
@@ -755,8 +809,227 @@ test('int operands preserve MAX_SAFE_INTEGER and reject every unsafe numeric pat
   );
   await assert.rejects(
     exportRuleFromView(unsafeView, source.deps, undefined, true),
-    /safe-integer v1 array/,
+    /safe integer|safe-integer v1 array/,
   );
+});
+
+test('integer shortcuts reject decimal tokens that only become integers after IEEE rounding', async () => {
+  const exact = createStatefulGateway();
+  await addShortcut(exact, {
+    type: 'deviceGet',
+    id: 'exact-scientific-int',
+    deviceDid: did,
+    deviceProperty: 'large-count',
+    op: 'gt',
+    threshold: Number.MAX_SAFE_INTEGER,
+    thresholdLiteral: '9.007199254740991e15',
+  });
+  assert.equal(exact.state.nodes[0].props.v1, Number.MAX_SAFE_INTEGER);
+
+  for (const raw of ['1.0000000000000001', '9007199254740990.9', '1e-324']) {
+    const property = createStatefulGateway();
+    await assert.rejects(
+      addShortcut(property, {
+        type: 'deviceGet',
+        deviceDid: did,
+        deviceProperty: 'large-count',
+        op: 'gt',
+        threshold: Number(raw),
+        thresholdLiteral: raw,
+      }),
+      /exact safe integer --threshold literal/,
+      raw,
+    );
+
+    for (const eventShortcut of [
+      { deviceEventArgs: [`6>${raw}`] },
+      { deviceEventIncludes: [`6=${raw}`] },
+      { deviceEventBetweens: [`6=0,${raw}`] },
+    ]) {
+      const event = createStatefulGateway();
+      await assert.rejects(
+        addShortcut(event, {
+          type: 'deviceInput',
+          deviceDid: did,
+          deviceEvent: 'large-event',
+          ...eventShortcut,
+        }),
+        /safe range/,
+        `${raw}: ${JSON.stringify(eventShortcut)}`,
+      );
+    }
+  }
+
+  const roundedBoolean = createStatefulGateway();
+  await assert.rejects(
+    addShortcut(roundedBoolean, {
+      type: 'deviceGet',
+      deviceDid: did,
+      deviceProperty: 'on',
+      op: 'eq',
+      threshold: Number('1.0000000000000001'),
+      thresholdLiteral: '1.0000000000000001',
+    }),
+    /requires an exact 0 or 1 --threshold literal/,
+  );
+});
+
+test('--force-out-of-range survives injected spec validation and strict replay without weakening closed enums', async () => {
+  const source = createStatefulGateway();
+  await addShortcut(source, {
+    type: 'deviceGet',
+    id: 'forced-range',
+    deviceDid: did,
+    deviceProperty: 'count',
+    op: 'gt',
+    threshold: 12,
+    thresholdLiteral: '12',
+    forceOutOfRange: true,
+  });
+  assert.equal(source.state.nodes[0].props.v1, 12);
+
+  const ordinaryIssues = await validateGraph({
+    graph: { id: 'rule-1', nodes: source.state.nodes },
+    getDeviceSpec: source.deps.getDeviceSpec,
+  });
+  assert.equal(
+    ordinaryIssues.some((entry) => entry.message.includes('outside MIoT value-range')),
+    true,
+  );
+  assert.deepEqual(
+    await validateGraph({
+      graph: { id: 'rule-1', nodes: source.state.nodes },
+      getDeviceSpec: source.deps.getDeviceSpec,
+      forceOutOfRangeNodeIds: new Set(['forced-range']),
+    }),
+    [],
+  );
+
+  for (const shortcut of [
+    {
+      type: 'deviceGet',
+      deviceDid: did,
+      deviceProperty: 'count',
+      propertyInclude: [3],
+      forceOutOfRange: true,
+    },
+    {
+      type: 'deviceGet',
+      deviceDid: did,
+      deviceProperty: 'count',
+      op: 'between',
+      threshold: 2,
+      threshold2: 12,
+      forceOutOfRange: true,
+    },
+  ]) {
+    const gateway = createStatefulGateway();
+    await addShortcut(gateway, shortcut);
+    assert.equal(gateway.state.nodes.length, 1);
+  }
+
+  const closedEnum = createStatefulGateway();
+  await assert.rejects(
+    addShortcut(closedEnum, {
+      type: 'deviceGet',
+      deviceDid: did,
+      deviceProperty: 'enum-level',
+      propertyInclude: [3],
+      forceOutOfRange: true,
+    }),
+    /not in MIoT value-list/,
+  );
+
+  const exported = await exportRuleFromView(
+    { id: 'rule-1', cfg: source.state.summary, nodes: source.state.nodes },
+    source.deps,
+    undefined,
+    true,
+  );
+  assert.deepEqual(exported.warnings, []);
+  const command = exported.commands.find((entry) => entry.kind === 'node-add');
+  assert.ok(command);
+  assert.equal(command.flags.filter((flag) => flag.name === '--force-out-of-range').length, 1);
+
+  const replay = createStatefulGateway();
+  await addShortcut(replay, shortcutFromExport(command));
+  assert.deepEqual(replay.state.nodes[0].props, source.state.nodes[0].props);
+});
+
+test('raw validation rejects empty includes, unsafe/non-finite operands, reversed bounds, and duplicate event piids', async () => {
+  const source = createStatefulGateway();
+  await addShortcut(source, {
+    type: 'deviceGet',
+    id: 'property-include',
+    deviceDid: did,
+    deviceProperty: 'count',
+    propertyInclude: [2],
+  });
+  await addShortcut(source, {
+    type: 'deviceInput',
+    id: 'event-int',
+    deviceDid: did,
+    deviceEvent: 'large-event',
+    deviceEventArgs: ['6>1'],
+  });
+  await addShortcut(source, {
+    type: 'deviceInput',
+    id: 'event-int-between',
+    deviceDid: did,
+    deviceEvent: 'large-event',
+    deviceEventBetweens: ['6=1,2'],
+  });
+  await addShortcut(source, {
+    type: 'deviceInput',
+    id: 'event-float-between',
+    deviceDid: did,
+    deviceEvent: 'continuous-event',
+    deviceEventBetweens: ['3=1,2'],
+  });
+
+  const cases = [];
+  const emptyInclude = structuredClone(source.state.nodes[0]);
+  emptyInclude.props.v1 = [];
+  cases.push([emptyInclude, 'nodes[0].props.v1']);
+
+  const unsafeScalar = structuredClone(source.state.nodes[1]);
+  unsafeScalar.props.arguments[0].v1 = Number.MAX_SAFE_INTEGER + 1;
+  cases.push([unsafeScalar, 'nodes[0].props.arguments[0].v1']);
+
+  const unsafeInclude = structuredClone(source.state.nodes[1]);
+  unsafeInclude.props.arguments[0].operator = 'include';
+  unsafeInclude.props.arguments[0].v1 = [Number.MAX_SAFE_INTEGER + 1];
+  cases.push([unsafeInclude, 'nodes[0].props.arguments[0].v1']);
+
+  const reversedInt = structuredClone(source.state.nodes[2]);
+  reversedInt.props.arguments[0].v1 = 3;
+  reversedInt.props.arguments[0].v2 = 2;
+  cases.push([reversedInt, 'nodes[0].props.arguments[0].v2']);
+
+  const nonFiniteFloat = structuredClone(source.state.nodes[3]);
+  nonFiniteFloat.props.arguments[0].v1 = Number.POSITIVE_INFINITY;
+  cases.push([nonFiniteFloat, 'nodes[0].props.arguments[0].v1']);
+
+  const reversedFloat = structuredClone(source.state.nodes[3]);
+  reversedFloat.props.arguments[0].v1 = 3;
+  reversedFloat.props.arguments[0].v2 = 2;
+  cases.push([reversedFloat, 'nodes[0].props.arguments[0].v2']);
+
+  const duplicate = structuredClone(source.state.nodes[1]);
+  duplicate.props.arguments.push(structuredClone(duplicate.props.arguments[0]));
+  cases.push([duplicate, 'nodes[0].props.arguments[1].piid']);
+
+  for (const [node, expectedPath] of cases) {
+    const issues = await validateGraph({
+      graph: { id: 'rule-1', nodes: [node] },
+      getDeviceSpec: source.deps.getDeviceSpec,
+    });
+    assert.equal(
+      issues.some((entry) => entry.path === expectedPath),
+      true,
+      `${expectedPath}: ${JSON.stringify(issues)}`,
+    );
+  }
 });
 
 test('complete operands reject dtype, value-list, range, step, order, and duplicate-piid errors', async () => {
@@ -944,6 +1217,57 @@ test('strict round-trip rejects every remaining comparison semantic-loss warning
     exportRuleFromView(scalarView, scalarProperty.deps, undefined, true),
     /scalar int operator "=" cannot round-trip exactly/,
   );
+
+  const malformed = createStatefulGateway();
+  await addShortcut(malformed, {
+    type: 'deviceInput',
+    id: 'duplicate-event-piid',
+    deviceDid: did,
+    deviceEvent: 'mixed-event',
+    deviceEventArgs: ['4=1'],
+  });
+  await addShortcut(malformed, {
+    type: 'deviceGet',
+    id: 'invalid-bool-operator',
+    deviceDid: did,
+    deviceProperty: 'on',
+    op: 'eq',
+    threshold: 1,
+  });
+  await addShortcut(malformed, {
+    type: 'deviceGet',
+    id: 'invalid-float-operator',
+    deviceDid: did,
+    deviceProperty: 'temperature',
+    op: 'gt',
+    threshold: 1,
+  });
+
+  const duplicate = structuredClone(malformed.state.nodes[0]);
+  duplicate.props.arguments.push(structuredClone(duplicate.props.arguments[0]));
+  const invalidBool = structuredClone(malformed.state.nodes[1]);
+  invalidBool.props.operator = '!=';
+  const invalidFloat = structuredClone(malformed.state.nodes[2]);
+  invalidFloat.props.operator = '>=';
+  const futureProps = structuredClone(malformed.state.nodes[1]);
+  futureProps.props.futureComparisonMode = 'new-gateway-mode';
+
+  for (const [node, expected] of [
+    [duplicate, /duplicate event argument piid/],
+    [invalidBool, /modeled schema|invalid for projected dtype/],
+    [invalidFloat, /modeled schema|invalid for projected dtype/],
+    [futureProps, /futureComparisonMode/],
+  ]) {
+    await assert.rejects(
+      exportRuleFromView(
+        { id: 'rule-1', cfg: malformed.state.summary, nodes: [node] },
+        malformed.deps,
+        undefined,
+        true,
+      ),
+      expected,
+    );
+  }
 });
 
 test('float value-list event args validate as int while continuous floats remain float', async () => {

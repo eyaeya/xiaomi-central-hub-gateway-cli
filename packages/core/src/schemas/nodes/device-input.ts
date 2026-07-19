@@ -41,6 +41,9 @@ const propertyBase = {
   preload: z.boolean().optional(),
 };
 
+const SafeInteger = z.number().refine(Number.isSafeInteger, 'Expected a safe integer');
+const FiniteNumber = z.number().finite();
+
 const DeviceInputBoolProps = z
   .object({
     ...propertyBase,
@@ -64,7 +67,7 @@ const DeviceInputIntIncludeProps = z
     ...propertyBase,
     dtype: z.literal('int'),
     operator: z.literal(MIOT_COMPARISON_CONTRACT.int.equalityWireOperator),
-    v1: z.array(z.number().int()),
+    v1: z.array(SafeInteger).min(1),
   })
   .strict();
 
@@ -73,17 +76,21 @@ const DeviceInputIntBetweenProps = z
     ...propertyBase,
     dtype: z.literal('int'),
     operator: z.literal('between'),
-    v1: z.number().int(),
-    v2: z.number().int(),
+    v1: SafeInteger,
+    v2: SafeInteger,
   })
-  .strict();
+  .strict()
+  .refine(({ v1, v2 }) => v1 <= v2, {
+    path: ['v2'],
+    message: 'between requires v1 <= v2',
+  });
 
 const DeviceInputIntScalarProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('int'),
     operator: z.enum(MIOT_COMPARISON_CONTRACT.int.scalarWireOperators),
-    v1: z.number().int(),
+    v1: SafeInteger,
   })
   .strict();
 
@@ -92,17 +99,21 @@ const DeviceInputFloatBetweenProps = z
     ...propertyBase,
     dtype: z.literal('float'),
     operator: z.literal('between'),
-    v1: z.number(),
-    v2: z.number(),
+    v1: FiniteNumber,
+    v2: FiniteNumber,
   })
-  .strict();
+  .strict()
+  .refine(({ v1, v2 }) => v1 <= v2, {
+    path: ['v2'],
+    message: 'between requires v1 <= v2',
+  });
 
 const DeviceInputFloatScalarProps = z
   .object({
     ...propertyBase,
     dtype: z.literal('float'),
     operator: z.enum(MIOT_COMPARISON_CONTRACT.float.scalarWireOperators),
-    v1: z.number(),
+    v1: FiniteNumber,
   })
   .strict();
 
@@ -155,7 +166,7 @@ const DeviceInputEventArgIntInclude = z
     ...DeviceInputEventArgBase,
     dtype: z.literal('int'),
     operator: z.literal(MIOT_COMPARISON_CONTRACT.int.equalityWireOperator),
-    v1: z.array(z.number().int()),
+    v1: z.array(SafeInteger).min(1),
   })
   .strict();
 const DeviceInputEventArgIntBetween = z
@@ -163,16 +174,20 @@ const DeviceInputEventArgIntBetween = z
     ...DeviceInputEventArgBase,
     dtype: z.literal('int'),
     operator: z.literal('between'),
-    v1: z.number().int(),
-    v2: z.number().int(),
+    v1: SafeInteger,
+    v2: SafeInteger,
   })
-  .strict();
+  .strict()
+  .refine(({ v1, v2 }) => v1 <= v2, {
+    path: ['v2'],
+    message: 'between requires v1 <= v2',
+  });
 const DeviceInputEventArgIntScalar = z
   .object({
     ...DeviceInputEventArgBase,
     dtype: z.literal('int'),
     operator: z.enum(MIOT_COMPARISON_CONTRACT.int.scalarWireOperators),
-    v1: z.number().int(),
+    v1: SafeInteger,
   })
   .strict();
 const DeviceInputEventArgFloatBetween = z
@@ -180,16 +195,20 @@ const DeviceInputEventArgFloatBetween = z
     ...DeviceInputEventArgBase,
     dtype: z.literal('float'),
     operator: z.literal('between'),
-    v1: z.number(),
-    v2: z.number(),
+    v1: FiniteNumber,
+    v2: FiniteNumber,
   })
-  .strict();
+  .strict()
+  .refine(({ v1, v2 }) => v1 <= v2, {
+    path: ['v2'],
+    message: 'between requires v1 <= v2',
+  });
 const DeviceInputEventArgFloatScalar = z
   .object({
     ...DeviceInputEventArgBase,
     dtype: z.literal('float'),
     operator: z.enum(MIOT_COMPARISON_CONTRACT.float.scalarWireOperators),
-    v1: z.number(),
+    v1: FiniteNumber,
   })
   .strict();
 const DeviceInputEventArgument = z.union([
@@ -213,7 +232,20 @@ const DeviceInputEventProps = z
     // valid; requiring them false-rejected that shape.
     arguments: z.array(DeviceInputEventArgument).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((props, ctx) => {
+    const seen = new Set<number>();
+    for (const [index, arg] of (props.arguments ?? []).entries()) {
+      if (seen.has(arg.piid)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['arguments', index, 'piid'],
+          message: `duplicate event argument piid ${arg.piid}`,
+        });
+      }
+      seen.add(arg.piid);
+    }
+  });
 
 export const DeviceInputProps = z.union([DeviceInputPropertyProps, DeviceInputEventProps]);
 export type DeviceInputProps = z.infer<typeof DeviceInputProps>;

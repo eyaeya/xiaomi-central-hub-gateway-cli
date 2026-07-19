@@ -5,7 +5,7 @@ import {
   type MiotComparisonDtype,
   hasMiotValueList,
   isMiotWireOperator,
-  miotNumericOperandDomainError,
+  miotNumericOperandDomainIssue,
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
@@ -28,6 +28,13 @@ export interface ValidateGraphInput {
    * its network/cache/fixture policy explicitly.
    */
   getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
+  /**
+   * Transient authoring intent for nodes whose numeric operands deliberately
+   * exceed (or do not align to) the current MIoT value-range. The set is never
+   * persisted and bypasses only range/step diagnostics, not value-list,
+   * finite-number, safe-integer, dtype, operator, or shape validation.
+   */
+  forceOutOfRangeNodeIds?: ReadonlySet<string>;
   // F23 (2026-05-30): the official save() function fetches `listAvailVars(graphId)`
   // and verifies every variable reference points to a known var (else
   // "卡片变量丢失") and uses scope "global" / "R<graphId>" (else
@@ -132,11 +139,7 @@ function findEventArgProperty(
   return service.properties?.find((p) => p.iid === piid);
 }
 
-function checkComparisonWire(
-  node: Record<string, unknown>,
-  props: Record<string, unknown>,
-  path: string,
-): LintIssue[] {
+function checkComparisonOperands(props: Record<string, unknown>, path: string): LintIssue[] {
   const issues: LintIssue[] = [];
   const dtype = props.dtype;
   const operator = props.operator;
@@ -148,7 +151,7 @@ function checkComparisonWire(
       issues.push(issue(`${path}.operator`, '卡片配置有误: Invalid operator'));
     }
     if (operator === 'include') {
-      if (!Array.isArray(v1) || v1.some((v) => !Number.isSafeInteger(v))) {
+      if (!Array.isArray(v1) || v1.length === 0 || v1.some((v) => !Number.isSafeInteger(v))) {
         issues.push(issue(`${path}.v1`, '卡片配置有误: Invalid v1'));
       }
     } else if (!Number.isSafeInteger(v1)) {
@@ -163,10 +166,10 @@ function checkComparisonWire(
     if (typeof operator !== 'string' || !isMiotWireOperator(dtype, operator)) {
       issues.push(issue(`${path}.operator`, '卡片配置有误: Invalid operator'));
     }
-    if (typeof v1 !== 'number' || Number.isNaN(v1)) {
+    if (typeof v1 !== 'number' || !Number.isFinite(v1)) {
       issues.push(issue(`${path}.v1`, '卡片配置有误: Invalid v1'));
     }
-    if (operator === 'between' && (typeof v2 !== 'number' || Number.isNaN(v2))) {
+    if (operator === 'between' && (typeof v2 !== 'number' || !Number.isFinite(v2))) {
       issues.push(issue(`${path}.v2`, '卡片配置有误: Invalid v2'));
     } else if (operator === 'between' && Number(v1) > Number(v2)) {
       issues.push(issue(`${path}.v2`, '卡片配置有误: between requires v1 <= v2'));
@@ -189,6 +192,16 @@ function checkComparisonWire(
     issues.push(issue(`${path}.dtype`, '卡片配置有误: Invalid dtype'));
   }
 
+  return issues;
+}
+
+function checkComparisonWire(
+  node: Record<string, unknown>,
+  props: Record<string, unknown>,
+  path: string,
+): LintIssue[] {
+  const issues = checkComparisonOperands(props, path);
+
   if (node.type === 'deviceGet') {
     const outputs = node.outputs;
     if (!isRecord(outputs) || !('output' in outputs)) {
@@ -206,12 +219,12 @@ function checkNumericComparisonDomain(
   props: Record<string, unknown>,
   property: MiotProperty,
   path: string,
-  checkOrder = false,
+  options: { checkOrder?: boolean; skipRange?: boolean } = {},
 ): LintIssue[] {
   if (props.dtype !== 'int' && props.dtype !== 'float') return [];
   const issues: LintIssue[] = [];
   if (
-    checkOrder &&
+    options.checkOrder === true &&
     props.operator === 'between' &&
     typeof props.v1 === 'number' &&
     typeof props.v2 === 'number' &&
@@ -235,10 +248,17 @@ function checkNumericComparisonDomain(
   }
   issues.push(
     ...operands.flatMap(({ path: operandPath, value }) => {
-      const domainError = miotNumericOperandDomainError(property, value);
-      return domainError === null
+      const domainIssue = miotNumericOperandDomainIssue(property, value, {
+        skipRange: options.skipRange === true,
+      });
+      return domainIssue === null
         ? []
-        : [issue(operandPath, `卡片配置有误: ${domainError} for MIoT property ${property.type}`)];
+        : [
+            issue(
+              operandPath,
+              `卡片配置有误: ${domainIssue.message} for MIoT property ${property.type}`,
+            ),
+          ];
     }),
   );
   return issues;
@@ -305,14 +325,24 @@ function checkDeviceInputEventArgs(props: Record<string, unknown>, path: string)
   const out: LintIssue[] = [];
   const args = props.arguments;
   if (!Array.isArray(args)) return out;
+  const seenPiids = new Set<number>();
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
+    const argPath = `${path}.arguments[${i}]`;
     if (!isRecord(a) || !Number.isInteger(a.piid)) {
-      out.push(issue(`${path}.arguments[${i}].piid`, '卡片配置有误: 请选择属性'));
+      out.push(issue(`${argPath}.piid`, '卡片配置有误: 请选择属性'));
       continue; // piid-less arg never reaches the Up() v1-emptiness check upstream
     }
-    if (isEmptyValue(a.v1)) {
-      out.push(issue(`${path}.arguments[${i}].v1`, '卡片配置有误: 输入不能为空'));
+    if (seenPiids.has(a.piid as number)) {
+      out.push(
+        issue(`${argPath}.piid`, `卡片配置有误: duplicate event argument piid ${String(a.piid)}`),
+      );
+    }
+    seenPiids.add(a.piid as number);
+    if ('operator' in a) {
+      out.push(...checkComparisonOperands(a, argPath));
+    } else if (isEmptyValue(a.v1)) {
+      out.push(issue(`${argPath}.v1`, '卡片配置有误: 输入不能为空'));
     }
   }
   return out;
@@ -673,6 +703,7 @@ async function checkAgainstSpec(
   node: Record<string, unknown>,
   idx: number,
   specForUrn: (urn: string) => Promise<DeviceSpec>,
+  skipRange: boolean,
 ): Promise<LintIssue[]> {
   const issues: LintIssue[] = [];
   if (
@@ -773,7 +804,7 @@ async function checkAgainstSpec(
       );
     }
   } else if (node.type === 'deviceInput' || node.type === 'deviceGet') {
-    issues.push(...checkNumericComparisonDomain(props, property, base));
+    issues.push(...checkNumericComparisonDomain(props, property, base, { skipRange }));
   }
 
   return issues;
@@ -827,7 +858,7 @@ function checkEventArgsAgainstSpec(
       );
     }
     if (node.type === 'deviceInput') {
-      issues.push(...checkNumericComparisonDomain(a, property, argPath, true));
+      issues.push(...checkNumericComparisonDomain(a, property, argPath, { checkOrder: true }));
     }
   }
   return issues;
@@ -919,7 +950,14 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
       issues.push(...checkStrictSchema(node, idx));
     }
     if (specForUrn !== undefined) {
-      issues.push(...(await checkAgainstSpec(node, idx, specForUrn)));
+      issues.push(
+        ...(await checkAgainstSpec(
+          node,
+          idx,
+          specForUrn,
+          typeof node.id === 'string' && input.forceOutOfRangeNodeIds?.has(node.id) === true,
+        )),
+      );
     }
   }
 
