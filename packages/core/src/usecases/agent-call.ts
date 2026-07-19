@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { setTimeout as sleep } from 'node:timers/promises';
 import {
   KNOWN_GATEWAY_WRITE_METHODS,
   isKnownGatewayWriteMethod,
@@ -8,6 +9,7 @@ import type { IpcClient } from '../agent/ipc-client.js';
 import { createIpcClient } from '../agent/ipc-client.js';
 import { canonicalGatewayKey } from '../agent/ipc-path.js';
 import type { SessionStore } from '../session/index.js';
+import { notConfirmedAfterAcknowledgement } from '../transport/confirmation.js';
 import {
   AuthExpiredError,
   ConfigError,
@@ -195,6 +197,34 @@ export async function withMutationWorkflow<T>(
 export async function agentCall(input: AgentCallInputs): Promise<unknown> {
   const kind = resolveAgentCallKind(input.method, input.kind);
   const workflow = mutationWorkflow.getStore();
+  // Backwards-compatible low-level escape hatch: callers historically used
+  // agentCall(kind:'write') directly. The daemon now rejects every unleased
+  // write, so give a standalone write a single-RPC workflow automatically.
+  // Compound typed mutations still wrap their whole pre-read/RMW/write flow at
+  // the resource boundary; this fallback cannot make an already-finished
+  // pre-read atomic.
+  if (!workflow && kind === 'write') {
+    return withMutationWorkflow(
+      {
+        baseUrl: input.baseUrl,
+        store: input.store,
+        operation: `agent-call:${input.method}`,
+        ...(input.ipcClient !== undefined && { ipcClient: input.ipcClient }),
+        ...(input.timeoutMs !== undefined && { timeoutMs: input.timeoutMs }),
+      },
+      async () => {
+        const result = await agentCall({ ...input, kind });
+        // loadBackup acknowledges an asynchronous restore. A standalone raw
+        // write must not release its lease at the ACK boundary; wait for the
+        // terminal progress read just like the typed/CLI funnels. An explicitly
+        // enclosing workflow remains responsible for its own progress policy.
+        if (input.method === '/api/loadBackup') {
+          await waitForRawBackupLoad(input, result);
+        }
+        return result;
+      },
+    );
+  }
   if (workflow) {
     if (workflow.gatewayKey !== canonicalGatewayKey(input.baseUrl)) {
       throw new ConfigError('agent call attempted to switch hosts inside a mutation workflow');
@@ -252,6 +282,107 @@ export async function agentCall(input: AgentCallInputs): Promise<unknown> {
   } finally {
     client.close();
   }
+}
+
+async function waitForRawBackupLoad(input: AgentCallInputs, response: unknown): Promise<void> {
+  const from = readRawBackupSource(input.params);
+  const progressId = readRawBackupProgressId(response);
+  if (from === null || progressId === null) {
+    throw new NotConfirmedError(
+      'backup load was accepted without enough progress metadata to confirm restore completion',
+      { method: input.method, from, progressId },
+    );
+  }
+  if (progressId === 0) return;
+
+  const pollTimeoutMs = 60_000;
+  const deadline = Date.now() + pollTimeoutMs;
+  for (;;) {
+    let raw: unknown;
+    try {
+      raw = await agentCall({
+        baseUrl: input.baseUrl,
+        method: '/api/getBackupProgress',
+        params: { from, params: { progress_id: progressId } },
+        store: input.store,
+        ...(input.ipcClient !== undefined && { ipcClient: input.ipcClient }),
+        ...(input.timeoutMs !== undefined && { timeoutMs: input.timeoutMs }),
+      });
+    } catch (error) {
+      throw notConfirmedAfterAcknowledgement(
+        error,
+        'raw backup load was acknowledged but terminal restore progress could not be confirmed',
+        {
+          operation: 'agent-call:/api/loadBackup',
+          phase: 'progress-confirmation',
+          method: input.method,
+          from,
+          progressId,
+          hint: 'log out, log in again, and inspect live state before retrying or making any later mutation',
+        },
+      );
+    }
+    const progress = readRawBackupProgress(raw, { from, progressId });
+    if (progress >= 100) return;
+    if (Date.now() >= deadline) {
+      throw new NotConfirmedError(
+        `backup progress polling timed out after ${pollTimeoutMs}ms (progressId=${progressId}, last=${progress})`,
+        { method: input.method, from, progressId, lastProgress: progress, pollTimeoutMs },
+      );
+    }
+    await sleep(1_000);
+  }
+}
+
+function readRawBackupSource(params: unknown): string | null {
+  if (params === null || typeof params !== 'object' || Array.isArray(params)) return null;
+  const from = (params as Record<string, unknown>).from;
+  return typeof from === 'string' && from.length > 0 ? from : null;
+}
+
+function readRawBackupProgressId(response: unknown): number | null {
+  if (isRawBackupProgressId(response)) return response;
+  if (response === null || typeof response !== 'object' || Array.isArray(response)) return null;
+  const value = response as Record<string, unknown>;
+  if (isRawBackupProgressId(value.progress_id)) {
+    return value.progress_id;
+  }
+  if (isRawBackupProgressId(value.progressId)) {
+    return value.progressId;
+  }
+  return null;
+}
+
+function isRawBackupProgressId(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function readRawBackupProgress(
+  response: unknown,
+  context: { from: string; progressId: number },
+): number {
+  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
+    throw new NotConfirmedError(
+      'raw backup load was acknowledged but its progress response is malformed',
+      {
+        operation: 'agent-call:/api/loadBackup',
+        phase: 'progress-confirmation',
+        ...context,
+      },
+    );
+  }
+  const progress = (response as Record<string, unknown>).progress;
+  if (typeof progress !== 'number' || !Number.isFinite(progress)) {
+    throw new NotConfirmedError(
+      'raw backup load was acknowledged but its progress response is malformed',
+      {
+        operation: 'agent-call:/api/loadBackup',
+        phase: 'progress-confirmation',
+        ...context,
+      },
+    );
+  }
+  return progress;
 }
 
 function parseAcquiredLease(raw: unknown): string {

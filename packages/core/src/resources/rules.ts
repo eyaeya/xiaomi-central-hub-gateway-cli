@@ -44,6 +44,7 @@ import { nextCardPosition, sizedPos } from './card-geometry.js';
 import { annotateServiceDescription } from './device-partitions.js';
 import { getDevice } from './devices.js';
 import type { ResourceDeps } from './index.js';
+import { withResourceMutationWorkflow } from './mutation-workflow.js';
 import {
   createVariable,
   deleteVariable,
@@ -166,7 +167,7 @@ export interface EnableRuleOptions {
   getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
 }
 
-export async function enableRule(
+async function enableRuleWithinWorkflow(
   id: string,
   deps: ResourceDeps,
   opts: EnableRuleOptions = {},
@@ -213,8 +214,18 @@ export async function enableRule(
   return setRuleEnable(id, true, deps);
 }
 
+export async function enableRule(
+  id: string,
+  deps: ResourceDeps,
+  opts: EnableRuleOptions = {},
+): Promise<RuleEnableResult> {
+  return withResourceMutationWorkflow(deps, 'rule.enable', () =>
+    enableRuleWithinWorkflow(id, deps, opts),
+  );
+}
+
 export function disableRule(id: string, deps: ResourceDeps): Promise<RuleEnableResult> {
-  return setRuleEnable(id, false, deps);
+  return withResourceMutationWorkflow(deps, 'rule.disable', () => setRuleEnable(id, false, deps));
 }
 
 // F66c (2026-05-31) — rename + set-tags helpers. Both wrap the same
@@ -267,11 +278,15 @@ async function patchRuleUserData(
 }
 
 export async function renameRule(id: string, newName: string, deps: ResourceDeps): Promise<void> {
-  await patchRuleUserData(id, (userData) => ({ ...userData, name: newName }), deps);
+  await withResourceMutationWorkflow(deps, 'rule.rename', () =>
+    patchRuleUserData(id, (userData) => ({ ...userData, name: newName }), deps),
+  );
 }
 
 export async function setRuleTags(id: string, tags: string[], deps: ResourceDeps): Promise<void> {
-  await patchRuleUserData(id, (userData) => ({ ...userData, tags: [...tags] }), deps);
+  await withResourceMutationWorkflow(deps, 'rule.set-tags', () =>
+    patchRuleUserData(id, (userData) => ({ ...userData, tags: [...tags] }), deps),
+  );
 }
 
 export interface SetGraphOptions {
@@ -288,7 +303,24 @@ export interface SetGraphOptions {
   skipLint?: boolean;
 }
 
-export async function setGraph(
+async function preflightGraphMutation(req: GraphSetRequest, opts: SetGraphOptions): Promise<void> {
+  const params = parseOrThrow(GraphSetRequest, req, 'GraphSetRequest');
+  if (opts.validate === false) return;
+  if (opts.skipLint !== true) {
+    const lintIssues = lintGraph({ graph: params, strict: true });
+    const firstLintError = lintIssues.find((i) => i.severity === 'error');
+    if (firstLintError !== undefined) {
+      throw new ConfigError(`${firstLintError.message} (${firstLintError.path})`, {
+        issues: lintIssues,
+      });
+    }
+  }
+  // Keep deterministic schema/per-card checks ahead of session access. Live
+  // variable/spec callbacks remain inside the leased implementation below.
+  await validateGraphOrThrow({ graph: params });
+}
+
+async function setGraphWithinWorkflow(
   req: GraphSetRequest,
   deps: ResourceDeps,
   opts: SetGraphOptions = {},
@@ -334,6 +366,17 @@ export async function setGraph(
     ...(deps.ipcClient !== undefined && { ipcClient: deps.ipcClient }),
     ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
   });
+}
+
+export async function setGraph(
+  req: GraphSetRequest,
+  deps: ResourceDeps,
+  opts: SetGraphOptions = {},
+): Promise<void> {
+  await preflightGraphMutation(req, opts);
+  return withResourceMutationWorkflow(deps, 'rule.set-graph', () =>
+    setGraphWithinWorkflow(req, deps, opts),
+  );
 }
 
 // W-A (2026-05-29 save-flow parity): the official save() always refreshes
@@ -391,7 +434,7 @@ export interface UpsertGraphResult {
 // timestamp), treating the body purely as a nodes update. allowCfgOverwrite
 // opts into the body's cfg verbatim (still timestamp-bumped). A rule absent
 // from listRules is a create — the body cfg is used as-is.
-export async function upsertGraph(
+async function upsertGraphWithinWorkflow(
   body: GraphSetRequest,
   deps: ResourceDeps,
   opts: UpsertGraphOptions = {},
@@ -431,6 +474,17 @@ export async function upsertGraph(
       : setOpts;
   await setGraph({ ...parsed, cfg }, deps, setOptsWithVars);
   return { id: parsed.id, cfgPreserved, cfgEnableIgnored };
+}
+
+export async function upsertGraph(
+  body: GraphSetRequest,
+  deps: ResourceDeps,
+  opts: UpsertGraphOptions = {},
+): Promise<UpsertGraphResult> {
+  await preflightGraphMutation(body, opts);
+  return withResourceMutationWorkflow(deps, 'rule.upsert', () =>
+    upsertGraphWithinWorkflow(body, deps, opts),
+  );
 }
 
 // F63a (B1+B11) — `R<ruleId>` and `global` scopes don't exist on the gateway
@@ -521,7 +575,7 @@ export interface CreateRuleOptions {
 // variable scope is valid). Without this, the agent-funnel write path
 // would silently produce rules whose `rule enable` later fails — too far from
 // the originating action to debug.
-export async function createRule(
+async function createRuleWithinWorkflow(
   req: GraphSetRequest,
   deps: ResourceDeps,
   opts: CreateRuleOptions = {},
@@ -539,7 +593,18 @@ export async function createRule(
   await ensureScopeBootstrapped('global', deps);
 }
 
-export async function deleteGraph(id: string, deps: ResourceDeps): Promise<void> {
+export async function createRule(
+  req: GraphSetRequest,
+  deps: ResourceDeps,
+  opts: CreateRuleOptions = {},
+): Promise<void> {
+  await preflightGraphMutation(req, {});
+  return withResourceMutationWorkflow(deps, 'rule.create', () =>
+    createRuleWithinWorkflow(req, deps, opts),
+  );
+}
+
+async function deleteGraphWithinWorkflow(id: string, deps: ResourceDeps): Promise<void> {
   await agentCall({
     baseUrl: deps.baseUrl,
     method: '/api/deleteGraph',
@@ -574,6 +639,12 @@ export async function deleteGraph(id: string, deps: ResourceDeps): Promise<void>
     }
     throw e;
   }
+}
+
+export async function deleteGraph(id: string, deps: ResourceDeps): Promise<void> {
+  return withResourceMutationWorkflow(deps, 'rule.delete', () =>
+    deleteGraphWithinWorkflow(id, deps),
+  );
 }
 
 // M10 F17: AddNodeShortcut now spans device + non-device node types.
@@ -791,6 +862,108 @@ function assertShortcutPositionUsage(shortcut: AddNodeShortcut): void {
   );
 }
 
+function preflightAddNode(input: AddNodeInput): void {
+  let localNode: unknown;
+  if (input.shortcut !== undefined) {
+    assertShortcutVariableIdentifiers(input.shortcut);
+    assertShortcutPositionUsage(input.shortcut);
+    if (
+      input.shortcut.propertyValue !== undefined &&
+      !(
+        (input.shortcut.type === 'deviceInput' || input.shortcut.type === 'deviceGet') &&
+        input.shortcut.deviceProperty !== undefined &&
+        input.shortcut.deviceEvent === undefined
+      )
+    ) {
+      throw new ConfigError(
+        '--property-value only applies to deviceInput/deviceGet property-mode shortcuts',
+        { type: input.shortcut.type },
+      );
+    }
+    if (isNonDeviceShortcut(input.shortcut)) {
+      localNode = synthesizeNonDeviceShortcut(input.shortcut);
+    } else if (!input.shortcut.deviceDid) {
+      throw new ConfigError(`shortcut type "${input.shortcut.type}" requires --device-did`);
+    } else {
+      assertDeviceShortcutLocalShape(input.shortcut);
+      // Remaining device/spec-dependent synthesis belongs inside the leased
+      // workflow, but all required/mutex checks above stay ahead of session
+      // access so an eager lease cannot shadow deterministic CONFIG errors.
+      return;
+    }
+  } else if (input.node !== undefined) {
+    localNode = input.node;
+  } else {
+    throw new ConfigError('addNode requires either `node` or `shortcut`');
+  }
+  parseOrThrow(NodeUnion, localNode, 'AddNodeInput.node');
+}
+
+function assertDeviceShortcutLocalShape(shortcut: AddNodeShortcut): void {
+  switch (shortcut.type) {
+    case 'deviceInput':
+      if (!shortcut.deviceEvent && !shortcut.deviceProperty) {
+        throw new ConfigError(
+          'deviceInput shortcut requires --device-property (or --device-event for event-driven triggers)',
+        );
+      }
+      return;
+    case 'deviceOutput':
+      if (shortcut.deviceAction) return;
+      if (shortcut.deviceProperty) {
+        if (shortcut.value === undefined) {
+          throw new ConfigError(
+            'deviceOutput property-write shortcut requires --value (the value to write)',
+          );
+        }
+        return;
+      }
+      throw new ConfigError(
+        'deviceOutput shortcut requires either --device-action or --device-property + --value',
+      );
+    case 'deviceGet':
+      if (!shortcut.deviceProperty) {
+        throw new ConfigError('deviceGet shortcut requires --device-property');
+      }
+      return;
+    case 'deviceGetSetVar':
+    case 'deviceInputSetVar':
+      if (shortcut.deviceEvent !== undefined) {
+        if (shortcut.type === 'deviceGetSetVar') {
+          throw new ConfigError(
+            'deviceGetSetVar is property-only (--device-property). Bundle Pr.deviceGetSetVar has no event-mode branch — use deviceInputSetVar --device-event for event-driven captures.',
+            { event: shortcut.deviceEvent, type: shortcut.type },
+          );
+        }
+        if (shortcut.deviceProperty !== undefined) {
+          throw new ConfigError(
+            `${shortcut.type} cannot mix --device-event with --device-property; pick one trigger.`,
+            { event: shortcut.deviceEvent, property: shortcut.deviceProperty },
+          );
+        }
+        const argVarsRaw = shortcut.deviceEventArgVars ?? [];
+        if (argVarsRaw.length > 0 && (shortcut.varScope || shortcut.varId)) {
+          throw new ConfigError(
+            `deviceInputSetVar --device-event "${shortcut.deviceEvent}": --event-arg-var is mutually exclusive with --var-scope/--var-id. Use --event-arg-var "<piid>=<scope>.<id>" for each captured argument (one entry per arg).`,
+            { event: shortcut.deviceEvent, argVars: argVarsRaw },
+          );
+        }
+        return;
+      }
+      if (!shortcut.deviceProperty) {
+        throw new ConfigError(
+          `${shortcut.type} shortcut requires --device-property (or --device-event for deviceInputSetVar event-mode)`,
+        );
+      }
+      if (!shortcut.varScope || !shortcut.varId) {
+        throw new ConfigError(`${shortcut.type} shortcut requires --var-scope and --var-id`);
+      }
+      return;
+    default:
+      throw new ConfigError(`shortcut type "${shortcut.type}" not supported yet`);
+  }
+}
+
 // Append a node to a rule's graph. Two reads (getGraph + listRules) feed one
 // write (setGraph): getGraph supplies the current nodes[], listRules supplies
 // the cfg/RuleSummary that setGraph requires (cf. M4 Task 11 e2e finding that
@@ -801,7 +974,7 @@ function assertShortcutPositionUsage(shortcut: AddNodeShortcut): void {
 // 2. Shortcut (M7): caller provides `input.shortcut` with device-did +
 //    property/action intent. This path fetches the device + spec from the
 //    gateway/public MIoT endpoint and synthesizes the 4-piece node.
-export async function addNode(
+async function addNodeWithinWorkflow(
   input: AddNodeInput,
   deps: ResourceDeps,
 ): Promise<{ nodeId: string }> {
@@ -1010,6 +1183,16 @@ export async function addNode(
     }),
   });
   return { nodeId };
+}
+
+export async function addNode(
+  input: AddNodeInput,
+  deps: ResourceDeps,
+): Promise<{ nodeId: string }> {
+  preflightAddNode(input);
+  return withResourceMutationWorkflow(deps, 'rule.node.add', () =>
+    addNodeWithinWorkflow(input, deps),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2684,7 +2867,7 @@ export interface UpdateNodeInput {
 // fields are shallow-merged; `cfg` is deep-merged (one level) so callers can
 // patch e.g. `{cfg: {name: 'new'}}` without clobbering urn/pos/version.
 // `id` and `type` are immutable — attempts to change them throw GatewayError.
-export async function updateNode(
+async function updateNodeWithinWorkflow(
   input: UpdateNodeInput,
   deps: ResourceDeps,
 ): Promise<{ nodeId: string }> {
@@ -2746,6 +2929,15 @@ export async function updateNode(
   return { nodeId: input.nodeId };
 }
 
+export async function updateNode(
+  input: UpdateNodeInput,
+  deps: ResourceDeps,
+): Promise<{ nodeId: string }> {
+  return withResourceMutationWorkflow(deps, 'rule.node.update', () =>
+    updateNodeWithinWorkflow(input, deps),
+  );
+}
+
 export interface RemoveNodeInput {
   ruleId: string;
   nodeId: string;
@@ -2757,7 +2949,7 @@ export interface RemoveNodeInput {
 // stitch them to a replacement node). We skip re-validation of rebuilt
 // nodes because cascade only filters strings out of existing arrays —
 // subtractive mutations can't break the schema.
-export async function removeNode(
+async function removeNodeWithinWorkflow(
   input: RemoveNodeInput,
   deps: ResourceDeps,
 ): Promise<{ nodeId: string; removedEdges: number }> {
@@ -2819,6 +3011,15 @@ export async function removeNode(
     skipLint: true,
   });
   return { nodeId: input.nodeId, removedEdges };
+}
+
+export async function removeNode(
+  input: RemoveNodeInput,
+  deps: ResourceDeps,
+): Promise<{ nodeId: string; removedEdges: number }> {
+  return withResourceMutationWorkflow(deps, 'rule.node.remove', () =>
+    removeNodeWithinWorkflow(input, deps),
+  );
 }
 
 // F65c — common pin-name typos coming from the event-card mental model
@@ -2906,7 +3107,7 @@ export interface AddEdgeInput {
 // the user opens the front-end and sees orphaned nodes. Source pin is not
 // validated because absent/empty outputs[pin] keys are auto-initialized for
 // convenience (see existing tests).
-export async function addEdge(
+async function addEdgeWithinWorkflow(
   input: AddEdgeInput,
   deps: ResourceDeps,
 ): Promise<{ edgeString: string }> {
@@ -3077,6 +3278,15 @@ export async function addEdge(
   return { edgeString };
 }
 
+export async function addEdge(
+  input: AddEdgeInput,
+  deps: ResourceDeps,
+): Promise<{ edgeString: string }> {
+  return withResourceMutationWorkflow(deps, 'rule.edge.add', () =>
+    addEdgeWithinWorkflow(input, deps),
+  );
+}
+
 export interface RemoveEdgeInput {
   ruleId: string;
   from: EdgeRef;
@@ -3087,7 +3297,7 @@ export interface RemoveEdgeInput {
 }
 
 // Purely subtractive — removes one string from one array; skip re-validation.
-export async function removeEdge(
+async function removeEdgeWithinWorkflow(
   input: RemoveEdgeInput,
   deps: ResourceDeps,
 ): Promise<{ edgeString: string }> {
@@ -3158,6 +3368,15 @@ export async function removeEdge(
   return { edgeString };
 }
 
+export async function removeEdge(
+  input: RemoveEdgeInput,
+  deps: ResourceDeps,
+): Promise<{ edgeString: string }> {
+  return withResourceMutationWorkflow(deps, 'rule.edge.remove', () =>
+    removeEdgeWithinWorkflow(input, deps),
+  );
+}
+
 export interface RelayoutGraphResult {
   id: string;
   nodeCount: number;
@@ -3170,7 +3389,7 @@ export interface RelayoutGraphResult {
 // wired to arrange cards by data flow — triggers left, each node right of its
 // inputs, branches stacked, independent sub-automations in separate horizontal
 // bands. Only cfg.pos.x/y change (sizes, props, edges untouched).
-export async function relayoutGraph(
+async function relayoutGraphWithinWorkflow(
   ruleId: string,
   deps: ResourceDeps,
   // F66f (2026-05-31) — `varCheck` opt-out matches the rest of the
@@ -3236,4 +3455,14 @@ export async function relayoutGraph(
     }),
   });
   return { id: ruleId, nodeCount: current.nodes.length, moved };
+}
+
+export async function relayoutGraph(
+  ruleId: string,
+  deps: ResourceDeps,
+  opts: { validate?: boolean; varCheck?: boolean } = {},
+): Promise<RelayoutGraphResult> {
+  return withResourceMutationWorkflow(deps, 'rule.layout', () =>
+    relayoutGraphWithinWorkflow(ruleId, deps, opts),
+  );
 }

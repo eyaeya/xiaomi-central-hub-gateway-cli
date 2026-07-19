@@ -15,6 +15,7 @@ import {
 import { GatewayError, parseOrThrow } from '../transport/errors.js';
 import { agentCall } from '../usecases/agent-call.js';
 import type { ResourceDeps } from './index.js';
+import { withResourceMutationWorkflow } from './mutation-workflow.js';
 
 export async function listScopes(deps: ResourceDeps): Promise<string[]> {
   const raw = await agentCall({
@@ -122,7 +123,7 @@ export async function getVariableValue(
   return parseOrThrow(VarValueResponseSchema, raw, 'VarValueResponse');
 }
 
-export async function createVariable(
+async function createVariableWithinWorkflow(
   req: VariableCreateRequest,
   deps: ResourceDeps,
 ): Promise<void> {
@@ -138,7 +139,17 @@ export async function createVariable(
   });
 }
 
-export async function deleteVariable(
+export async function createVariable(
+  req: VariableCreateRequest,
+  deps: ResourceDeps,
+): Promise<void> {
+  parseOrThrow(VariableCreateRequest, req, 'VariableCreateRequest');
+  return withResourceMutationWorkflow(deps, 'variable.create', () =>
+    createVariableWithinWorkflow(req, deps),
+  );
+}
+
+async function deleteVariableWithinWorkflow(
   req: VariableDeleteRequest,
   deps: ResourceDeps,
 ): Promise<void> {
@@ -154,7 +165,17 @@ export async function deleteVariable(
   });
 }
 
-export async function setVariableConfig(
+export async function deleteVariable(
+  req: VariableDeleteRequest,
+  deps: ResourceDeps,
+): Promise<void> {
+  parseOrThrow(VariableDeleteRequest, req, 'VariableDeleteRequest');
+  return withResourceMutationWorkflow(deps, 'variable.delete', () =>
+    deleteVariableWithinWorkflow(req, deps),
+  );
+}
+
+async function setVariableConfigWithinWorkflow(
   req: VariableSetConfigRequest,
   deps: ResourceDeps,
 ): Promise<void> {
@@ -170,7 +191,17 @@ export async function setVariableConfig(
   });
 }
 
-export async function setVariableValue(
+export async function setVariableConfig(
+  req: VariableSetConfigRequest,
+  deps: ResourceDeps,
+): Promise<void> {
+  parseOrThrow(VariableSetConfigRequest, req, 'VariableSetConfigRequest');
+  return withResourceMutationWorkflow(deps, 'variable.set-config', () =>
+    setVariableConfigWithinWorkflow(req, deps),
+  );
+}
+
+async function setVariableValueWithinWorkflow(
   req: VariableSetValueRequest,
   deps: ResourceDeps,
 ): Promise<void> {
@@ -184,4 +215,14 @@ export async function setVariableValue(
     ...(deps.ipcClient !== undefined && { ipcClient: deps.ipcClient }),
     ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
   });
+}
+
+export async function setVariableValue(
+  req: VariableSetValueRequest,
+  deps: ResourceDeps,
+): Promise<void> {
+  parseOrThrow(VariableSetValueRequest, req, 'VariableSetValueRequest');
+  return withResourceMutationWorkflow(deps, 'variable.set-value', () =>
+    setVariableValueWithinWorkflow(req, deps),
+  );
 }

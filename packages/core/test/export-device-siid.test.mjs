@@ -102,6 +102,8 @@ function createGateway(id = ruleId) {
     ipcClient: () => ({
       request: async (method, params) => {
         if (method === '$ping') return { host: baseUrl, agentStartedAt: startedAt };
+        if (method === '$mutation.acquire') return { leaseId: 'test-lease' };
+        if (method === '$mutation.release' || method === '$mutation.fence') return { ok: true };
         if (method === '/api/getDevList') return { devList: { [did]: device } };
         if (method === '/api/getGraphList') return [structuredClone(state.summary)];
         if (method === '/api/getGraph') return { id, nodes: structuredClone(state.nodes) };
