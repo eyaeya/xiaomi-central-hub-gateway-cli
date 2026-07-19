@@ -113,6 +113,8 @@ xgg backup config get --from fds
 xgg backup config set --from fds --auto-backup <true|false> --snapshots-dir "$PWD/snapshots"
 ```
 
+Replacement discovery 默认排除 ghost device。显式用 `--target-did` 聚焦 ghost 时，只返回 `eligible:false` 的诊断候选，不生成可应用的 `planId`；`--apply` 会在快照后 fresh 读取设备清单，并在 `setGraph` 前拒绝已经或新近变成 ghost 的目标。
+
 `device partitions` 当前只对已验证型号 `xiaomi.sensor_occupy.p1` 映射 siid 4…35 为 A-1…B-16；其他型号返回空列表，不是通用分区发现。设备替换默认 dry-run；写入必须再加 `--apply --confirm-target-did <did>` 和快照目录。本地 import 是 replace-all，固定先 dry-run；真正恢复必须 `--confirm-replace-all` 并强制 rollback snapshot。
 
 云端 `generate` / `load` 前必须先对相同 `{did,ts,file-name}` 执行 `backup download`。`load`、`delete` 和 `backup config set` 都是写操作，需要用户明确授权与 rollback snapshot；完整参数以各子命令 `--help` 为准。

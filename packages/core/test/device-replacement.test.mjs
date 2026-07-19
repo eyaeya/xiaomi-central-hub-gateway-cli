@@ -83,7 +83,7 @@ function mutatedTargetSpec(mutate) {
   return target;
 }
 
-function device(did, urn, name) {
+function device(did, urn, name, overrides = {}) {
   return {
     did,
     specV2Access: true,
@@ -97,6 +97,7 @@ function device(did, urn, name) {
     roomId: 'room',
     roomName: 'Room',
     icon: '',
+    ...overrides,
   };
 }
 
@@ -495,6 +496,7 @@ function fakeGateway(node = deviceInputProperty()) {
     getGraphCount: 0,
     ignoreSetGraph: false,
     mutateOnGetGraphCall: undefined,
+    targetDevice: structuredClone(targetDevice),
   };
   const deps = {
     baseUrl,
@@ -524,7 +526,7 @@ function fakeGateway(node = deviceInputProperty()) {
           return {
             devList: {
               [sourceDid]: { ...sourceDevice, did: undefined },
-              [targetDid]: { ...targetDevice, did: undefined },
+              [targetDid]: { ...control.targetDevice, did: undefined },
             },
           };
         }
@@ -580,6 +582,73 @@ function fixedSpecs(urn) {
   if (urn === targetUrn) return Promise.resolve(compatibleTargetSpec);
   throw new Error(`unexpected URN: ${urn}`);
 }
+
+test('default dry-run excludes a spec-compatible ghost without lease, snapshot, or setGraph', async () => {
+  const gateway = fakeGateway();
+  gateway.control.targetDevice = device(targetDid, targetUrn, 'Ghost target', {
+    specV2Access: false,
+    specV3Access: false,
+    online: true,
+  });
+  const specCalls = [];
+  const plan = await planDeviceReplacement({ ruleId, nodeId: 'input-property' }, gateway.deps, {
+    getDeviceSpec: async (urn) => {
+      specCalls.push(urn);
+      if (urn === sourceUrn) return sourceSpec;
+      if (urn === targetUrn) return compatibleTargetSpec;
+      throw new Error(`unexpected URN: ${urn}`);
+    },
+  });
+
+  assert.deepEqual(
+    plan.candidates.map((candidate) => candidate.did),
+    [sourceDid],
+  );
+  assert.equal(specCalls.includes(targetUrn), false, 'an excluded ghost must not trigger spec IO');
+  assert.equal(gateway.calls.filter((call) => call.method === '$mutation.acquire').length, 0);
+  assert.equal(gateway.calls.filter((call) => call.method === '/api/getVarList').length, 0);
+  assert.equal(gateway.calls.filter((call) => call.method === '/api/setGraph').length, 0);
+});
+
+test('focused spec-compatible ghost is explicitly ineligible and receives no planId', async () => {
+  const gateway = fakeGateway();
+  gateway.control.targetDevice = device(targetDid, targetUrn, 'Ghost target', {
+    specV2Access: false,
+    specV3Access: false,
+    online: true,
+  });
+  const plan = await planDeviceReplacement(
+    { ruleId, nodeId: 'input-property', targetDid },
+    gateway.deps,
+    { getDeviceSpec: fixedSpecs },
+  );
+
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0].eligible, false);
+  assert.equal(plan.candidates[0].compatible, true);
+  assert.match(plan.candidates[0].eligibilityReasons.join('\n'), /ghost|autoLocal|ineligible/i);
+  assert.equal(plan.selectedMapping, undefined);
+  assert.equal(plan.planId, undefined);
+  assert.equal(plan.selectionError.code, 'CONFIG');
+  assert.match(plan.selectionError.message, /ghost|ineligible/i);
+  assert.equal(gateway.calls.filter((call) => call.method === '$mutation.acquire').length, 0);
+  assert.equal(gateway.calls.filter((call) => call.method === '/api/setGraph').length, 0);
+});
+
+test('visible compatible target remains eligible and receives an applicable planId', async () => {
+  const gateway = fakeGateway();
+  const plan = await planDeviceReplacement(
+    { ruleId, nodeId: 'input-property', targetDid },
+    gateway.deps,
+    { getDeviceSpec: fixedSpecs },
+  );
+
+  assert.equal(plan.candidates[0].eligible, true);
+  assert.deepEqual(plan.candidates[0].eligibilityReasons, []);
+  assert.equal(plan.candidates[0].compatible, true);
+  assert.equal(plan.selectedMapping?.compatible, true);
+  assert.equal(plan.planId?.length, 64);
+});
 
 test('focused dry-run rejects selector kinds that contradict the source capability', async () => {
   const gateway = fakeGateway();
@@ -698,6 +767,45 @@ test('fresh spec recheck rejects a stale target plan before setGraph', async (t)
     gateway.calls.some((call) => call.method === '/api/setGraph'),
     false,
   );
+  assert.equal(gateway.state.nodes[0].props.did, sourceDid);
+});
+
+test('fresh device inventory hard-rejects eligibility drift to ghost before setGraph', async (t) => {
+  const gateway = fakeGateway();
+  const initial = await planDeviceReplacement(
+    { ruleId, nodeId: 'input-property', targetDid },
+    gateway.deps,
+    { getDeviceSpec: fixedSpecs },
+  );
+  assert.equal(initial.candidates[0].eligible, true);
+  assert.equal(initial.planId?.length, 64);
+  const rollbackSnapshotPath = await writeCheckpoint(t, gateway);
+
+  gateway.control.targetDevice = device(targetDid, targetUrn, 'Ghost target', {
+    specV2Access: false,
+    specV3Access: false,
+    online: true,
+  });
+  await assert.rejects(
+    replaceDevice(
+      {
+        ruleId,
+        nodeId: 'input-property',
+        targetDid,
+        expectedPlanId: initial.planId,
+        rollbackSnapshotPath,
+      },
+      gateway.deps,
+      { getDeviceSpec: fixedSpecs },
+    ),
+    (error) =>
+      error?.code === 'CONFIG' &&
+      /fresh device inventory|ghost|ineligible/i.test(error.message) &&
+      error.details?.freshCandidate?.eligible === false,
+  );
+
+  assert.equal(gateway.calls.filter((call) => call.method === '$mutation.acquire').length, 1);
+  assert.equal(gateway.calls.filter((call) => call.method === '/api/setGraph').length, 0);
   assert.equal(gateway.state.nodes[0].props.did, sourceDid);
 });
 

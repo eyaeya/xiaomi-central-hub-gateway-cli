@@ -83,3 +83,14 @@ test('node-add help directs every modeled type to shortcuts and bounds raw fallb
   assert.match(nodeAdd, /varChange\/varGet\/varSetNumber\/varSetString\/device\*SetVar/);
   assert.match(nodeAdd, /varChange\/varGet variable type/);
 });
+
+test('device replacement help makes ghost targets diagnostic-only and rechecks eligibility', () => {
+  const discovery = help(['rule', 'device', 'replacements']);
+  assert.match(discovery, /Default discovery excludes ghost devices/);
+  assert.match(discovery, /eligible=false with no planId/);
+  assert.match(discovery, /diagnostic-only/);
+
+  const replace = help(['rule', 'device', 'replace']);
+  assert.match(replace, /fresh device inventory rejects a target that is or became a ghost/);
+  assert.match(replace, /before setGraph/);
+});

@@ -18,6 +18,8 @@ export * from './session/index.js';
 export * from './transport/errors.js';
 export * from './usecases/index.js';
 export { nodeSchemaForType } from './schemas/nodes/registry.js';
+export { isGhostDevice } from './schemas/device.js';
+export type { DeviceEligibilityFields } from './schemas/device.js';
 export {
   VARIABLE_IDENTIFIER_CONSTRAINT,
   VARIABLE_IDENTIFIER_PATTERN,

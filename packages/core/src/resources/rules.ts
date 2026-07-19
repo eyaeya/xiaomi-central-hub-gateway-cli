@@ -7,7 +7,7 @@ import type {
   MiotProperty,
   MiotService,
 } from '../schemas/device-spec.js';
-import { Device as DeviceSchema } from '../schemas/device.js';
+import { Device as DeviceSchema, isGhostDevice } from '../schemas/device.js';
 import {
   type MiotActionVariableDtype,
   findDuplicateMiotActionInputPiids,
@@ -290,7 +290,9 @@ async function planDeviceReplacementContext(
   });
   assertReplacementSelectorKind(source.capability.kind, input.selector);
   const targetEntries = Object.entries(devices)
-    .filter(([did]) => input.targetDid === undefined || did === input.targetDid)
+    .filter(([did, device]) =>
+      input.targetDid === undefined ? !isGhostDevice(device) : did === input.targetDid,
+    )
     .sort(([left], [right]) => left.localeCompare(right));
   if (input.targetDid !== undefined && targetEntries.length === 0) {
     throw new NotFoundError(`device not found: ${input.targetDid}`, { id: input.targetDid });
@@ -522,6 +524,18 @@ async function replaceDeviceWithinWorkflow(
   const candidate = fresh.plan.candidates.find((entry) => entry.did === input.targetDid);
   if (candidate === undefined) {
     throw new NotFoundError(`device not found: ${input.targetDid}`, { id: input.targetDid });
+  }
+  if (!candidate.eligible) {
+    throw new ConfigError(
+      'device replacement target is ineligible after the fresh device inventory read; ghost devices cannot be applied',
+      {
+        expectedPlanId: input.expectedPlanId,
+        ruleId: input.ruleId,
+        nodeId: input.nodeId,
+        targetDid: input.targetDid,
+        freshCandidate: candidate,
+      },
+    );
   }
   let mapping: ReturnType<typeof selectDeviceReplacementMapping>;
   try {

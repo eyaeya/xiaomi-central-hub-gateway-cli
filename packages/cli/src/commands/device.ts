@@ -4,6 +4,7 @@ import {
   getDevice,
   getDevicePartitions,
   getDeviceSpec,
+  isGhostDevice,
   listDevices,
 } from '@eyaeya/xgg-core';
 import Table from 'cli-table3';
@@ -68,7 +69,7 @@ function availabilityLabel(dev: DeviceFields): string {
 }
 
 export function isGhost(dev: DeviceFields): boolean {
-  return dev.online && !dev.specV2Access && !dev.specV3Access;
+  return isGhostDevice(dev);
 }
 
 // urn:miot-spec-v2:device:<category>:<urn-hash>:<vendor>:<version>
