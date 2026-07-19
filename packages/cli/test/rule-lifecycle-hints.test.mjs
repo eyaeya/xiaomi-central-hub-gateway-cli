@@ -68,6 +68,22 @@ function warningGraph(id) {
   };
 }
 
+function exportableGraph(id) {
+  return {
+    id,
+    nodes: [
+      {
+        id: 'source',
+        type: 'onLoad',
+        cfg: { pos: position(200, 120), name: 'onLoad', version: 1 },
+        inputs: {},
+        outputs: { output: [] },
+        props: {},
+      },
+    ],
+  };
+}
+
 function ruleSummary(id) {
   return {
     id,
@@ -97,6 +113,7 @@ async function startFakeAgent(t) {
     ['connected', graph('connected', true)],
     ['disconnected', graph('disconnected', false)],
     ['warning', warningGraph('warning')],
+    ['exported', exportableGraph('exported')],
   ]);
   const control = { listedRuleIds: ['connected'] };
   const server = await createIpcServer({
@@ -144,7 +161,7 @@ async function startFakeAgent(t) {
   return { calls, control, root, sessionFile };
 }
 
-function runCli(args, agent, input) {
+function runCli(args, agent, input, parseJson = true) {
   return new Promise((resolve, reject) => {
     const env = {
       ...process.env,
@@ -173,7 +190,13 @@ function runCli(args, agent, input) {
     if (input !== undefined) child.stdin.end(input);
     child.once('error', reject);
     child.once('close', (status, signal) =>
-      resolve({ status, signal, stdout, stderr, payload: JSON.parse(stdout) }),
+      resolve({
+        status,
+        signal,
+        stdout,
+        stderr,
+        payload: parseJson ? JSON.parse(stdout) : undefined,
+      }),
     );
   });
 }
@@ -276,7 +299,7 @@ test('validation and lint issue summaries have no loop or enable hints', () => {
   }
 });
 
-test('set and import authoring hints cannot bypass the strict lint funnel', () => {
+test('set hints cannot bypass the strict lint funnel and render-only import has no live hint', () => {
   const result = { id: 'r', ruleId: 'r' };
   const setHints = buildNextSteps('rule.set', result, {});
   const importHints = buildNextSteps('rule.import', result, {});
@@ -285,11 +308,46 @@ test('set and import authoring hints cannot bypass the strict lint funnel', () =
     setHints.map((hint) => hint.cmd),
     ['xgg rule lint --rule-id r --strict'],
   );
-  assert.deepEqual(
-    importHints.map((hint) => hint.cmd),
-    ['xgg rule validate --rule-id r'],
-  );
+  assert.deepEqual(importHints, []);
   for (const hint of [...setHints, ...importHints]) {
     assert.doesNotMatch(hint.cmd, /xgg rule enable/);
   }
+});
+
+test('export advertises the accepted import file option and import stays at the render boundary', async (t) => {
+  const agent = await startFakeAgent(t);
+  agent.control.listedRuleIds = ['exported'];
+
+  const shellExport = await runCli(['rule', 'export', 'exported'], agent, undefined, false);
+  assert.equal(shellExport.status, 0, shellExport.stderr);
+  assert.equal(shellExport.signal, null);
+  assert.match(shellExport.stdout, /^#!\/usr\/bin\/env bash\n/);
+  assert.equal(shellExport.stderr, '');
+
+  const exported = await runCli(['rule', 'export', 'exported', '--format', 'json'], agent);
+  assertOnlyHint(exported, 0, 'xgg rule import --from-file <exported.json>');
+  assert.equal(exported.payload.nextSteps[0].lifecycle, 'observed → observed');
+  assert.doesNotMatch(exported.stderr, /rule import --body/);
+
+  const exportPath = join(agent.root, 'exported.json');
+  await writeFile(exportPath, exported.stdout);
+  const callsAfterExport = agent.calls.length;
+  const imported = await runCli(
+    ['rule', 'import', '--from-file', exportPath],
+    agent,
+    undefined,
+    false,
+  );
+
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.signal, null);
+  assert.match(imported.stdout, /^#!\/usr\/bin\/env bash\n/);
+  assert.match(imported.stdout, /"\$XGG" rule set --body/);
+  assert.equal(imported.stderr, '');
+  assert.doesNotMatch(imported.stdout, /next →|rule validate/);
+  assert.equal(
+    agent.calls.length,
+    callsAfterExport,
+    'render-only import unexpectedly used gateway IPC',
+  );
 });

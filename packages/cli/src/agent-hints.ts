@@ -370,15 +370,10 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
   },
   {
     command: 'rule.export',
-    cmd: lit('xgg rule import --body <exported.json>'),
+    match: (_r, opts) => has(opts, 'format') && opts.format === 'json',
+    cmd: lit('xgg rule import --from-file <exported.json>'),
     why: 'export ↔ import is the round-trip pair; verify both sides before treating export as truth',
-    lifecycle: 'observed → drafting',
-  },
-  {
-    command: 'rule.import',
-    cmd: (r) => `xgg rule validate --rule-id ${readId(r)}`,
-    why: 'after replaying the generated import script, validate the live graph; a clean result will route through single-rule strict lint before enable',
-    lifecycle: 'drafting → validated',
+    lifecycle: 'observed → observed',
   },
 ];
 

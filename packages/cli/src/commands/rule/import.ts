@@ -6,7 +6,7 @@ import {
 } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
 import { wrap } from '../../action-wrap.js';
-import { addNextHintFlag, buildNextSteps, printNextStepHintLine } from '../../agent-hints.js';
+import { addNextHintFlag } from '../../agent-hints.js';
 import { readJsonInput } from '../../local-input.js';
 
 // `xgg rule import` is a pure text transformer (read JSON → optionally
@@ -61,6 +61,9 @@ Notes:
   - Re-emit is purely a text transformation; no gateway access is needed
     to *render* the script. The replay (\`| bash\`) still talks to the
     gateway and requires \`xgg login\`.
+  - Import deliberately emits no live next-step hint: rendering stdout does
+    not prove that the script was executed. After a successful replay, run
+    \`xgg rule validate --rule-id <id>\`, then strict lint before enabling.
   - Cloning rewrites only R<source-id> to R<target-id>. Captured local
     variables are fully preflighted before any write. The empty target is then
     created with expect-absent semantics before local variables are prepared,
@@ -95,15 +98,9 @@ Notes:
           process.stderr.write(`# WARNING (xgg rule import): ${w}\n`);
         }
         process.stdout.write(script);
-        // Pure text transformer — stdout is the bash script. nextSteps fires
-        // only on the stderr note: channel so it never pollutes the script
-        // body piped to bash.
-        const hints = buildNextSteps(
-          'rule.import',
-          { id: renamed.ruleId, ruleId: renamed.ruleId },
-          opts,
-        );
-        printNextStepHintLine(hints, opts, { contextLabel: `rule ${renamed.ruleId} (imported)` });
+        // Pure text transformer — stdout is the bash script. Do not emit a
+        // live validation hint: this process cannot know whether stdout was
+        // executed, saved for review, or discarded.
       }),
     );
 }
