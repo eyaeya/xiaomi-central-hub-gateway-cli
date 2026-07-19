@@ -52,6 +52,7 @@ const expectedTypedMutationSurfaces = [
   'backup download',
   'backup load',
   'rule delete',
+  'rule device replace',
   'rule disable',
   'rule edge add',
   'rule edge remove',
@@ -89,6 +90,23 @@ const typedMutationCases = [
     args: () => ['backup', 'load', '--did', 'did-1', '--ts', 'ts-1', '--file-name', 'one.bak'],
   },
   { command: 'rule delete', args: () => ['rule', 'delete', 'rule1'] },
+  {
+    command: 'rule device replace',
+    args: () => [
+      'rule',
+      'device',
+      'replace',
+      '--rule-id',
+      'rule1',
+      '--node-id',
+      'node1',
+      '--target-did',
+      'target1',
+      '--apply',
+      '--confirm-target-did',
+      'target1',
+    ],
+  },
   { command: 'rule disable', args: () => ['rule', 'disable', 'rule1'] },
   {
     command: 'rule edge add',
@@ -418,6 +436,32 @@ test('affected mutations reject Agent --no-snapshot before any IPC', async (t) =
     assert.deepEqual(agent.frames, [], `${mutation.command} reached IPC`);
     await assertMissing(snapshotsDir);
   }
+});
+
+test('device replacement rejects --no-snapshot outside Agent mode before any IPC', async (t) => {
+  const agent = await startFakeAgent(t);
+  const result = await runCli(
+    [
+      'rule',
+      'device',
+      'replace',
+      '--rule-id',
+      'rule1',
+      '--node-id',
+      'node1',
+      '--target-did',
+      'target1',
+      '--apply',
+      '--confirm-target-did',
+      'target1',
+      '--no-snapshot',
+    ],
+    agent,
+    { XGG_AGENT_MODE: '0' },
+  );
+  const payload = assertSingleJsonFailure(result, 'CONFIG', 5);
+  assert.match(payload.error.message, /always requires a pre-write rollback snapshot/);
+  assert.deepEqual(agent.frames, []);
 });
 
 test('every typed mutation command label receives the exact missing-snapshot guard hint', async (t) => {

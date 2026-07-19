@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 import type {
   DeviceSpec,
   MiotAction,
@@ -5,6 +7,7 @@ import type {
   MiotProperty,
   MiotService,
 } from '../schemas/device-spec.js';
+import { Device as DeviceSchema } from '../schemas/device.js';
 import {
   MIOT_COMPARISON_CONTRACT,
   isMiotEventWireOperator,
@@ -28,12 +31,31 @@ import {
 import {
   type AvailableVariable,
   type VarEntry,
+  VarEntry as VarEntrySchema,
   isValidVariableScopeName,
 } from '../schemas/variable.js';
-import { ConfigError, GatewayError, NotFoundError, parseOrThrow } from '../transport/errors.js';
+import {
+  ConfigError,
+  GatewayError,
+  NotConfirmedError,
+  NotFoundError,
+  parseOrThrow,
+} from '../transport/errors.js';
 import { agentCall } from '../usecases/agent-call.js';
+import {
+  type DeviceReplacementCandidate,
+  type DeviceReplacementEvaluation,
+  type DeviceReplacementPlan,
+  type DeviceReplacementSelector,
+  deviceReplacementPlanId,
+  evaluateDeviceReplacementCandidate,
+  replaceDeviceNode,
+  replacementCandidateWithSpecError,
+  resolveDeviceReplacementSource,
+  selectDeviceReplacementMapping,
+} from '../usecases/device-replacement.js';
 import { inputPinNames, targetInputPinStatus } from '../usecases/edge-integrity.js';
-import { getDeviceSpec } from '../usecases/get-device-spec.js';
+import { type GetDeviceSpecOptions, getDeviceSpec } from '../usecases/get-device-spec.js';
 import { layoutGraph } from '../usecases/layout-graph.js';
 import { lintGraph } from '../usecases/lint-graph.js';
 import { arePinColorsCompatible, resolvePinColor } from '../usecases/pin-colors.js';
@@ -42,7 +64,7 @@ import { validateGraphOrThrow } from '../usecases/validate-graph.js';
 import { scanVariableReference } from '../usecases/variable-reference.js';
 import { nextCardPosition, sizedPos } from './card-geometry.js';
 import { annotateServiceDescription } from './device-partitions.js';
-import { getDevice } from './devices.js';
+import { getDevice, listDevices } from './devices.js';
 import type { ResourceDeps } from './index.js';
 import { withResourceMutationWorkflow } from './mutation-workflow.js';
 import {
@@ -113,6 +135,471 @@ export async function viewRule(id: string, deps: ResourceDeps): Promise<RuleView
     throw new NotFoundError(`rule not found: ${id}`, { id });
   }
   return { id, cfg, nodes: body.nodes };
+}
+
+export interface PlanDeviceReplacementInput {
+  ruleId: string;
+  nodeId: string;
+  /** Omit to explain every gateway device; set for a focused dry-run. */
+  targetDid?: string;
+  selector?: DeviceReplacementSelector;
+}
+
+export interface DeviceReplacementSpecOptions {
+  /** Pure seam for tests/embedders; defaults to the public MIoT registry. */
+  getDeviceSpec?: (
+    urn: string,
+    options?: Pick<GetDeviceSpecOptions, 'cache'>,
+  ) => Promise<DeviceSpec>;
+}
+
+interface DeviceReplacementPlanContext {
+  plan: DeviceReplacementPlan;
+  view: RuleView;
+  node: Record<string, unknown>;
+  loadSpec: (urn: string) => Promise<DeviceSpec>;
+}
+
+function replacementSpecLoader(
+  deps: ResourceDeps,
+  opts: DeviceReplacementSpecOptions,
+  cacheMode: NonNullable<GetDeviceSpecOptions['cache']>,
+): (urn: string) => Promise<DeviceSpec> {
+  const specsByUrn = new Map<string, Promise<DeviceSpec>>();
+  return (urn: string) => {
+    let pending = specsByUrn.get(urn);
+    if (pending === undefined) {
+      pending =
+        opts.getDeviceSpec !== undefined
+          ? opts.getDeviceSpec(urn, { cache: cacheMode })
+          : getDeviceSpec(urn, {
+              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+              cache: cacheMode,
+            });
+      specsByUrn.set(urn, pending);
+    }
+    return pending;
+  };
+}
+
+function assertReplacementSelectorKind(
+  kind: DeviceReplacementPlan['source']['capability']['kind'],
+  selector: DeviceReplacementSelector | undefined,
+): void {
+  if (selector === undefined) return;
+  const invalid =
+    kind === 'property'
+      ? selector.eiid !== undefined || selector.aiid !== undefined
+      : kind === 'event'
+        ? selector.piid !== undefined || selector.aiid !== undefined
+        : selector.piid !== undefined || selector.eiid !== undefined;
+  if (!invalid) return;
+  const capabilityFlag = kind === 'property' ? 'piid' : kind === 'event' ? 'eiid' : 'aiid';
+  throw new ConfigError(
+    `${kind} device replacement selector only accepts siid and ${capabilityFlag}`,
+    { kind, selector },
+  );
+}
+
+function replacementSpecErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message.length > 0
+    ? error.message
+    : 'unknown MIoT spec error';
+}
+
+async function mapReplacementCandidates(
+  entries: Array<[string, Awaited<ReturnType<typeof listDevices>>[string]]>,
+  source: DeviceReplacementPlan['source'],
+  loadSpec: (urn: string) => Promise<DeviceSpec>,
+): Promise<DeviceReplacementCandidate[]> {
+  const candidates = new Array<DeviceReplacementCandidate>(entries.length);
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = cursor;
+      cursor += 1;
+      const entry = entries[index];
+      if (entry === undefined) return;
+      const [did, device] = entry;
+      const target = { ...device, did };
+      try {
+        candidates[index] = evaluateDeviceReplacementCandidate(
+          source,
+          target,
+          await loadSpec(device.urn),
+        );
+      } catch (error) {
+        candidates[index] = replacementCandidateWithSpecError(
+          target,
+          replacementSpecErrorMessage(error),
+        );
+      }
+    }
+  };
+  // MIoT lookups do not use the gateway request stream. A small bounded pool
+  // keeps an all-device inventory practical without flooding the registry.
+  const workerCount = Math.min(8, entries.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return candidates;
+}
+
+async function planDeviceReplacementContext(
+  input: PlanDeviceReplacementInput,
+  deps: ResourceDeps,
+  opts: DeviceReplacementSpecOptions = {},
+  specCache: NonNullable<GetDeviceSpecOptions['cache']> = 'default',
+): Promise<DeviceReplacementPlanContext> {
+  // Keep gateway reads sequential: the per-host agent serializes one gateway
+  // request stream, while MIoT HTTP lookups below are cached by URN.
+  const view = await viewRule(input.ruleId, deps);
+  const devices = await listDevices(deps);
+  const rawNode = view.nodes.find((entry) => entry.id === input.nodeId);
+  if (rawNode === undefined) {
+    throw new NotFoundError(`node not found: ${input.nodeId}`, {
+      ruleId: input.ruleId,
+      nodeId: input.nodeId,
+    });
+  }
+  const node = rawNode as Record<string, unknown>;
+  const cfg = node.cfg;
+  if (cfg === null || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    throw new ConfigError('device replacement requires node.cfg');
+  }
+  const sourceUrn = (cfg as Record<string, unknown>).urn;
+  if (typeof sourceUrn !== 'string' || sourceUrn.length === 0) {
+    throw new ConfigError('device replacement requires node.cfg.urn');
+  }
+
+  const loadSpec = replacementSpecLoader(deps, opts, specCache);
+  const source = resolveDeviceReplacementSource({
+    node,
+    sourceSpec: await loadSpec(sourceUrn),
+  });
+  assertReplacementSelectorKind(source.capability.kind, input.selector);
+  const targetEntries = Object.entries(devices)
+    .filter(([did]) => input.targetDid === undefined || did === input.targetDid)
+    .sort(([left], [right]) => left.localeCompare(right));
+  if (input.targetDid !== undefined && targetEntries.length === 0) {
+    throw new NotFoundError(`device not found: ${input.targetDid}`, { id: input.targetDid });
+  }
+
+  const candidates = await mapReplacementCandidates(targetEntries, source, loadSpec);
+
+  let selectedMapping: DeviceReplacementPlan['selectedMapping'];
+  let selectionError: DeviceReplacementPlan['selectionError'];
+  let planId: string | undefined;
+  if (input.targetDid !== undefined) {
+    const candidate = candidates.find((entry) => entry.did === input.targetDid);
+    if (candidate !== undefined) {
+      try {
+        selectedMapping = selectDeviceReplacementMapping(candidate, input.selector);
+        planId = deviceReplacementPlanId(node, source, candidate, selectedMapping);
+      } catch (error) {
+        // Candidate discovery is intentionally explanatory: incompatible and
+        // ambiguous targets remain successful dry-runs with full reasons. The
+        // write funnel calls selectDeviceReplacementMapping again and fails.
+        if (!(error instanceof ConfigError)) throw error;
+        selectionError = {
+          code: 'CONFIG',
+          message: error.message,
+          selector: { ...(input.selector ?? {}) },
+          ...(error.details !== undefined && { details: error.details }),
+        };
+      }
+    }
+  }
+
+  const plan: DeviceReplacementPlan = {
+    ruleId: input.ruleId,
+    nodeId: input.nodeId,
+    nodeType: source.nodeType,
+    dryRun: true,
+    source,
+    candidates,
+    ...(input.targetDid !== undefined && { targetDid: input.targetDid }),
+    ...(selectedMapping !== undefined && { selectedMapping }),
+    ...(selectionError !== undefined && { selectionError }),
+    ...(planId !== undefined && { planId }),
+  };
+  return { plan, view, node, loadSpec };
+}
+
+/**
+ * Explain capability-aware candidates without acquiring a mutation lease or
+ * writing the gateway. Every candidate capability carries its contract checks
+ * and rejection reasons so the default CLI path is a useful dry-run.
+ */
+export async function planDeviceReplacement(
+  input: PlanDeviceReplacementInput,
+  deps: ResourceDeps,
+  opts: DeviceReplacementSpecOptions = {},
+): Promise<DeviceReplacementPlan> {
+  return (await planDeviceReplacementContext(input, deps, opts)).plan;
+}
+
+export interface ReplaceDeviceInput extends PlanDeviceReplacementInput {
+  targetDid: string;
+  /** Hash returned by the immediately preceding dry-run in the same lease. */
+  expectedPlanId: string;
+  /** Path returned by dumpBeforeWrite for this immediately preceding checkpoint. */
+  rollbackSnapshotPath: string;
+}
+
+export interface ReplaceDeviceResult {
+  ruleId: string;
+  nodeId: string;
+  previousDid: string;
+  targetDid: string;
+  planId: string;
+  mapping: DeviceReplacementEvaluation;
+  readbackConfirmed: true;
+}
+
+function replacementCheckpointError(
+  message: string,
+  rollbackSnapshotPath: string,
+  ruleId: string,
+): ConfigError {
+  return new ConfigError(message, { rollbackSnapshotPath, ruleId });
+}
+
+function isCheckpointRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function readReplacementCheckpoint(
+  rollbackSnapshotPath: string,
+  ruleId: string,
+): Promise<RuleView> {
+  if (typeof rollbackSnapshotPath !== 'string' || rollbackSnapshotPath.length === 0) {
+    throw replacementCheckpointError(
+      'device replacement requires the rollback snapshot path returned by dumpBeforeWrite',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(rollbackSnapshotPath, 'utf8'));
+  } catch {
+    throw replacementCheckpointError(
+      'device replacement rollback snapshot could not be read as JSON',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+  if (!isCheckpointRecord(raw)) {
+    throw replacementCheckpointError(
+      'device replacement rollback snapshot is not an object',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+  const snapshot = raw;
+  if (snapshot.kind !== 'xgg-pre-write-rollback' || snapshot.schemaVersion !== 1) {
+    throw replacementCheckpointError(
+      'device replacement requires an xgg pre-write rollback snapshot at schema version 1',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+  if (!Array.isArray(snapshot.rules)) {
+    throw replacementCheckpointError(
+      'device replacement rollback snapshot has no rules inventory',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+  if (!isCheckpointRecord(snapshot.devices)) {
+    throw replacementCheckpointError(
+      'device replacement rollback snapshot has no complete devices inventory',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+  for (const [did, device] of Object.entries(snapshot.devices)) {
+    parseOrThrow(DeviceSchema, device, `DeviceReplacement.rollbackSnapshot.devices.${did}`);
+  }
+  if (!isCheckpointRecord(snapshot.variables)) {
+    throw replacementCheckpointError(
+      'device replacement rollback snapshot has no complete variables inventory',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+  for (const [scope, variables] of Object.entries(snapshot.variables)) {
+    if (!isCheckpointRecord(variables)) {
+      throw replacementCheckpointError(
+        `device replacement rollback snapshot variable scope ${scope} is not a variable map`,
+        rollbackSnapshotPath,
+        ruleId,
+      );
+    }
+    for (const [id, variable] of Object.entries(variables)) {
+      parseOrThrow(
+        VarEntrySchema,
+        variable,
+        `DeviceReplacement.rollbackSnapshot.variables.${scope}.${id}`,
+      );
+    }
+  }
+  if (
+    typeof snapshot.capturedAt !== 'string' ||
+    Number.isNaN(Date.parse(snapshot.capturedAt)) ||
+    new Date(snapshot.capturedAt).toISOString() !== snapshot.capturedAt
+  ) {
+    throw replacementCheckpointError(
+      'device replacement rollback snapshot has no valid ISO capturedAt timestamp',
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+
+  const parsedRules: RuleView[] = [];
+  const seenRuleIds = new Set<string>();
+  for (const [index, entry] of snapshot.rules.entries()) {
+    const parsed = parseOrThrow(
+      GraphSetRequest,
+      entry,
+      `DeviceReplacement.rollbackSnapshot.rules[${index}]`,
+    );
+    if (seenRuleIds.has(parsed.id)) {
+      throw replacementCheckpointError(
+        `device replacement rollback snapshot contains duplicate rule ${parsed.id}`,
+        rollbackSnapshotPath,
+        ruleId,
+      );
+    }
+    seenRuleIds.add(parsed.id);
+    parsedRules.push({ id: parsed.id, cfg: parsed.cfg, nodes: parsed.nodes });
+  }
+  const rule = parsedRules.find((entry) => entry.id === ruleId);
+  if (rule === undefined) {
+    throw replacementCheckpointError(
+      `device replacement rollback snapshot does not contain rule ${ruleId}`,
+      rollbackSnapshotPath,
+      ruleId,
+    );
+  }
+  return rule;
+}
+
+async function replaceDeviceWithinWorkflow(
+  input: ReplaceDeviceInput,
+  deps: ResourceDeps,
+  opts: DeviceReplacementSpecOptions,
+): Promise<ReplaceDeviceResult> {
+  const checkpoint = await readReplacementCheckpoint(input.rollbackSnapshotPath, input.ruleId);
+  // Re-read the graph, device list, and both MIoT specs inside the mutation
+  // lease. A plan calculated before the rollback snapshot cannot be applied if
+  // any capability-relevant source/target material changed in the meantime.
+  const fresh = await planDeviceReplacementContext(input, deps, opts, 'reload');
+  if (
+    !isDeepStrictEqual(checkpoint.cfg, fresh.view.cfg) ||
+    !isDeepStrictEqual(checkpoint.nodes, fresh.view.nodes)
+  ) {
+    throw new ConfigError(
+      'device replacement rollback snapshot no longer matches the live rule; rerun the dry-run and checkpoint',
+      {
+        rollbackSnapshotPath: input.rollbackSnapshotPath,
+        ruleId: input.ruleId,
+      },
+    );
+  }
+  const candidate = fresh.plan.candidates.find((entry) => entry.did === input.targetDid);
+  if (candidate === undefined) {
+    throw new NotFoundError(`device not found: ${input.targetDid}`, { id: input.targetDid });
+  }
+  let mapping: ReturnType<typeof selectDeviceReplacementMapping>;
+  try {
+    mapping = selectDeviceReplacementMapping(candidate, input.selector);
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    throw new ConfigError(
+      'device replacement plan became stale after the safety snapshot; the target is no longer uniquely compatible',
+      {
+        expectedPlanId: input.expectedPlanId,
+        ruleId: input.ruleId,
+        nodeId: input.nodeId,
+        targetDid: input.targetDid,
+        freshCandidate: candidate,
+      },
+    );
+  }
+  const freshPlanId = deviceReplacementPlanId(fresh.node, fresh.plan.source, candidate, mapping);
+  if (freshPlanId !== input.expectedPlanId) {
+    throw new ConfigError(
+      'device replacement plan became stale after the safety snapshot; rerun the dry-run',
+      {
+        expectedPlanId: input.expectedPlanId,
+        freshPlanId,
+        ruleId: input.ruleId,
+        nodeId: input.nodeId,
+        targetDid: input.targetDid,
+      },
+    );
+  }
+
+  const replacementRaw = replaceDeviceNode(fresh.node, input.targetDid, candidate.urn, mapping);
+  const replacement = parseOrThrow(NodeUnion, replacementRaw, 'deviceReplacement.node');
+  const index = fresh.view.nodes.findIndex((entry) => entry.id === input.nodeId);
+  const nextNodes = [...fresh.view.nodes];
+  nextNodes[index] = replacement;
+
+  // upsertGraph runs strict graph/card validation, live variable checks, and
+  // spec-aware validation before setGraph. The fresh replacement specs are
+  // pinned in loadSpec for this mutation; unrelated device nodes may fetch
+  // their own specs through the same cache.
+  await upsertGraph({ id: fresh.view.id, cfg: fresh.view.cfg, nodes: nextNodes }, deps, {
+    getDeviceSpec: fresh.loadSpec,
+    beforeWrite: async () => {
+      const latest = await viewRule(input.ruleId, deps);
+      if (
+        !isDeepStrictEqual(latest.cfg, fresh.view.cfg) ||
+        !isDeepStrictEqual(latest.nodes, fresh.view.nodes)
+      ) {
+        throw new ConfigError(
+          'device replacement plan became stale after validation; the rule graph or config changed before write',
+          {
+            ruleId: input.ruleId,
+            nodeId: input.nodeId,
+            targetDid: input.targetDid,
+          },
+        );
+      }
+    },
+  });
+
+  const readback = await getRule(input.ruleId, deps);
+  if (!isDeepStrictEqual(readback.nodes, nextNodes)) {
+    throw new NotConfirmedError(
+      'device replacement write could not be confirmed by graph readback',
+      {
+        ruleId: input.ruleId,
+        nodeId: input.nodeId,
+        targetDid: input.targetDid,
+      },
+    );
+  }
+  return {
+    ruleId: input.ruleId,
+    nodeId: input.nodeId,
+    previousDid: fresh.plan.source.did,
+    targetDid: input.targetDid,
+    planId: freshPlanId,
+    mapping,
+    readbackConfirmed: true,
+  };
+}
+
+export async function replaceDevice(
+  input: ReplaceDeviceInput,
+  deps: ResourceDeps,
+  opts: DeviceReplacementSpecOptions = {},
+): Promise<ReplaceDeviceResult> {
+  return withResourceMutationWorkflow(deps, 'rule.device.replace', () =>
+    replaceDeviceWithinWorkflow(input, deps, opts),
+  );
 }
 
 export interface RuleEnableResult {
@@ -294,6 +781,8 @@ export interface SetGraphOptions {
   validate?: boolean;
   getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
   listAvailVars?: (ruleId: string) => Promise<AvailableVariable[]>;
+  /** Resource-level final precondition run after validation, immediately before setGraph. */
+  beforeWrite?: () => Promise<void>;
   // F66a (2026-05-31) — skip ONLY the lintGraph canvas-predicate gate while
   // keeping validateGraphOrThrow active. Subtractive internal mutators
   // (removeNode no-cascade, removeEdge, …) may write a graph whose edges the
@@ -357,6 +846,7 @@ async function setGraphWithinWorkflow(
       ...(opts.listAvailVars !== undefined && { listAvailVars: opts.listAvailVars }),
     });
   }
+  await opts.beforeWrite?.();
   await agentCall({
     baseUrl: deps.baseUrl,
     method: '/api/setGraph',

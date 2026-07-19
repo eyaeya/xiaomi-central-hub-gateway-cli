@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { NetworkError, SchemaError } from '@eyaeya/xgg-core';
+import { NetworkError, SchemaError, getDeviceSpec } from '@eyaeya/xgg-core';
 import {
   MiotSpecContentError,
   MiotSpecFetchError,
@@ -222,6 +222,41 @@ test('resolved cache isolates the same URN by effective registry URL', async (t)
   assert.equal(registryBHits, 1);
 });
 
+test('reload bypasses a resolved MIoT spec and replaces the default cache', async (t) => {
+  const urn = `${cacheUrnPrefix}:resolved-reload`;
+  let revision = 1;
+  let hits = 0;
+  const baseUrl = `${await startRegistry(t, (_request, response) => {
+    hits += 1;
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(
+      JSON.stringify({
+        type: urn,
+        description: `revision-${revision}`,
+        services: [
+          {
+            iid: 1,
+            type: 'urn:miot-spec-v2:service:light:00007802:1',
+            description: 'Light',
+          },
+        ],
+      }),
+    );
+  })}/spec`;
+  __resetSpecCache();
+
+  assert.equal((await getDeviceSpec(urn, { baseUrl })).description, 'revision-1');
+  revision = 2;
+  assert.equal((await getDeviceSpec(urn, { baseUrl })).description, 'revision-1');
+  assert.equal(hits, 1, 'a default read should keep using the warmed value');
+
+  assert.equal((await getDeviceSpec(urn, { baseUrl, cache: 'reload' })).description, 'revision-2');
+  assert.equal(hits, 2, 'reload must perform a second registry request');
+
+  assert.equal((await getDeviceSpec(urn, { baseUrl })).description, 'revision-2');
+  assert.equal(hits, 2, 'a successful reload should replace the default resolved cache');
+});
+
 test('a resolved entry cannot bypass validation of an alternate registry URL', async (t) => {
   const urn = `${cacheUrnPrefix}:invalid-alternate-url`;
   const baseUrl = `${await startRegistry(t, (_request, response) => {
@@ -258,6 +293,55 @@ test('same effective URL and timeout dedupe in flight, then resolved data spans 
 
   assert.equal((await fetchMiotSpec(urn, { baseUrl, timeoutMs: 1 })).registry, 'same-policy');
   assert.equal(hits, 1, 'resolved response identity must not include the timeout policy');
+});
+
+test('reload never joins a matching default request in flight', async (t) => {
+  const urn = `${cacheUrnPrefix}:in-flight-reload`;
+  let hits = 0;
+  let firstRequestSeen;
+  const firstRequestArrived = new Promise((resolve) => {
+    firstRequestSeen = resolve;
+  });
+  let releaseDefault;
+  const defaultMayFinish = new Promise((resolve) => {
+    releaseDefault = resolve;
+  });
+  const baseUrl = `${await startRegistry(t, async (_request, response) => {
+    hits += 1;
+    const currentHit = hits;
+    if (currentHit === 1) {
+      firstRequestSeen();
+      await defaultMayFinish;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(
+      JSON.stringify({
+        type: urn,
+        registry: currentHit === 1 ? 'default-old' : 'reload-new',
+      }),
+    );
+  })}/spec`;
+  __resetSpecCache();
+
+  const defaultRequest = fetchMiotSpec(urn, { baseUrl, timeoutMs: 1000 });
+  await firstRequestArrived;
+  const reloaded = await fetchMiotSpec(urn, {
+    baseUrl,
+    timeoutMs: 1000,
+    cache: 'reload',
+  });
+
+  assert.equal(reloaded.registry, 'reload-new');
+  assert.equal(hits, 2, 'reload must start its own request despite a matching default request');
+
+  releaseDefault();
+  assert.equal((await defaultRequest).registry, 'default-old');
+  assert.equal(
+    (await fetchMiotSpec(urn, { baseUrl })).registry,
+    'reload-new',
+    'the older default response must not overwrite the successful reload',
+  );
+  assert.equal(hits, 2);
 });
 
 test('mixed deadlines never share an in-flight request in either start order', async (t) => {

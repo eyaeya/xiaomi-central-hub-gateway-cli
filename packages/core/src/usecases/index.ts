@@ -121,3 +121,31 @@ export type {
   ExportRuleInputs,
   RenameOptions,
 } from './export-rule.js';
+export {
+  DEVICE_REPLACEMENT_NODE_TYPES,
+  deviceReplacementPlanId,
+  evaluateDeviceReplacementCandidate,
+  replaceDeviceNode,
+  replacementCandidateWithSpecError,
+  resolveDeviceReplacementSource,
+  selectDeviceReplacementMapping,
+} from './device-replacement.js';
+export type {
+  DeviceReplacementAction,
+  DeviceReplacementCandidate,
+  DeviceReplacementCapability,
+  DeviceReplacementCapabilityKind,
+  DeviceReplacementCheck,
+  DeviceReplacementDtype,
+  DeviceReplacementEvaluation,
+  DeviceReplacementEvent,
+  DeviceReplacementNodeType,
+  DeviceReplacementPlan,
+  DeviceReplacementProperty,
+  DeviceReplacementSelectionError,
+  DeviceReplacementSelector,
+  DeviceReplacementSource,
+  DeviceReplacementUsage,
+  DeviceReplacementValueRange,
+  ResolveDeviceReplacementSourceInput,
+} from './device-replacement.js';

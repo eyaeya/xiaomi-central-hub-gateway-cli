@@ -1,11 +1,8 @@
-import { fetchMiotSpec } from '../http-client.js';
+import { type FetchMiotSpecOptions, fetchMiotSpec } from '../http-client.js';
 import { type DeviceSpec, DeviceSpecSchema } from '../schemas/device-spec.js';
 import { parseOrThrow } from '../transport/errors.js';
 
-export interface GetDeviceSpecOptions {
-  timeoutMs?: number;
-  baseUrl?: string;
-}
+export type GetDeviceSpecOptions = FetchMiotSpecOptions;
 
 export async function getDeviceSpec(
   urn: string,

@@ -14,6 +14,7 @@ const funnels = new Map([
   ['src/commands/rule/node-add.ts', ['rule.node.add']],
   ['src/commands/rule/node-update.ts', ['rule.node.update']],
   ['src/commands/rule/node-remove.ts', ['rule.node.remove']],
+  ['src/commands/rule/device-replacement.ts', ['rule.device.replace']],
   ['src/commands/rule/edge-add.ts', ['rule.edge.add']],
   ['src/commands/rule/edge-remove.ts', ['rule.edge.remove']],
   [
@@ -33,7 +34,7 @@ const funnels = new Map([
   ],
 ]);
 
-test('all 23 typed CLI mutation funnels enter a named workflow lease', async () => {
+test('all 24 typed CLI mutation funnels enter a named workflow lease', async () => {
   let count = 0;
   for (const [relativePath, operations] of funnels) {
     const source = await readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
@@ -46,7 +47,7 @@ test('all 23 typed CLI mutation funnels enter a named workflow lease', async () 
       );
     }
   }
-  assert.equal(count, 23);
+  assert.equal(count, 24);
 });
 
 test('raw writes and the programmatic probe funnel are leased', async () => {
@@ -58,4 +59,21 @@ test('raw writes and the programmatic probe funnel are leased', async () => {
     'utf8',
   );
   assert.match(probe, /withMutationWorkflow\([\s\S]*operation: `probe-node:\$\{input\.scenario\}`/);
+});
+
+test('device replacement apply keeps plan, mandatory checkpoint, fresh replace, and readback in order', async () => {
+  const source = await readFile(
+    new URL('../src/commands/rule/device-replacement.ts', import.meta.url),
+    'utf8',
+  );
+  const workflowStart = source.indexOf("runMutationWorkflow('rule.device.replace'");
+  const plan = source.indexOf('planDeviceReplacement(input, deps)', workflowStart);
+  const checkpoint = source.indexOf('dumpBeforeWrite({', plan);
+  const replace = source.indexOf('replaceDevice(', checkpoint);
+  assert.ok(
+    workflowStart >= 0 && plan > workflowStart && checkpoint > plan && replace > checkpoint,
+  );
+  assert.match(source.slice(plan, replace), /const snapshot = await dumpBeforeWrite/);
+  assert.match(source.slice(replace), /rollbackSnapshotPath: snapshot/);
+  assert.doesNotMatch(source, /!guard\.snapshotEnabled\s*\?\s*null/);
 });
