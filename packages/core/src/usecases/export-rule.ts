@@ -466,6 +466,16 @@ function asMiotComparisonDtype(value: unknown): MiotComparisonDtype | null {
   return null;
 }
 
+function appendDeviceSiidFlag(flags: ExportFlag[], rawSiid: unknown): void {
+  if (typeof rawSiid === 'number' && Number.isSafeInteger(rawSiid) && rawSiid > 0) {
+    // MIoT property/action/event short names may repeat across services. Keep
+    // the source service on every device shortcut so replay cannot become
+    // ambiguous (or silently target a different service after a spec update).
+    // Legacy nodes with a missing/invalid SIID deliberately omit the flag.
+    flags.push({ name: '--device-siid', value: String(rawSiid) });
+  }
+}
+
 function appendPropertyComparisonFlags(
   flags: ExportFlag[],
   props: Record<string, unknown>,
@@ -529,6 +539,7 @@ async function renderDeviceInput(
     { name: '--device-did', value: did },
     ...posFlagsFromCfg(n.cfg),
   ];
+  appendDeviceSiidFlag(flags, props.siid);
 
   if (isEvent) {
     const spec = await ensureSpec(did, deps, specCache);
@@ -567,12 +578,6 @@ async function renderDeviceInput(
     const spec = await ensureSpec(did, deps, specCache);
     const sourceSiid = Number(props.siid);
     const propertyDetails = findPropertyDetails(spec, sourceSiid, Number(props.piid));
-    if (Number.isSafeInteger(sourceSiid) && sourceSiid > 0) {
-      // Property short names may repeat across services. Preserve the source
-      // service even when today's spec happens to be unambiguous so replay
-      // cannot select another service after a spec update.
-      flags.push({ name: '--device-siid', value: String(sourceSiid) });
-    }
     if (propertyDetails === null) {
       warnings.push(
         `deviceInput node ${n.id}: property siid=${props.siid} piid=${props.piid} not found in device spec`,
@@ -629,13 +634,11 @@ async function renderDeviceGet(
     { name: '--device-did', value: did },
     ...posFlagsFromCfg(n.cfg),
   ];
+  appendDeviceSiidFlag(flags, props.siid);
 
   const spec = await ensureSpec(did, deps, specCache);
   const sourceSiid = Number(props.siid);
   const propertyDetails = findPropertyDetails(spec, sourceSiid, Number(props.piid));
-  if (Number.isSafeInteger(sourceSiid) && sourceSiid > 0) {
-    flags.push({ name: '--device-siid', value: String(sourceSiid) });
-  }
   if (propertyDetails === null) {
     warnings.push(
       `deviceGet node ${n.id}: property siid=${props.siid} piid=${props.piid} not found in device spec`,
@@ -684,6 +687,7 @@ async function renderDeviceSetVar(
     { name: '--device-did', value: did },
     ...posFlagsFromCfg(n.cfg),
   ];
+  appendDeviceSiidFlag(flags, props.siid);
 
   const spec = await ensureSpec(did, deps, specCache);
   // F50 (2026-05-30) — deviceInputSetVar can be event-mode
@@ -783,6 +787,7 @@ async function renderDeviceOutput(
     { name: '--device-did', value: did },
     ...posFlagsFromCfg(n.cfg),
   ];
+  appendDeviceSiidFlag(flags, props.siid);
 
   if (isAction) {
     const spec = await ensureSpec(did, deps, specCache);
