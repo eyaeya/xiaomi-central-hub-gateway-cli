@@ -599,8 +599,9 @@ export interface AddNodeShortcut {
   // Optional canvas position override — `xgg rule export` sets this so a
   // round-trip preserves the user's web-UI layout. Without it the synth
   // emits a canonical default (which is visually but not semantically
-  // different from the source).
-  pos?: { x: number; y: number; width: number; height: number };
+  // different from the source). exprHeight is valid only for varSetNumber /
+  // varSetString expression cards.
+  pos?: { x: number; y: number; width: number; height: number; exprHeight?: number };
   // ---- device-side fields (deviceInput / deviceOutput / device*SetVar) ----
   deviceDid?: string;
   // F63c (2026-05-30): disambiguates --device-property / --device-action /
@@ -764,6 +765,15 @@ function assertShortcutVariableIdentifiers(shortcut: AddNodeShortcut): void {
   }
 }
 
+function assertShortcutPositionUsage(shortcut: AddNodeShortcut): void {
+  if (shortcut.pos?.exprHeight === undefined) return;
+  if (shortcut.type === 'varSetNumber' || shortcut.type === 'varSetString') return;
+  throw new ConfigError(
+    `position exprHeight only applies to varSetNumber/varSetString shortcuts (got type ${shortcut.type})`,
+    { type: shortcut.type, exprHeight: shortcut.pos.exprHeight },
+  );
+}
+
 // Append a node to a rule's graph. Two reads (getGraph + listRules) feed one
 // write (setGraph): getGraph supplies the current nodes[], listRules supplies
 // the cfg/RuleSummary that setGraph requires (cf. M4 Task 11 e2e finding that
@@ -784,6 +794,7 @@ export async function addNode(
     // Variable grammar is entirely local. Run it before any device/session/
     // MIoT lookup so malformed authoring flags never reach a gateway path.
     assertShortcutVariableIdentifiers(input.shortcut);
+    assertShortcutPositionUsage(input.shortcut);
     if (
       input.shortcut.propertyValue !== undefined &&
       !(

@@ -1079,7 +1079,7 @@ function renderVarSet(
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
     { name: '--type', value: type },
-    ...posFlagsFromCfg(n.cfg),
+    ...posFlagsFromCfg(n.cfg, true),
     { name: '--var-scope', value: String(props.scope ?? '') },
     { name: '--var-id', value: String(props.id ?? '') },
     { name: '--expr', value: exprStr },
@@ -1174,7 +1174,8 @@ function renderAlarmClock(n: {
   return { kind: 'node-add', nodeId: n.id, type: 'alarmClock', flags, comment: 'alarmClock' };
 }
 
-// Emit a `--pos x,y,width,height` flag when the source cfg carries a pos.
+// Emit a `--pos x,y,width,height` flag when the source cfg carries a pos;
+// expression cards append their optional exprHeight as a fifth component.
 // F54 (2026-05-30) — cfg keys that some renderer in this file knows how
 // to project back into CLI flags. Anything else (e.g. UI-saved
 // cfg.simplified, cfg.urn on a non-device card, an unrecognized future
@@ -1205,9 +1206,14 @@ function isRecord(x: unknown): x is Record<string, unknown> {
 
 // Used by every node renderer so `xgg rule export | bash` round-trips also
 // preserve the canvas layout (cosmetic but reduces visual diff to zero).
-function posFlagsFromCfg(cfg: Record<string, unknown> | undefined): ExportFlag[] {
+function posFlagsFromCfg(
+  cfg: Record<string, unknown> | undefined,
+  includeExprHeight = false,
+): ExportFlag[] {
   if (!cfg) return [];
-  const pos = cfg.pos as { x?: number; y?: number; width?: number; height?: number } | undefined;
+  const pos = cfg.pos as
+    | { x?: number; y?: number; width?: number; height?: number; exprHeight?: number }
+    | undefined;
   if (!pos) return [];
   const { x, y, width, height } = pos;
   if (
@@ -1218,7 +1224,12 @@ function posFlagsFromCfg(cfg: Record<string, unknown> | undefined): ExportFlag[]
   ) {
     return [];
   }
-  return [{ name: '--pos', value: `${x},${y},${width},${height}` }];
+  const exprHeight = includeExprHeight ? pos.exprHeight : undefined;
+  const value =
+    typeof exprHeight === 'number'
+      ? `${x},${y},${width},${height},${exprHeight}`
+      : `${x},${y},${width},${height}`;
+  return [{ name: '--pos', value }];
 }
 
 function hms(t: { hour: number; minute: number; second: number }): string {

@@ -101,6 +101,14 @@ function assertPropertyValueUsage(opts: NodeAddOpts): void {
   }
 }
 
+function assertPositionUsage(opts: NodeAddOpts): void {
+  if (opts.pos?.exprHeight === undefined) return;
+  if (opts.type === 'varSetNumber' || opts.type === 'varSetString') return;
+  throw new ConfigError(
+    `--pos exprHeight is only valid for varSetNumber/varSetString (got --type ${opts.type})`,
+  );
+}
+
 interface NodeAddOpts extends RuleOpts {
   ruleId: string;
   type: string;
@@ -136,7 +144,7 @@ interface NodeAddOpts extends RuleOpts {
   value?: string;
   forceOutOfRange?: boolean;
   allowNoPush?: boolean;
-  pos?: { x: number; y: number; width: number; height: number };
+  pos?: { x: number; y: number; width: number; height: number; exprHeight?: number };
   // M10 F17 — non-device shortcut flags
   inputs?: number;
   duration?: string;
@@ -254,15 +262,30 @@ export function attachNodeAdd(cmd: Command): void {
       'silence F17 warning for deviceInput state-mode on pushAvailable=false devices',
     )
     .option(
-      '--pos <x,y,width,height>',
-      'canvas position override (preserves layout from xgg rule export round-trips)',
+      '--pos <x,y,width,height[,exprHeight]>',
+      'canvas position override; optional exprHeight is only valid for varSetNumber/varSetString',
       (raw) => {
-        const parts = raw.split(',').map((s) => Number.parseFloat(s));
-        if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
-          throw new Error(`--pos must be x,y,width,height numbers (got "${raw}")`);
+        const rawParts = raw.split(',');
+        const parts = rawParts.map((part) => parseFiniteDecimalLiteral(part));
+        if ((parts.length !== 4 && parts.length !== 5) || parts.some((part) => part === null)) {
+          throw new InvalidArgumentError(
+            `--pos must be x,y,width,height[,exprHeight] finite decimal numbers (got "${raw}")`,
+          );
         }
-        const [x, y, width, height] = parts;
-        return { x: x as number, y: y as number, width: width as number, height: height as number };
+        const [x, y, width, height, exprHeight] = parts as [
+          number,
+          number,
+          number,
+          number,
+          number?,
+        ];
+        return {
+          x,
+          y,
+          width,
+          height,
+          ...(exprHeight !== undefined && { exprHeight }),
+        };
       },
     )
     // M10 F17 — non-device shortcut flags
@@ -409,6 +432,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
         // Agent guards, session lookup, device warnings, snapshots, or IPC so
         // authentication state cannot mask a deterministic authoring error.
         assertPropertyValueUsage(opts);
+        assertPositionUsage(opts);
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
