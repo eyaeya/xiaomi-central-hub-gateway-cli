@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Connection, NodeId, Position } from './common.js';
+import { Connection, NodeId, Position, SimplifiableCfgFields } from './common.js';
 
 // Fields derived from fixtures/responses/nodes/varGet/*.json.
 // F41 (2026-05-30): same varType-discriminated structure as VarChange,
@@ -10,6 +10,7 @@ import { Connection, NodeId, Position } from './common.js';
 
 export const VarGetCfg = z
   .object({
+    ...SimplifiableCfgFields,
     urn: z.string().optional(),
     pos: Position,
     name: z.string(),

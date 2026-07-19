@@ -64,3 +64,26 @@ test('node-add rejects malformed position component counts and trailing junk', (
     );
   }
 });
+
+test('node-add help exposes typed simplified values and preserves explicit false', () => {
+  const enabled = nodeAddCommand(buildProgram());
+  assert.ok(enabled);
+  assert.match(enabled.helpInformation(), /--simplified <true\|false>/);
+  enabled.parseOptions(['--simplified', 'true']);
+  assert.equal(enabled.opts().simplified, true);
+
+  const disabled = nodeAddCommand(buildProgram());
+  assert.ok(disabled);
+  disabled.parseOptions(['--simplified', 'false']);
+  assert.equal(disabled.opts().simplified, false);
+
+  const invalid = nodeAddCommand(buildProgram());
+  assert.ok(invalid);
+  invalid.exitOverride();
+  invalid.configureOutput({ writeErr: () => {} });
+  assert.throws(
+    () => invalid.parseOptions(['--simplified', 'yes']),
+    (error) =>
+      error?.code === 'commander.invalidArgument' && /expected true or false/.test(error.message),
+  );
+});

@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import { Connection, NodeId, Position } from './common.js';
+import { Connection, NodeId, Position, SimplifiableCfgFields } from './common.js';
 
 export const ConditionCfg = z
   .object({
+    ...SimplifiableCfgFields,
     urn: z.string().optional(),
     pos: Position,
     name: z.string(),

@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { Connection, ExprPosition, NodeId, VarSetElement } from './common.js';
+import {
+  Connection,
+  ExprPosition,
+  NodeId,
+  SimplifiableCfgFields,
+  VarSetElement,
+} from './common.js';
 
 // Fields derived from fixtures/responses/nodes/varSetNumber/*.json.
 // Strict-where-known per M6 design: cfg/inputs/outputs key sets locked;
@@ -8,6 +14,7 @@ import { Connection, ExprPosition, NodeId, VarSetElement } from './common.js';
 
 export const VarSetNumberCfg = z
   .object({
+    ...SimplifiableCfgFields,
     urn: z.string().optional(),
     pos: ExprPosition,
     name: z.string(),

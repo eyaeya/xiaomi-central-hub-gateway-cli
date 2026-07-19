@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { Connection, NodeId, Position } from './common.js';
+import { Connection, NodeId, Position, SimplifiableCfgFields } from './common.js';
 import { DurationUnitSchema, DurationValueSchema, refineDurationConsistency } from './duration.js';
 
 export const DelayCfg = z
   .object({
+    ...SimplifiableCfgFields,
     urn: z.string().optional(),
     pos: Position,
     name: z.string(),
