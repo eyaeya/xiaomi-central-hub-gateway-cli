@@ -326,9 +326,10 @@ test('clone snapshots referenced local variables, remaps every supported referen
   const firstVariable = kinds.indexOf('variable-create');
   const ruleShell = kinds.indexOf('rule-set-body');
   const firstNode = kinds.indexOf('node-add');
-  assert.ok(kinds.indexOf('external-variable-dependency') < firstVariable);
-  assert.ok(firstVariable < ruleShell);
-  assert.ok(ruleShell < firstNode);
+  assert.ok(kinds.indexOf('external-variable-dependency') < ruleShell);
+  assert.ok(ruleShell < firstVariable);
+  assert.ok(firstVariable < firstNode);
+  assert.equal(exported.commands.find((item) => item.kind === 'rule-set-body')?.expectAbsent, true);
 
   const creates = exported.commands.filter((item) => item.kind === 'variable-create');
   assert.deepEqual(
@@ -390,6 +391,7 @@ test('applyRename remaps an already-cloned export again while name-only changes 
 
   assert.equal(cloned.ruleId, '789');
   assert.equal(cloned.ruleName, 'second clone');
+  assert.equal(cloned.commands.find((item) => item.kind === 'rule-set-body')?.expectAbsent, true);
   assert.equal(
     cloned.commands
       .filter((item) => item.kind === 'variable-create')
@@ -401,6 +403,10 @@ test('applyRename remaps an already-cloned export again while name-only changes 
   ]);
   assert.equal(renamed.ruleId, sourceId);
   assert.equal(renamed.ruleName, 'same-id rename');
+  assert.equal(
+    renamed.commands.find((item) => item.kind === 'rule-set-body')?.expectAbsent,
+    undefined,
+  );
   assert.equal(
     renamed.commands
       .filter((item) => item.kind === 'variable-create')
@@ -634,4 +640,135 @@ if (process.env.XGG_CONFLICT === '1' && args[0] === 'variable' && args[1] === 'c
     ),
     ['check:a', 'check:z', 'create:a', 'create:z', 'rule:set'],
   );
+  assert.equal(successCalls.at(-1).includes('--expect-absent'), false);
+});
+
+test('create-only clone guards and creates an absent rule before variable writes and stops on a late target', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'xgg-create-only-clone-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fakeXgg = join(root, 'fake-xgg.mjs');
+  await writeFile(
+    fakeXgg,
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+appendFileSync(process.env.XGG_CAPTURE, JSON.stringify(args) + '\\n');
+if (process.env.XGG_LATE_TARGET === '1' && args[0] === 'rule' && args[1] === 'set' && args.includes('--expect-absent')) process.exit(17);
+`,
+  );
+  await chmod(fakeXgg, 0o700);
+
+  const source = {
+    ruleId: '123',
+    ruleName: 'source fixture',
+    enable: false,
+    externalVariables: [],
+    commands: [
+      { kind: 'shell-prelude', comment: 'fixture' },
+      {
+        kind: 'rule-set-body',
+        bodyJson: JSON.stringify({ id: '123', nodes: [], cfg: summary('123') }),
+        description: 'empty rule',
+      },
+      {
+        kind: 'variable-create',
+        scope: 'R123',
+        id: 'a',
+        type: 'number',
+        value: 7,
+        userData: { name: 'A' },
+      },
+      {
+        kind: 'variable-create',
+        scope: 'R123',
+        id: 'z',
+        type: 'number',
+        value: 8,
+        userData: { name: 'Z' },
+      },
+    ],
+    warnings: [],
+  };
+  const clone = applyRename(source, { targetId: '456' });
+  const script = renderExportedAsShell(clone);
+
+  const lateCapture = join(root, 'late.jsonl');
+  const late = spawnSync('bash', ['-c', script], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      XGG: fakeXgg,
+      XGG_CAPTURE: lateCapture,
+      XGG_LATE_TARGET: '1',
+      TMPDIR: root,
+    },
+  });
+  assert.equal(late.status, 17);
+  const lateCalls = (await readFile(lateCapture, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    lateCalls.map((args) =>
+      args[0] === 'variable'
+        ? `${args.includes('--check-only') ? 'check' : 'create'}:${args[args.indexOf('--id') + 1]}`
+        : `${args[0]}:${args[1]}`,
+    ),
+    ['check:a', 'check:z', 'rule:set'],
+  );
+  assert.equal(lateCalls.at(-1).includes('--expect-absent'), true);
+  assert.equal(
+    lateCalls.some((args) => args[0] === 'variable' && !args.includes('--check-only')),
+    false,
+  );
+
+  const successCapture = join(root, 'success.jsonl');
+  const success = spawnSync('bash', ['-c', script], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      XGG: fakeXgg,
+      XGG_CAPTURE: successCapture,
+      XGG_LATE_TARGET: '0',
+      TMPDIR: root,
+    },
+  });
+  assert.equal(success.status, 0, success.stderr);
+  const successCalls = (await readFile(successCapture, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    successCalls.map((args) =>
+      args[0] === 'variable'
+        ? `${args.includes('--check-only') ? 'check' : 'create'}:${args[args.indexOf('--id') + 1]}`
+        : `${args[0]}:${args[1]}`,
+    ),
+    ['check:a', 'check:z', 'rule:set', 'create:a', 'create:z'],
+  );
+  assert.equal(successCalls[2].includes('--expect-absent'), true);
+
+  const noVariables = applyRename(
+    { ...source, commands: source.commands.filter((item) => item.kind !== 'variable-create') },
+    { targetId: '789' },
+  );
+  const noVariablesCapture = join(root, 'no-variables.jsonl');
+  const noVariablesResult = spawnSync('bash', ['-c', renderExportedAsShell(noVariables)], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      XGG: fakeXgg,
+      XGG_CAPTURE: noVariablesCapture,
+      XGG_LATE_TARGET: '0',
+      TMPDIR: root,
+    },
+  });
+  assert.equal(noVariablesResult.status, 0, noVariablesResult.stderr);
+  const noVariableCalls = (await readFile(noVariablesCapture, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.equal(noVariableCalls.length, 1);
+  assert.deepEqual(noVariableCalls[0].slice(0, 2), ['rule', 'set']);
+  assert.equal(noVariableCalls[0].includes('--expect-absent'), true);
 });

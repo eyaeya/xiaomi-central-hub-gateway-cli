@@ -62,11 +62,12 @@ Notes:
     to *render* the script. The replay (\`| bash\`) still talks to the
     gateway and requires \`xgg login\`.
   - Cloning rewrites only R<source-id> to R<target-id>. Captured local
-    variables are fully preflighted before any create, then prepared first
-    from their exported current values. A stable mismatching target aborts
-    before any variable/rule write and is never overwritten; concurrent
-    changes can still stop replay because the gateway has no transaction.
-    global variables remain declared external dependencies and must exist.
+    variables are fully preflighted before any write. The empty target is then
+    created with expect-absent semantics before local variables are prepared,
+    so an existing rule id (including one which appears during preflight) is
+    never overwritten. Concurrent variable changes can still stop replay
+    because the gateway has no cross-variable transaction. global variables
+    remain declared external dependencies and must exist.
   - --target-id must differ from the exported rule id. Omit it for same-id
     replay or use only --target-name for an in-place rename.
   - Device-output / device-input nodes referenced in the export must still

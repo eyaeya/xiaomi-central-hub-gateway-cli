@@ -358,6 +358,17 @@ export interface UpsertGraphOptions extends SetGraphOptions {
   // Write the body's cfg (enable/uiType/userData) verbatim instead of
   // preserving the live rule's. lastUpdateTime is still bumped to now.
   allowCfgOverwrite?: boolean;
+  /**
+   * Create-only precondition used by clone replay. If the destination id is
+   * already present in the live rule list, fail before `/api/setGraph` rather
+   * than preserving its cfg and replacing its nodes.
+   *
+   * The check and write are adjacent in this resource workflow. A future
+   * per-gateway mutation lease can make that pair atomic with respect to other
+   * xgg writers; the gateway currently exposes no compare-and-swap primitive
+   * for external Mi Home writers.
+   */
+  expectAbsent?: boolean;
 }
 
 export interface UpsertGraphResult {
@@ -388,6 +399,12 @@ export async function upsertGraph(
   const parsed = parseOrThrow(GraphSetRequest, body, 'GraphSetRequest');
   const rules = await listRules(deps);
   const live = rules.find((r) => r.id === parsed.id);
+  if (opts.expectAbsent === true && live !== undefined) {
+    throw new ConfigError(
+      `rule ${parsed.id} already exists; create-only replay will not overwrite it`,
+      { id: parsed.id, expectAbsent: true },
+    );
+  }
 
   let cfg: RuleSummary;
   let cfgPreserved = false;
@@ -400,7 +417,7 @@ export async function upsertGraph(
     cfg = refreshTimestamp(parsed.cfg);
   }
 
-  const { allowCfgOverwrite: _allowCfgOverwrite, ...setOpts } = opts;
+  const { allowCfgOverwrite: _allowCfgOverwrite, expectAbsent: _expectAbsent, ...setOpts } = opts;
   // F23 save()-parity (2026-05-30): `rule set` is the CLI analog of the UI Save
   // button, and the official save() runs the variable-existence check. Build
   // listAvailVars by default (unless validation is off or the caller already

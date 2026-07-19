@@ -277,7 +277,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 - 变量命令的 `--value` 按变量类型处理：`number` 使用数值转换；`string` 原样保存收到的 argv 文本。`--value Seed` 保存 `Seed`，而 `--value '"Seed"'` 会把双引号也作为数据保存；不要为字符串额外添加 JSON 引号。
 - 变量 scope 默认用 `global`。规则本地变量使用 `R<rule-id>` 约定；如果 rule id 含连字符，本地变量 scope 无法按该约定合法创建，建议改用 `global` 或使用纯字母数字 rule id。
 - `rule export` 会用当前表达式解析器回读生成的 `varSetNumber` / `varSetString --expr`；若源图的结构化 elements 无法用 DSL 无损表示（例如变量后紧跟会被吞入变量 ID 的字母或数字常量），导出会以 `ConfigError` 拒绝。请先在源表达式中加入显式分隔符，或改用 `rule view` 的整图 JSON 往返。
-- `rule export/import --target-id` 克隆时只把源规则的 `R<source-id>` 迁移为 `R<target-id>`，并先用导出时的当前值准备被引用的规则内变量；脚本会先只读预检完整变量计划，再开始任何创建。兼容的已有变量会保留，类型/值/显示名冲突则在写变量或规则前失败且绝不覆盖。`global` 始终是明确的外部依赖，不会被创建或改写。
+- `rule export/import --target-id` 克隆时只把源规则的 `R<source-id>` 迁移为 `R<target-id>`。脚本先只读预检完整变量计划，再以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备规则内变量；已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前失败，绝不覆盖。兼容的已有变量会保留，类型/值/显示名冲突也会在首次写前失败。`global` 始终是明确的外部依赖，不会被创建或改写。
 - 网关没有直接读取任意设备实时属性的通用 RPC。需要观测设备属性时，创建规则把属性写入变量，再用 `xgg variable watch` 观察。
 - `xgg api` 是低层逃生口，不建议把它作为常规自动化编辑路径。read 是普通/未知方法的默认 intent；当前已知写接口必须显式传 `--kind write`，并进入与 typed 写命令相同的 Agent guard、完整写前 rollback snapshot 与 `NOT_CONFIRMED` 超时分类。未知的新接口仍可显式选择 read 或 write，JSON 输出会回显最终 `kind`。
 
