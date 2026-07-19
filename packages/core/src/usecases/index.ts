@@ -30,6 +30,7 @@ export {
   inputPropagatesEventReachability,
   isIndependentEventSourceType,
   isIndependentStateSourceType,
+  modeledNodePinNames,
 } from './pin-colors.js';
 export { validateGraph, validateGraphOrThrow } from './validate-graph.js';
 export type { ValidateGraphInput } from './validate-graph.js';

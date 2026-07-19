@@ -31,6 +31,9 @@ interface PinDef {
 }
 
 interface NodePinSemantics {
+  // Declaration order is also authoring order: the first pin is the canonical
+  // starting edge for a newly added card (for example loop.start rather than
+  // loop.stop, and register.setTrue rather than register.setFalse).
   inputs: PinDef[];
   outputs: PinDef[];
   // The card can originate runtime activity without another graph node first
@@ -189,6 +192,27 @@ const PIN_TABLE: Record<string, NodePinSemantics> = {
     outputs: [{ name: 'output', color: 'event' }],
   },
 };
+
+/**
+ * Return the declared static pin names for one of the locally modeled card
+ * types. The returned array is a copy so callers cannot mutate PIN_TABLE.
+ * Unknown/future card types return undefined rather than inheriting guessed
+ * semantics.
+ *
+ * Pin order is meaningful for authoring guidance: the first entry is the
+ * canonical starting edge. Dynamic numbered families expose their minimum
+ * modeled shape here (`input0`, `input1`, ...); a concrete node may declare
+ * more numbered pins.
+ */
+export function modeledNodePinNames(
+  type: string,
+  direction: PinDirection,
+): readonly string[] | undefined {
+  const entry = PIN_TABLE[type];
+  if (entry === undefined) return undefined;
+  const pins = direction === 'input' ? entry.inputs : entry.outputs;
+  return pins.map((pin) => pin.name);
+}
 
 /**
  * Cards that can bootstrap a directed runtime path without another graph node

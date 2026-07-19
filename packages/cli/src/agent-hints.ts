@@ -26,7 +26,11 @@
  *   5. Add a positive + negative test case to agent-hints.test.ts
  */
 
-import { INDEPENDENT_EVENT_SOURCE_TYPES } from '@eyaeya/xgg-core';
+import {
+  INDEPENDENT_EVENT_SOURCE_TYPES,
+  INDEPENDENT_STATE_SOURCE_TYPES,
+  modeledNodePinNames,
+} from '@eyaeya/xgg-core';
 import { type Command, Option } from 'commander';
 import { ttyBoldYellow } from './tty.js';
 
@@ -93,6 +97,26 @@ const readScope = (r: unknown): string =>
       : '<scope>';
 const readVarId = (r: unknown): string =>
   has(r, 'varId') && typeof r.varId === 'string' ? r.varId : readId(r);
+const readNodeId = (r: unknown): string =>
+  has(r, 'nodeId') && typeof r.nodeId === 'string' ? r.nodeId : '<thisNode>';
+const readNodeType = (r: unknown, opts: unknown): string =>
+  has(opts, 'type') && typeof opts.type === 'string'
+    ? opts.type
+    : has(r, 'type') && typeof r.type === 'string'
+      ? r.type
+      : '';
+
+function incomingNodeEdgeHint(r: unknown, opts: unknown, source = '<upstream>:<pin>'): string {
+  const type = readNodeType(r, opts);
+  const inputPin = modeledNodePinNames(type, 'input')?.[0] ?? '<pin>';
+  return `xgg rule edge add --rule-id ${readRuleId(r)} --from ${source} --to ${readNodeId(r)}:${inputPin}`;
+}
+
+function outgoingNodeEdgeHint(r: unknown, opts: unknown): string {
+  const type = readNodeType(r, opts);
+  const outputPin = modeledNodePinNames(type, 'output')?.[0] ?? '<pin>';
+  return `xgg rule edge add --rule-id ${readRuleId(r)} --from ${readNodeId(r)}:${outputPin} --to <downstream>:<state-pin>`;
+}
 
 /**
  * NEXT_STEP_RULES — the single source of truth for hint dispatch. Populated
@@ -145,12 +169,18 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
   },
   {
     command: 'rule.node.add',
+    match: (_r, opts) => has(opts, 'type') && STATE_SOURCE_TYPES.has(String(opts.type)),
+    cmd: outgoingNodeEdgeHint,
+    why: 'this card is a zero-input state source; wire its output to a downstream state pin such as condition.condition',
+    lifecycle: 'drafting → wiring',
+  },
+  {
+    command: 'rule.node.add',
     match: (_r, opts) =>
       has(opts, 'type') &&
       ACTION_TYPES.has(String(opts.type)) &&
       !TRIGGER_TYPES.has(String(opts.type)),
-    cmd: (r) =>
-      `xgg rule edge add --rule-id ${readRuleId(r)} --from <trigger>:output --to <thisNode>:input`,
+    cmd: (r, opts) => incomingNodeEdgeHint(r, opts, '<trigger>:output'),
     why: 'action card must be wired from a trigger; CLI does not auto-wire on add',
     lifecycle: 'drafting → wiring',
   },
@@ -171,7 +201,7 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
       const varId =
         has(opts, 'varId') && typeof opts.varId === 'string' ? opts.varId : readVarId(r);
       return [
-        `xgg rule edge add --rule-id ${readRuleId(r)} --from <upstream>:<pin> --to <thisNode>:<pin>`,
+        incomingNodeEdgeHint(r, opts),
         `xgg variable get-value --scope ${scope} --id ${varId}`,
       ];
     },
@@ -180,8 +210,7 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
   },
   {
     command: 'rule.node.add',
-    cmd: (r) =>
-      `xgg rule edge add --rule-id ${readRuleId(r)} --from <upstream>:<pin> --to <thisNode>:<pin>`,
+    cmd: incomingNodeEdgeHint,
     why: 'wire this node into the existing graph before adding more',
     lifecycle: 'drafting → wiring',
   },
@@ -351,6 +380,9 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
  * writer (legacy fusion of two semantics in one card type).
  */
 export const TRIGGER_TYPES = new Set<string>(INDEPENDENT_EVENT_SOURCE_TYPES);
+
+/** Zero-input cards that expose supporting state rather than an event trigger. */
+export const STATE_SOURCE_TYPES = new Set<string>(INDEPENDENT_STATE_SOURCE_TYPES);
 
 /**
  * Action cards — the write-side leaves of a rule graph. After adding one,
