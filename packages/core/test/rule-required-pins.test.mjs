@@ -70,6 +70,22 @@ function condition(id, met = [], unmet = []) {
   };
 }
 
+function deviceOutput(id) {
+  return {
+    id,
+    type: 'deviceOutput',
+    cfg: {
+      urn: 'urn:miot-spec-v2:device:light:0000A001:test:1',
+      pos: position(),
+      name: 'deviceOutput',
+      version: 1,
+    },
+    inputs: { trigger: null },
+    outputs: { output: [] },
+    props: { did: 'light-did', siid: 2, piid: 1, value: true },
+  };
+}
+
 function eventSequence(id, targets = []) {
   return {
     id,
@@ -202,6 +218,66 @@ test('strict lint rejects every missing required input with an advisory non-stri
     assert.equal(strictIssue?.severity, 'error', missing);
     assert.equal(advisoryIssue?.severity, 'warn', missing);
   }
+});
+
+test('strict lint accepts an unwired condition input when trigger is wired', () => {
+  const nodes = [
+    onLoad('source', ['gate.trigger']),
+    condition('gate', [], ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+
+  assert.deepEqual(errorMessages(lintGraph({ graph: { id: 'rule-1', nodes }, strict: true })), []);
+});
+
+test('setGraph accepts an unwired condition input and writes the unmet graph', async () => {
+  const id = 'rule-1';
+  const nodes = [
+    onLoad('source', ['gate.trigger']),
+    condition('gate', [], ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  const { deps, calls } = fakeDeps((method) => {
+    if (method === '/api/setGraph') return null;
+    throw new Error(`unexpected RPC: ${method}`);
+  });
+
+  await setGraph({ id, cfg: ruleSummary(id), nodes }, deps);
+
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ['/api/setGraph'],
+  );
+  assert.deepEqual(calls[0]?.params.nodes, nodes);
+});
+
+test('enableRule accepts an unwired condition input when only unmet is reachable', async () => {
+  const id = 'rule-1';
+  const nodes = [
+    onLoad('source', ['gate.trigger']),
+    condition('gate', [], ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  const { deps, calls } = fakeDeps((method, params) => {
+    if (method === '/api/getGraph') return { id, nodes };
+    if (method === '/api/getVarList') return {};
+    if (method === '/api/getGraphList') return [ruleSummary(id)];
+    if (method === '/api/changeGraphConfig') return null;
+    throw new Error(`unexpected RPC: ${method} ${JSON.stringify(params)}`);
+  });
+
+  assert.deepEqual(await enableRule(id, deps), { id, prevEnable: false, enable: true });
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    [
+      '/api/getGraph',
+      '/api/getVarList',
+      '/api/getVarList',
+      '/api/getGraphList',
+      '/api/changeGraphConfig',
+    ],
+  );
+  assert.equal(calls.at(-1)?.options?.kind, 'write');
 });
 
 test('enableRule rejects a missing required input before any write RPC', async () => {
