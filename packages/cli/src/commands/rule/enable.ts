@@ -32,7 +32,7 @@ export function attachEnable(cmd: Command): void {
     .option('--no-snapshot', 'skip the pre-write dump snapshot')
     .option(
       '--no-validate',
-      'skip the save()-equivalent pre-flight (var-existence + per-card) — activates even a rule with lost vars (NOT recommended)',
+      'skip card/variable, strict topology, required-input, and directed-reachability gates (request/envelope parsing still applies; NOT recommended)',
     )
     .option('--snapshots-dir <path>', 'directory for pre-write snapshots (env: XGG_SNAPSHOTS_DIR)')
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
@@ -46,10 +46,11 @@ export function attachEnable(cmd: Command): void {
 Example:
   $ xgg rule enable 1748234567890
 
-Before flipping enable on, the live graph is run through the same validator as
-the UI Save button (per-card config + variable existence/scope). Enable aborts
-with exit code 2 if a card references a deleted / foreign-scope variable, so an
-automation can't be silently activated dead. Use --no-validate for a raw probe.`,
+Before flipping enable on, xgg checks modeled card config, variable
+existence/scope, strict topology and required inputs, then directed sink
+reachability. Validation failures are ConfigError (exit 5), preventing a lost-var,
+broken, or statically dead graph from being activated silently. --no-validate is
+only for an explicit raw probe and does not bypass request/envelope parsing.`,
     )
     .action(
       wrap('rule.enable', async (id: string, opts: EnableOpts) => {

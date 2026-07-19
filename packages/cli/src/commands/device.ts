@@ -85,10 +85,11 @@ export function categoryFromUrn(urn: string | undefined): string {
 
 export function deviceCommand(): Command {
   const cmd = new Command('device').description('Device read operations');
-  // Set expectations: there is NO realtime device push.
+  // Set expectations without making a firmware-global impossibility claim:
+  // the audited client surface has no generic live-property stream.
   cmd.addHelpText(
     'after',
-    "\nNote: device reads (list/get/spec) are one-shot snapshots. The gateway exposes\nno realtime device-property push channel to clients. To observe a device's LIVE\nproperty values, copy them into a variable with a rule — `deviceInputSetVar`\n(on change) or `deviceGetSetVar` (on demand) — then `xgg variable watch --follow`.",
+    '\nNote: current xgg device reads (list/get/spec) are one-shot snapshots. The\naudited client/bundle surface does not expose a generic live-property stream.\nFor a modeled observation path, copy values into a variable with a rule —\n`deviceInputSetVar` (on change) or `deviceGetSetVar` (on demand) — then run\n`xgg variable watch --follow`. This is not a claim about every firmware-private API.',
   );
 
   const listCmd = cmd

@@ -436,7 +436,7 @@ export function attachNodeAdd(cmd: Command): void {
     .requiredOption('--type <T>', 'node type (e.g. deviceInput)')
     .option(
       '--cfg <JSON>',
-      'full node JSON (legacy path) — accepts either the 4-tuple {cfg,inputs,outputs,props} OR just the cfg field; the gateway requires the full shape for node types that have no c-shortcut',
+      'raw/opaque node JSON — accepts the complete {cfg,inputs,outputs,props} tuple (preferred) or legacy cfg-only shape; strict modeled types generally require the complete tuple',
     )
     .option('--id <NID>', 'override node id (default: random)')
     .option('--no-snapshot', 'skip the pre-write dump snapshot')
@@ -461,12 +461,12 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--device-property <P>',
-      'device property name (deviceInput trigger | deviceOutput property-write target)',
+      'device property name (deviceInput/deviceInputSetVar trigger or capture source | deviceGet/deviceGetSetVar read source | deviceOutput property-write target)',
     )
     .option('--device-action <A>', 'device action name (deviceOutput action-invoke)')
     .option(
       '--device-event <E>',
-      'device event name for event-driven deviceInput trigger (e.g. click, double-click, long-press, motion-detected)',
+      'device event name for event-driven deviceInput/deviceInputSetVar trigger or capture source (e.g. click, double-click, long-press, motion-detected)',
     )
     .option(
       '--event-filter <piid><op><v1>',
@@ -494,7 +494,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--threshold <N>',
-      'numeric comparison threshold (deviceInput/deviceGet) or count threshold (counter/onlyNTimes)',
+      'numeric comparison threshold (deviceInput/deviceGet/varChange/varGet) or count threshold (counter/onlyNTimes)',
       parseFiniteDecimal,
     )
     .option(
@@ -605,11 +605,11 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--var-id <I>',
-      'variable id for varChange/device*SetVar (non-empty [A-Za-z0-9]+; may start with a digit)',
+      'variable id for varChange/varGet/varSetNumber/varSetString/device*SetVar (non-empty [A-Za-z0-9]+; may start with a digit)',
     )
     .option(
       '--var-type <T>',
-      'varChange variable type: number|string (gateway-supported vocab — F16)',
+      'varChange/varGet variable type: number|string (gateway-supported vocab — F16)',
     )
     .option(
       '--var-value <S>',
@@ -717,14 +717,10 @@ Examples (M10 F17 non-device shortcut path):
   $ xgg rule node add --rule-id r1 --type alarmClock --sunset \\
       --latitude 30.46 --longitude 114.41 --offset-min -15
 
-Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut):
-  # eventSequence (two ordered inputs within timeout)
-  $ xgg rule node add --rule-id r1 --type eventSequence --id n-seq --cfg '{
-      "cfg":    {"pos":{"x":200,"y":200,"width":200,"height":120},"name":"eventSequence","version":1,"unit":"s","value":5},
-      "inputs": {"input1":null,"input2":null},
-      "outputs":{"output":[]},
-      "props":  {"timeout":5000}
-    }'`,
+Raw/opaque fallback:
+  All 25 modeled executable types plus nop have shortcuts. For an unmodeled
+  future card, preserve the exact {cfg,inputs,outputs,props} payload captured
+  from rule view/export instead of guessing or passing a partial object.`,
     )
     .action(
       wrap('rule.node.add', async (opts: NodeAddOpts) => {

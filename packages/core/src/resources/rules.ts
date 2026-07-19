@@ -3849,12 +3849,12 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
           },
         };
       }
-      // sunrise / sunset form: gateway needs lat/long to compute today's
-      // sun event. Codex T4 showed no `/api/getLocation` RPC; user must
-      // pass --latitude / --longitude.
+      // sunrise / sunset form: gateway needs lat/long to compute today's sun
+      // event. The audited client surface and current xgg do not auto-load a
+      // location, so the user must pass --latitude / --longitude.
       if (shortcut.latitude === undefined || shortcut.longitude === undefined) {
         throw new ConfigError(
-          '--sunrise / --sunset require --latitude <DEG> --longitude <DEG> (no gateway RPC to autoload)',
+          '--sunrise / --sunset require --latitude <DEG> --longitude <DEG> (current xgg does not auto-load location)',
         );
       }
       const offsetSec = (shortcut.offsetMin ?? 0) * 60;

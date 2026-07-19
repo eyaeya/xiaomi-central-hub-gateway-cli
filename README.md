@@ -1,6 +1,6 @@
 # 小米中枢网关极客版 CLI（xgg）
 
-> 使用 Codex、Claude 或其他 Agent 工具，调用小米中枢网关的全部能力，进行 Vibe Coding 式的米家中枢网关自动化规则编程。
+> 使用 Codex、Claude 或其他 Agent 工具，调用本项目已审计并建模的小米中枢网关能力，进行 Vibe Coding 式的米家中枢网关自动化规则编程。
 
 `xgg` 是用于操作小米中枢网关极客版的命令行工具。它把网关的登录、设备读取、自动化规则图编辑、变量管理、备份管理和调试日志封装成稳定的 CLI，适合人类在终端中使用，也适合 LLM Agent 按步骤创建和验证自动化。
 
@@ -44,7 +44,7 @@ GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaey
 
 ## 使用场景
 
-`xgg` 把网关的设备读取、规则图编辑、变量管理和运行日志都暴露成稳定、可解析的命令，因此特别适合交给 LLM Agent 按步骤操作。它让 Codex、Claude 等 Agent 不只是「帮你敲命令」，而是从需求出发，自己查设备、连规则图、校验、启用、读日志验证。下面三类用法都已在真实网关上跑通，覆盖从无到有、从坏到好、从有到更好的完整生命周期。
+`xgg` 把网关的设备读取、规则图编辑、变量管理和运行日志都暴露成稳定、可解析的命令，因此特别适合交给 LLM Agent 按步骤操作。它让 Codex、Claude 等 Agent 不只是「帮你敲命令」，而是从需求出发，自己查设备、连规则图、校验、启用、读日志验证。下面三类用法覆盖从无到有、从坏到好、从有到更好的完整生命周期；不同能力的验证边界见后文「验证证据分级」。
 
 ### 用 LLM Agent 设计并创建自动化（主用法）
 
@@ -52,7 +52,7 @@ GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaey
 
 > 「天黑回家自动开玄关灯，半夜起夜把灯调到 10% 亮度。」
 
-Agent 会先 `xgg device list` / `xgg device spec <did>` 看清你有哪些设备、它们能做什么，再按上文「创建自动化的标准流程」`rule new → node add → edge add → layout → validate → enable` 把规则图建好并启用，最后用 `xgg rule logs <rule-id> --tail <N>` 确认它真的触发，而不是停在「命令返回 ok」。你只描述想要的效果，不必关心节点、边、表达式这些细节。
+Agent 会先 `xgg device list` / `xgg device spec <did>` 看清你有哪些设备、它们能做什么，再按上文「创建自动化的标准流程」`rule new → node add → edge add → layout → validate → lint --strict` 把规则图建好。用户要求运行时才继续 enable，并在真实触发后查 logs；否则 readback 确认 `enable=false`。你只描述想要的效果，不必关心节点、边、表达式这些细节。
 
 ### 诊断与修复既有自动化
 
@@ -63,7 +63,7 @@ xgg rule logs <rule-id> --tail 50
 xgg rule view <rule-id> --pretty
 ```
 
-Agent 读日志后能区分到底是**根本没触发**、**触发了但动作没执行**，还是**条件没满足走了另一分支**。定位之后，Agent 直接修改规则图，重新 `validate` 并 `enable`，再看一眼日志确认修好了——整个排障过程有据可查，而不是反复试错。
+Agent 读日志后能区分到底是**根本没触发**、**触发了但动作没执行**，还是**条件没满足走了另一分支**。定位之后，Agent 直接修改规则图，重新 `validate`、`lint --strict` 并按需要 `enable`，再看一眼日志确认修好了——整个排障过程有据可查，而不是反复试错。
 
 > `xgg rule logs` 拿到的是网关**原始日志行**（仅按 rule id / 时间 / level 过滤），比网页日志面板更全也更「糙」——网页那套会再按节点连接类型过滤、逐节点渲染中文说明并丢弃解析不了的行，所以 CLI 日志更适合排障，但不必和网页逐行对应。
 
@@ -138,20 +138,31 @@ npx skills add eyaeya/xiaomi-central-hub-gateway-cli
 CLI_PKG="$(npm root -g)/@eyaeya/xgg-cli"
 
 mkdir -p ~/.claude/skills/xgg-rule-authoring
-cp "$CLI_PKG/skills/xgg-rule-authoring/SKILL.md" ~/.claude/skills/xgg-rule-authoring/SKILL.md
+cp -R "$CLI_PKG/skills/xgg-rule-authoring/." ~/.claude/skills/xgg-rule-authoring/
 
 mkdir -p ~/.agents/skills/xgg-rule-authoring
-cp "$CLI_PKG/skills/xgg-rule-authoring/SKILL.md" ~/.agents/skills/xgg-rule-authoring/SKILL.md
+cp -R "$CLI_PKG/skills/xgg-rule-authoring/." ~/.agents/skills/xgg-rule-authoring/
+
+# 仓库/包内/已安装副本应显示同一个正文 build 标记；不同就重新同步
+grep '^<!-- xgg-skill-content-build:' \
+  "$CLI_PKG/skills/xgg-rule-authoring/SKILL.md" \
+  ~/.agents/skills/xgg-rule-authoring/SKILL.md
+shasum -a 256 \
+  "$CLI_PKG/skills/xgg-rule-authoring/SKILL.md" \
+  ~/.agents/skills/xgg-rule-authoring/SKILL.md
+# 递归比较才能同时覆盖 SKILL.md 与 references/；无输出即完全一致
+diff -qr "$CLI_PKG/skills/xgg-rule-authoring" ~/.agents/skills/xgg-rule-authoring
+diff -qr "$CLI_PKG/skills/xgg-rule-authoring" ~/.claude/skills/xgg-rule-authoring
 ```
 
 从 GitHub 源码运行时，也可以直接把 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md) 交给 Agent 读取，或复制到本地 skills 目录：
 
 ```bash
 mkdir -p ~/.claude/skills/xgg-rule-authoring
-cp skills/xgg-rule-authoring/SKILL.md ~/.claude/skills/xgg-rule-authoring/SKILL.md
+cp -R skills/xgg-rule-authoring/. ~/.claude/skills/xgg-rule-authoring/
 
 mkdir -p ~/.agents/skills/xgg-rule-authoring
-cp skills/xgg-rule-authoring/SKILL.md ~/.agents/skills/xgg-rule-authoring/SKILL.md
+cp -R skills/xgg-rule-authoring/. ~/.agents/skills/xgg-rule-authoring/
 ```
 
 Agent 执行写操作时建议开启专用快照目录：
@@ -197,8 +208,7 @@ xgg rule node add --rule-id <rule-id> --type nop \
 xgg rule edge add --rule-id <rule-id> --from n-click:output --to n-action:trigger
 xgg rule layout <rule-id>
 xgg rule validate --rule-id <rule-id>
-xgg rule enable <rule-id>
-xgg rule logs <rule-id> --tail 20
+xgg rule lint --rule-id <rule-id> --strict
 ```
 
 要点：
@@ -206,10 +216,100 @@ xgg rule logs <rule-id> --tail 20
 - 先跑 `xgg device spec <did>`，再选择属性、动作或事件，不要凭设备名猜字段。
 - `deviceOutput --value '$scope.id'` 表示变量引用；字符串字面值若以 `$` 开头，需要把第一个 `$` 写两次，例如 `--value '$$hello'` 实际写入 `$hello`。`rule export` 会自动添加这一层转义。
 - 连线完成后跑 `xgg rule layout <rule-id>`，让可执行卡片按数据流排布；`nop` 的自由位置会保留，避免备注离开它所说明的区域。
-- 启用前跑 `xgg rule validate --rule-id <rule-id>` 和 `xgg rule lint --rule-id <rule-id> --strict`；启用后用 `xgg rule logs` 看真实触发日志。
-- 对 Agent 自测场景，可用 `onLoad` 作为触发节点，再通过 `rule disable` + `rule enable` 重放，不需要人类物理按按钮。
+- 启用前跑 `xgg rule validate --rule-id <rule-id>` 和 `xgg rule lint --rule-id <rule-id> --strict`。只有用户授权运行时才执行 `xgg rule enable <rule-id>`，触发后用 `xgg rule logs` 验收；否则用 `rule view` 确认保持 `enable=false`。
+- 对专门构造、完整下游均为纯软件 marker 的 Agent 探针，可用 `onLoad` 配合 `rule disable` + `rule enable` 重放，不需要人类物理按按钮；既有规则可能从 onLoad 驱动物理动作或业务变量，先审查完整下游并取得授权再重放。
 - `nop` 只给网页画布添加备注，不参与连线或执行。纯文本用 `--text`；要保留标题、粗体、列表、对齐等格式，用 `--delta '<Quill ops JSON>'`（也接受 `{"ops":[...]}`），`rule export` / `rule import` 会无损往返 Delta、背景色、尺寸和位置，`rule layout` 不会搬动它。
-- 严格 lint 与 enable 会按目标 pin 的必需输入语义检查动作可达性，并把状态“可用 / 可能为 true / 可能为 false”分开。独立事件源只有 `onLoad`、`alarmClock`、`deviceInput`、`deviceInputSetVar`、`varChange`；`timeRange` 只提供可真可假的条件状态，不能直接启动事件路径，但可经 `statusLast` 的“状态持续为 true 后触发”桥接成事件。`register` 初值与 `setFalse` 提供 false，只有可达的 `setTrue` 再增加 true；因此 `condition.met` 要 trigger + may-true，`condition.unmet` 要 trigger + may-false，`statusLast` 也只接受 may-true。`eventSequence` 的每个事件输入都必须可达；`logicAnd` / `logicOr` / `logicNot` 按布尔语义传播真假状态，直接传播事件时仍需更新路径，`signalOr` 则任一路事件即可。`loop.stop` 与 `onlyNTimes.zero` 是控制输入，不能单独证明下游动作可执行。
+- 严格 lint 与 enable 会按目标 pin 的必需输入语义检查动作可达性，并把状态“可用 / 可能为 true / 可能为 false”分开。独立事件源包括 `onLoad`、`alarmClock`、`timeRange`、`deviceInput`、`deviceInputSetVar`、`varChange`；`timeRange` 同时提供时间窗状态，并在进入窗口时发出事件（没有观察到等价的窗口结束事件）。`condition.condition` 未连线时按 `false` 处理，因此 trigger 可走 `unmet`，但 `met` 不可达。`register` 初值与 `setFalse` 提供 false，只有可达的 `setTrue` 再增加 true；`eventSequence` 的每个事件输入都必须可达；`logicAnd` / `logicOr` / `logicNot` 按布尔语义传播真假状态，`signalOr` 则任一路事件即可。`loop.stop` 与 `onlyNTimes.zero` 是控制输入，不能单独证明下游动作可执行。
+- 同一节点的反馈边是网关和画布接受的合法结构；lint 会保留 warning，提醒确认反馈能终止。不要因为出现 self-loop 就删掉 `loop.output → loop.stop` 这类有限反馈。
+
+### 精细编辑、完整比较与展示状态
+
+不必为改一个字段而手工构造整图 JSON。先 `rule view` 读取当前图，再做目标化变更：
+
+```bash
+xgg rule node update --rule-id <rule-id> --node-id <node-id> --patch '{"cfg":{"name":"新名称"}}'
+xgg rule edge remove --rule-id <rule-id> --from <node:pin> --to <node:pin>
+xgg rule node remove --rule-id <rule-id> --node-id <node-id> --cascade-edges
+xgg rule rename <rule-id> --name "新规则名"
+xgg rule set-tags <rule-id> --tags "照明,夜间"       # --tags "" 清空
+xgg rule delete <rule-id>
+```
+
+目标化 node/edge/layout/set 写入默认保留 live `enable`，所以对已启用规则的多步修改可能立即生效，不能把最后的 `rule enable` 当成唯一生效边界。先用 `rule view` 记录状态；会改变执行路径时，取得授权后先 disable 并 readback，或离线构造/校验后用一次原子 `rule set`。完成 validate/lint 后只按原状态和用户意图恢复。
+
+节点 shortcut 还能保留官方画布状态并表达完整 typed 比较：
+
+```bash
+# 设备属性的整数集合；事件参数的集合与 between 范围
+xgg rule node add --rule-id <rule-id> --type deviceGet \
+  --device-did <did> --device-property mode --property-include 1,2,3
+xgg rule node add --rule-id <rule-id> --type deviceInput \
+  --device-did <did> --device-event <event> \
+  --event-filter-include 2=1,2,3 --event-filter-between 3=18.5,26.5
+
+# string 属性值不用数值 threshold；preload 与 simplified 都可显式往返
+xgg rule node add --rule-id <rule-id> --type deviceInput \
+  --device-did <did> --device-property mode --op eq --property-value open \
+  --preload --simplified true
+```
+
+`--preload` / `--no-preload` 适用于 `deviceInput`、`deviceInputSetVar` 的属性模式和 `varChange`，默认是官方新卡片行为 `false`；`--simplified true|false` 是执行卡的 UI 紧凑状态。导出会保留显式值。动作调用的 `--params` 依据 MIoT action input format 保留 number / boolean / string 原生类型，也支持动态变量：
+
+```bash
+xgg rule node add --rule-id <rule-id> --type deviceOutput \
+  --device-did <did> --device-action <action> \
+  --params '{"level":4,"enabled":true,"label":"hello","volume":{"$var":"global.targetVolume"}}'
+```
+
+整数动作入参只接受 JavaScript 安全整数，避免 `int64` / `uint64` 在 JSON number 中静默舍入；超出范围时命令会拒绝，不能声称已无损覆盖 64 位整数全集。
+
+数值 property 比较确需越过异常 spec 的 range/step 时，`deviceInput` / `deviceGet` 可显式用 `--force-out-of-range`；它不绕过 value-list、finite/safe-integer、operator 或 operand shape 校验，不能当作通用关闭校验。
+
+### 导出、导入与未来节点
+
+`rule export --format shell` 与 `rule import` 渲染出的脚本都必须先落盘审阅。JSON 路径用必填的 `--from-file`：
+
+```bash
+export SNAPSHOTS_DIR="$PWD/snapshots"
+xgg rule export <rule-id> --format json --strict-roundtrip > rule-export.json
+xgg rule import --from-file rule-export.json > replay.sh
+xgg rule import --from-file rule-export.json --target-id <new-rule-id> > clone.sh
+# 审阅最终 enable 行为后再执行 bash replay.sh / bash clone.sh
+```
+
+脚本先只读预检已捕获的规则内变量；若导出包含规则内变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 也在这里生效）。clone 保留 `--expect-absent`，先成功创建禁用空壳，再准备 `R<target-id>` 变量。此后所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，源规则禁用时保持禁用。same-ID 重放会替换目标图，而且整段脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg 进程或 API 客户端并发修改目标；staging 后失败会留下禁用的 partial graph，用逐写快照检查或恢复。
+
+对当前 spec 有效、已建模的节点，完整 typed `include` / `between`、`preload`、`simplified`、`nop`、动作原生参数与规则内变量可在 `--strict-roundtrip` 下往返；已建模节点出现语义损失 warning 时 strict export 会拒绝。未来新增但当前 CLI 尚未建模的节点会导出成 opaque `--cfg` 结构，允许同 ID 无损重放并给出信息性 warning；CLI 无法安全发现其中的规则内引用，因此带 opaque 节点的导出会拒绝 `--target-id` 克隆。
+
+### 分区设备与能力感知替换
+
+已验证型号 `xiaomi.sensor_occupy.p1` 可把 siid 4…35 映射为 A-1…B-16 分区标签；其他型号返回空列表（不是通用分区发现）：
+
+```bash
+xgg device partitions <did> --pretty
+```
+
+替换规则里的设备卡时，先只读解释兼容性，再显式应用：
+
+```bash
+xgg rule device replacements --rule-id <rule-id> --node-id <node-id> --pretty
+xgg rule device replacements --rule-id <rule-id> --node-id <node-id> \
+  --target-did <did> --target-siid <siid> --target-piid <piid> --pretty
+xgg rule device replace --rule-id <rule-id> --node-id <node-id> \
+  --target-did <did> --target-siid <siid> --target-piid <piid> --pretty
+xgg rule device replace --rule-id <rule-id> --node-id <node-id> \
+  --target-did <did> --target-siid <siid> --target-piid <piid> \
+  --apply --confirm-target-did <did> \
+  --snapshots-dir "$PWD/snapshots"
+```
+
+替换支持五类设备卡（`deviceInput` / `deviceGet` / `deviceOutput` / `deviceInputSetVar` / `deviceGetSetVar`），会比较 URN 前五段、dtype、value-range、value-list、事件参数与动作入参。属性卡用 `--target-piid`，事件卡改用 `--target-eiid`，动作卡改用 `--target-aiid`，三者互斥；使用 selector 必须同时给 `--target-did`。目标存在多个兼容 mapping 时必须按 discovery 结果消歧。`replace` 默认 dry-run，只有完全相同的 selector 计划确认后才加 `--apply`；写路径在同一 mutation lease 内强制快照、fresh spec/graph 复核、严格校验和写后 readback。网关没有 CAS，应用期间不要同时编辑网页画布。
+
+### 验证证据分级
+
+- **离线确定性检查：** CLI `--help`、schema、unit/integration test、`rule validate --body/--stdin` 和 bundle 对照，证明命令形状、序列化与静态约束。
+- **安全实机探针：** 已验证未接状态的 `condition` 走 `unmet`、同节点 `loop.output → loop.stop` 有限反馈、`timeRange` 在窗口进入时发出事件并提供独立状态；这些探针只写临时规则/变量，不驱动物理设备。
+- **目标网关验收：** 真实 property/event/action、分区型号、设备替换、物理触发和恢复操作依赖具体设备与固件，必须在用户网关上重新跑 `spec → validate → lint → trigger/log/readback`，不能从离线测试推断“全部实机验证”。
 
 ### 离线校验候选规则
 
@@ -238,29 +338,52 @@ xgg status
 xgg dump
 
 xgg device list [--pretty] [--include-ghost]
+xgg device get <did> [--pretty]
 xgg device spec <did>
+xgg device partitions <did> [--pretty]
 
 xgg rule list [--pretty]
 xgg rule view <rule-id> [--pretty]
 xgg rule new --name "<name>" [--id <id>]
 xgg rule node add --rule-id <rule-id> --type <type> ...
+xgg rule node update --rule-id <rule-id> --node-id <node-id> --patch '<JSON>'
+xgg rule node remove --rule-id <rule-id> --node-id <node-id> [--cascade-edges]
 xgg rule edge add --rule-id <rule-id> --from <node:pin> --to <node:pin>
+xgg rule edge remove --rule-id <rule-id> --from <node:pin> --to <node:pin>
 xgg rule layout <rule-id>
 xgg rule validate (--rule-id <rule-id> | --body <file> | --stdin) [--spec-aware]
 xgg rule lint --rule-id <rule-id> [--strict]
 xgg rule enable <rule-id>
 xgg rule disable <rule-id>
+xgg rule rename <rule-id> --name "<name>"
+xgg rule set-tags <rule-id> --tags "<tag1,tag2>"
+xgg rule delete <rule-id>
 xgg rule logs <rule-id> [--tail 50] [--level error] [--follow]
 xgg rule export <rule-id> --format shell [--target-id <new-rule-id>]
+xgg rule export <rule-id> --format json > rule-export.json
+xgg rule import --from-file rule-export.json [--target-id <new-rule-id>]
+xgg rule device replacements --rule-id <rule-id> --node-id <node-id>
+xgg rule device replace --rule-id <rule-id> --node-id <node-id> --target-did <did> [--apply --confirm-target-did <did>]
 
 xgg variable list [--pretty]
 xgg variable get <scope> [--pretty]
+xgg variable get-config --scope global --id <id> [--pretty]
 xgg variable create --scope global --id <id> --type number --value <value> --name "<name>"
 xgg variable get-value --scope global --id <id>
 xgg variable set-value --scope global --id <id> --value <value>
-xgg variable watch [--pretty]
+xgg variable set-config --scope global --id <id> --name "<new-name>"
+xgg variable watch --pretty
+xgg variable watch --follow [--max-events <N>]
 
 xgg backup list --from fds [--pretty]
+xgg backup local-export --output ./gateway-rules.bak
+xgg backup local-import --input ./gateway-rules.bak --dry-run
+xgg backup local-import --input ./gateway-rules.bak --confirm-replace-all --snapshots-dir <dir>
+xgg backup progress --from fds --progress-id <id>
+xgg backup generate --from fds --did <did> --ts <ts> --file-name <name>
+xgg backup load --from fds --did <did> --ts <ts> --file-name <name> --snapshots-dir <dir>
+xgg backup delete --from fds --did <did> --ts <ts> --file-name <name> --snapshots-dir <dir>
+xgg backup config get --from fds
 xgg backup create --from fds --file-name <name> [--snapshots-dir <dir>] [--wait]
 xgg backup download --from fds --did <did> --ts <ts> --file-name <name> [--snapshots-dir <dir>] [--wait]
 xgg backup config set --from fds --auto-backup <true|false> [--snapshots-dir <dir>]
@@ -273,22 +396,24 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 
 ## 重要限制
 
-- 网关没有普通 HTTP API。`xgg` 通过加密 WebSocket 二进制协议连接网关，登录使用米家 App 提供的 6 位码。
+- 在已审计的极客版网页 bundle 控制路径中，规则、变量、设备与备份操作走加密 WebSocket 二进制协议承载的 RPC；`xgg` 复用了这条路径，登录使用米家 App 提供的 6 位码。这不是对所有固件、服务或未来版本“绝不存在 HTTP API”的证明。
 - 已打开的网关网页不会自动看到 CLI 写入的规则、变量或 scope。CLI 写入后请刷新网页，再判断 UI 是否同步。
 - `xgg device list` 默认排除 ghost device。不要把网页标为“设备已丢失”的设备作为 `deviceOutput` 目标。
 - 变量类型只有 `number` 和 `string`。开关状态建议用数字 `1/0` 或字符串表示。
 - 变量命令的 `--value` 按变量类型处理：`number` 使用数值转换；`string` 原样保存收到的 argv 文本。`--value Seed` 保存 `Seed`，而 `--value '"Seed"'` 会把双引号也作为数据保存；不要为字符串额外添加 JSON 引号。
+- `variable get-config` 读取单个变量的配置；`set-config` 只更新显示名，不改类型或当前值，并按其他写命令一样执行 snapshot guard。
 - 变量 scope 默认用 `global`。规则本地变量使用当前规则的 `R<rule-id>`；变量写命令会确认其中的 rule id 确实存在，规则节点也只接受与自身 `--rule-id` 匹配的本地 scope。合法本地 scope 不需要 `--allow-unknown-scope`；跨规则、不存在或自定义 scope 会告警并在严格校验中失败。如果 rule id 含连字符，本地变量 scope 无法按该约定合法创建，建议改用 `global` 或使用纯字母数字 rule id。
 - `rule export` 会用当前表达式解析器回读生成的 `varSetNumber` / `varSetString --expr`；若源图的结构化 elements 无法用 DSL 无损表示（例如变量后紧跟会被吞入变量 ID 的字母或数字常量），导出会以 `ConfigError` 拒绝。请先在源表达式中加入显式分隔符，或改用 `rule view` 的整图 JSON 往返。
 - `rule export/import --target-id` 克隆时只把源规则的 `R<source-id>` 迁移为 `R<target-id>`。脚本先只读预检完整变量计划，再以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备规则内变量；已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前失败，绝不覆盖。兼容的已有变量会保留，类型/值/显示名冲突也会在首次写前失败。`global` 始终是明确的外部依赖，不会被创建或改写。
-- 网关没有直接读取任意设备实时属性的通用 RPC。需要观测设备属性时，创建规则把属性写入变量，再用 `xgg variable watch` 观察。
+- 在已审计 bundle 的调用面与当前 `xgg` 已建模接口中，未发现“客户端随时读取任意设备实时属性”的通用 RPC。需要观测实时值时，用 `deviceInputSetVar`（变化推送）或 `deviceGetSetVar`（由规则事件触发读取）写入变量，再用 `xgg variable watch --follow` 观察；不要把这个结论外推为所有固件都绝无其他私有接口。
+- `backup local-import --confirm-replace-all` 会删除并重建全部规则和变量。固定先跑 `--dry-run`；应用路径必须有 rollback snapshot，且不应在未授权的家庭网关上做恢复试验。
 - `xgg api` 是低层逃生口，不建议把它作为常规自动化编辑路径。read 是普通/未知方法的默认 intent；当前已知写接口必须显式传 `--kind write`，并进入与 typed 写命令相同的 Agent guard、完整写前 rollback snapshot 与 `NOT_CONFIRMED` 超时分类。未知的新接口仍可显式选择 read 或 write，JSON 输出会回显最终 `kind`。
 
 ## GitHub 与 npm 内容边界
 
 GitHub 源码发布根目录是本目录。**本仓库不包含任何小米官方前端 bundle 或专有代码**。
 
-npm 只发布 `@eyaeya/xgg-core` 与 `@eyaeya/xgg-cli` 两个包。`@eyaeya/xgg-cli` 依赖并自动安装 `@eyaeya/xgg-core`，用户只需要全局安装 CLI 包。两个包的 `package.json` 使用 `files` allow-list：core tarball 只包含 `dist`、`LICENSE`、`README.md`；cli tarball 额外包含 `skills/xgg-rule-authoring/SKILL.md`，不会包含 fixtures、开发计划、探测记录、快照或本地逆向材料。
+npm 只发布 `@eyaeya/xgg-core` 与 `@eyaeya/xgg-cli` 两个包。`@eyaeya/xgg-cli` 依赖并自动安装 `@eyaeya/xgg-core`，用户只需要全局安装 CLI 包。两个包的 `package.json` 使用 `files` allow-list：core tarball 只包含 `dist`、`LICENSE`、`README.md`；cli tarball 额外包含整个 `skills/xgg-rule-authoring/`（正文与 references），不会包含 fixtures、开发计划、探测记录、快照或本地逆向材料。
 
 ## 开发与发布检查
 
@@ -306,7 +431,7 @@ tar -tzf release-artifacts/eyaeya-xgg-cli-*.tgz
 - `pnpm check` 通过。
 - `pnpm pack:release` 能生成 `@eyaeya/xgg-core` 和 `@eyaeya/xgg-cli` tarball。
 - 临时安装生成的 CLI tarball 后，`xgg --version` 和 `xgg --help` 正常。
-- `tar -tzf` 确认 core tarball 只含 `dist/LICENSE/README.md`，cli tarball 只额外含 `skills/xgg-rule-authoring/SKILL.md`（不含源码、fixtures、本地材料）。
+- `tar -tzf` 确认 core tarball 只含 `dist/LICENSE/README.md`，cli tarball 只额外含 `skills/xgg-rule-authoring/` 正文与 references（不含源码、fixtures、本地材料）。
 - 公开树中没有真实 IP、6 位登录码、设备 DID、家庭名或本地快照。
 
 发布命令：
@@ -320,7 +445,7 @@ npm publish release-artifacts/eyaeya-xgg-cli-*.tgz --access public
 
 ## Agent 权威参考
 
-供 AI Agent 操作本 CLI 的完整权威指南（含 25 种可执行卡片 + `nop` 备注节点、pin 颜色规则、变量模型、表达式、调试流程，均经真实网关验证）见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。
+供 AI Agent 操作本 CLI 的完整权威指南（含 25 种可执行卡片 + `nop` 备注节点、pin 颜色规则、变量模型、表达式、调试流程与分级验证边界）见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。
 
 ## License
 

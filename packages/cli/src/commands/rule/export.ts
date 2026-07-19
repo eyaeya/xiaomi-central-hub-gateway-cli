@@ -35,7 +35,7 @@ export function attachExport(cmd: Command): void {
     )
     .option(
       '--target-name <NAME>',
-      "override the cloned rule's userData.name (default: '[Cloned] <original>' when --target-id is set, unchanged otherwise)",
+      "override the replayed/cloned rule's userData.name (default: '[Cloned] <original>' when --target-id is set, source name otherwise)",
     )
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
@@ -50,10 +50,9 @@ export function attachExport(cmd: Command): void {
       'after',
       `
 Examples:
-  $ xgg rule export 1779888258312
-      # Emits a runnable bash script on stdout. Its first target-graph write
-      # installs an empty shell with enable=false; every node/edge is rebuilt
-      # while disabled, then source enable state is restored last.
+  $ xgg rule export 1779888258312 > replay.sh
+      # Render for review. After variable preflight/preparation, its first
+      # target-graph write stages an empty shell with enable=false.
 
   $ xgg rule export 1779888258312 --format json --pretty
       # Emits the structured ExportedRule (commands array) as JSON for
@@ -61,8 +60,8 @@ Examples:
       # from existing user-built rules).
 
   $ XGG="pnpm exec tsx packages/cli/src/cli.ts" BASE_URL="http://192.168.x.x:8086" \\
-      bash <(xgg rule export 1779888258312)
-      # End-to-end replay against a different gateway / dev worktree.
+      SNAPSHOTS_DIR="./snapshots" bash replay.sh
+      # Review first; execution env belongs on bash, not the render command.
 
   $ xgg rule export 1779888258312 --target-id 9999999999999
       # Clone the rule under a new id; name becomes "[Cloned] <orig>".
@@ -94,21 +93,23 @@ Limitations:
     variable/constant boundary would be absorbed or rejected; add an explicit
     separator in the source expression or use rule view JSON round-trip.
   - Rule-local variables are captured with their current value and display
-    name. Replay preflights the complete variable plan, then creates the empty
-    target with create-only/expect-absent semantics before any variable write.
-    An existing target, including one which appears during read-only preflight,
-    therefore aborts without changing its graph or variables. Each later
-    variable create repeats its compatibility check. The gateway has no
-    cross-variable transaction, so concurrent variable changes can still stop
-    a replay after the target is reserved; the per-write snapshots remain the
-    recovery path.
+    name. Every replay first preflights the complete variable plan read-only.
+    Same-id then prepares captured variables with compatibility guards before
+    its first target-graph write. A --target-id clone instead writes the
+    disabled empty target with create-only/expect-absent semantics before any
+    variable write, then prepares the remapped R<target-id> variables. Thus an
+    existing clone target, including one which appears during preflight, aborts
+    without changing its graph or variables. Each variable create repeats its
+    compatibility check. The gateway has no cross-variable transaction, so a
+    concurrent variable change can still stop replay; per-write snapshots are
+    the recovery path.
     --target-id must differ from the source id.
   - global variables are explicit external dependencies: export lists them in
     JSON/warnings but never creates or modifies them. Any non-global scope
     other than R<source-id> is rejected instead of guessed.
-  - deviceInput / deviceOutput nodes require the source gateway to be
-    online so the spec for the referenced device can be fetched (used
-    to reverse siid+piid into property/action/event names).
+  - All five modeled device-backed node families (deviceInput, deviceGet,
+    deviceOutput, deviceInputSetVar, deviceGetSetVar) require the source gateway
+    to expose the referenced DID/spec so ids can be reversed to typed names.
   - All modeled flow / logic / timing / variable node types (including
     eventSequence, register, modeSwitch, signalOr, logicAnd/Or/Not, condition,
     counter, onlyNTimes, loop, delay, statusLast), plus the non-executable

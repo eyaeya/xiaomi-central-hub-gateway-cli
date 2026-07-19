@@ -35,7 +35,10 @@ export function attachSet(cmd: Command): void {
     .description('Upsert a rule graph from a JSON file (writes snapshot first)')
     .requiredOption('--body <path>', 'path to JSON file containing {id, nodes, cfg}')
     .option('--no-snapshot', 'skip the pre-write dump snapshot (NOT recommended)')
-    .option('--no-validate', 'skip the web-UI save-button validator (NOT recommended)')
+    .option(
+      '--no-validate',
+      'skip modeled card/variable and strict topology/required-input validation gates (request/envelope parsing still applies; NOT recommended)',
+    )
     .option(
       '--allow-cfg-overwrite',
       "write the body's cfg (enable/uiType/userData) verbatim instead of preserving the live rule's (default: preserve, mirroring the UI save() flow)",
