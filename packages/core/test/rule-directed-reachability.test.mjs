@@ -387,22 +387,36 @@ test('timeRange supports condition state but cannot replace the condition event 
   assert.deepEqual(checkReachability(eventAndState), []);
 });
 
-test('condition trigger can reach unmet without a live true-state path, while met stays guarded', () => {
-  const unmet = [
+test('condition trigger reaches unmet with an unwired or explicitly false state, while met stays guarded', () => {
+  const unwiredUnmet = [
+    onLoad('source', ['gate.trigger']),
+    condition('gate', [], ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(checkReachability(unwiredUnmet), []);
+
+  const unwiredMet = [
+    onLoad('source', ['gate.trigger']),
+    condition('gate', ['sink.trigger']),
+    deviceOutput('sink'),
+  ];
+  assert.deepEqual(unreachableSinkIds(unwiredMet), ['sink']);
+
+  const explicitlyFalseUnmet = [
     onLoad('source', ['gate.trigger']),
     register('initially-false', ['gate.condition']),
     condition('gate', [], ['sink.trigger']),
     deviceOutput('sink'),
   ];
-  assert.deepEqual(checkReachability(unmet), []);
+  assert.deepEqual(checkReachability(explicitlyFalseUnmet), []);
 
-  const met = [
+  const explicitlyFalseMet = [
     onLoad('source', ['gate.trigger']),
     register('initially-false', ['gate.condition']),
     condition('gate', ['sink.trigger']),
     deviceOutput('sink'),
   ];
-  assert.deepEqual(unreachableSinkIds(met), ['sink']);
+  assert.deepEqual(unreachableSinkIds(explicitlyFalseMet), ['sink']);
 });
 
 test('statusLast converts supporting state into an event but rejects an unreachable state card', () => {

@@ -36,16 +36,18 @@ export function duplicateNodeIdIssues(groups: DuplicateNodeIdGroup[]): GraphInva
 }
 
 const STATIC_REQUIRED_INPUTS: Readonly<Record<string, readonly string[]>> = {
-  condition: ['trigger', 'condition'],
+  condition: ['trigger'],
   eventSequence: ['input1', 'input2'],
 };
 
 /**
- * Return only inputs whose absence prevents the node's intended output.
+ * Return only inputs whose absence prevents every intended node output.
  * Control pins such as loop.stop, counter.zero, and onlyNTimes.zero are
- * deliberately absent. logicOr/signalOr also permit unused declared inputs;
- * logicAnd requires every declared state input because an unwired pin remains
- * false and prevents the AND output from becoming true.
+ * deliberately absent. condition.condition is also optional: its unwired
+ * gateway default is false, so condition.unmet remains useful. logicOr/signalOr
+ * permit unused declared inputs; logicAnd requires every declared state input
+ * because an unwired pin remains false and prevents the AND output from
+ * becoming true.
  */
 export function requiredInputPins(node: Record<string, unknown>): string[] {
   const type = typeof node.type === 'string' ? node.type : '';

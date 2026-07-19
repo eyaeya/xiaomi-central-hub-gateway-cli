@@ -108,8 +108,10 @@ function activationPolicy(
       return { event: all(requiredPins) };
     case 'condition':
       return {
-        event: all(requiredPins.filter((pin) => pin === 'trigger')),
-        state: all(requiredPins.filter((pin) => pin === 'condition')),
+        event: all(['trigger']),
+        // condition.condition is optional for graph validity, but a wired
+        // value still controls which output branch can run.
+        state: all(['condition']),
       };
     case 'logicAnd':
       return {
@@ -293,24 +295,27 @@ export function checkReachability(rawNodes: unknown[]): LintIssue[] {
           return targetColor !== 'state' || stateOutputs.has(sourceEndpoint);
         },
       );
-      const stateInputsReady = requirementSatisfied(
-        node.id,
-        policy.state,
-        incomingByTarget,
-        (_pin, sourceEndpoint) => stateOutputs.has(sourceEndpoint),
-      );
-      const trueStateInputsReady = requirementSatisfied(
-        node.id,
-        policy.state,
-        incomingByTarget,
-        (_pin, sourceEndpoint) => trueStateOutputs.has(sourceEndpoint),
-      );
-      const falseStateInputsReady = requirementSatisfied(
-        node.id,
-        policy.state,
-        incomingByTarget,
-        (_pin, sourceEndpoint) => falseStateOutputs.has(sourceEndpoint),
-      );
+      // The gateway evaluates an unwired condition.condition input as false.
+      // Preserve that card-specific default without treating arbitrary absent
+      // state inputs as available or overriding a real incoming condition edge.
+      const conditionDefaultsFalse =
+        node.type === 'condition' &&
+        (incomingByTarget.get(`${node.id}.condition`) ?? []).length === 0;
+      const stateInputsReady =
+        conditionDefaultsFalse ||
+        requirementSatisfied(node.id, policy.state, incomingByTarget, (_pin, sourceEndpoint) =>
+          stateOutputs.has(sourceEndpoint),
+        );
+      const trueStateInputsReady =
+        !conditionDefaultsFalse &&
+        requirementSatisfied(node.id, policy.state, incomingByTarget, (_pin, sourceEndpoint) =>
+          trueStateOutputs.has(sourceEndpoint),
+        );
+      const falseStateInputsReady =
+        conditionDefaultsFalse ||
+        requirementSatisfied(node.id, policy.state, incomingByTarget, (_pin, sourceEndpoint) =>
+          falseStateOutputs.has(sourceEndpoint),
+        );
       let eventReady =
         isIndependentEventSourceType(node.type) ||
         (eventInputsReady && (policy.eventRequiresState !== true || stateInputsReady));
