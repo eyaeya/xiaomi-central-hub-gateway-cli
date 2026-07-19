@@ -191,6 +191,13 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
   },
   {
     command: 'rule.node.add',
+    match: (_r, opts) => has(opts, 'type') && opts.type === 'nop',
+    cmd: (r) => `xgg rule node add --rule-id ${readRuleId(r)} --type <next-card>`,
+    why: 'nop is a canvas-only note with no connectors or runtime behavior; keep authoring the executable graph without wiring the note',
+    lifecycle: 'drafting → drafting',
+  },
+  {
+    command: 'rule.node.add',
     match: (_r, opts) =>
       has(opts, 'type') &&
       ACTION_TYPES.has(String(opts.type)) &&

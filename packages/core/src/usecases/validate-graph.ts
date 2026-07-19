@@ -63,6 +63,7 @@ const WEB_VALIDATED_NODE_TYPES = new Set([
   'logicOr',
   'loop',
   'modeSwitch',
+  'nop',
   'onLoad',
   'onlyNTimes',
   'register',

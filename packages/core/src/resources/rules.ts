@@ -13,7 +13,7 @@ import {
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { type DurationRange, parseDurationLiteral } from '../schemas/nodes/duration.js';
-import { NodeUnion } from '../schemas/nodes/index.js';
+import { NodeUnion, NopContents, type NopDeltaOperation } from '../schemas/nodes/index.js';
 import {
   GraphSetRequest,
   type Node,
@@ -652,6 +652,7 @@ export async function deleteGraph(id: string, deps: ResourceDeps): Promise<void>
 // fields relevant to each branch.
 export type NonDeviceNodeType =
   | 'onLoad'
+  | 'nop'
   | 'condition'
   | 'logicAnd'
   | 'logicOr'
@@ -748,6 +749,11 @@ export interface AddNodeShortcut {
   // now pass `preload: true` explicitly.
   preload?: boolean;
   // ---- non-device-side fields (M10 F17) ----
+  // nop rich-text canvas note. `noteText` is normalized to a Quill document
+  // line; `noteDelta` is the lossless cfg.contents operations path.
+  noteText?: string;
+  noteDelta?: NopDeltaOperation[];
+  noteBackground?: string;
   // logicAnd / logicOr: number of inputs (default 2 → input0..inputN-1).
   inputs?: number;
   // Duration-card display value. delay/loop retain the gateway-compatible
@@ -801,6 +807,7 @@ export interface AddNodeShortcut {
 // CLI-typed helper: which shortcut types skip device/spec fetch
 const NON_DEVICE_SHORTCUT_TYPES = new Set<string>([
   'onLoad',
+  'nop',
   'condition',
   'logicAnd',
   'logicOr',
@@ -876,7 +883,11 @@ function assertShortcutPositionUsage(shortcut: AddNodeShortcut): void {
 }
 
 function assertShortcutSimplified(shortcut: AddNodeShortcut): void {
-  if (shortcut.simplified === undefined || typeof shortcut.simplified === 'boolean') return;
+  if (shortcut.simplified === undefined) return;
+  if (shortcut.type === 'nop') {
+    throw new ConfigError('shortcut simplified applies to executable cards, not nop');
+  }
+  if (typeof shortcut.simplified === 'boolean') return;
   throw new ConfigError('shortcut simplified must be a boolean', {
     simplified: shortcut.simplified,
   });
@@ -902,6 +913,39 @@ function assertShortcutPreloadUsage(shortcut: AddNodeShortcut): void {
   );
 }
 
+function assertNopShortcutUsage(shortcut: AddNodeShortcut): void {
+  const hasNopFlag =
+    shortcut.noteText !== undefined ||
+    shortcut.noteDelta !== undefined ||
+    shortcut.noteBackground !== undefined;
+  if (shortcut.type !== 'nop') {
+    if (hasNopFlag) {
+      throw new ConfigError(
+        `note text/delta/background only apply to the nop canvas-note shortcut (got type ${shortcut.type})`,
+        { type: shortcut.type },
+      );
+    }
+    return;
+  }
+  if (shortcut.noteText !== undefined && shortcut.noteDelta !== undefined) {
+    throw new ConfigError('nop shortcut --text and --delta are mutually exclusive');
+  }
+  if (shortcut.noteBackground !== undefined && shortcut.noteBackground.length === 0) {
+    throw new ConfigError('nop shortcut --background must not be empty');
+  }
+  if (shortcut.noteDelta !== undefined) {
+    const parsed = NopContents.safeParse(shortcut.noteDelta);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      const where = first?.path.length ? first.path.join('.') : '<root>';
+      throw new ConfigError(
+        `nop shortcut --delta is not a Quill document at ${where}: ${first?.message ?? 'invalid operation'}`,
+        { field: where },
+      );
+    }
+  }
+}
+
 function preflightAddNode(input: AddNodeInput): void {
   let localNode: unknown;
   if (input.shortcut !== undefined) {
@@ -909,6 +953,7 @@ function preflightAddNode(input: AddNodeInput): void {
     assertShortcutPositionUsage(input.shortcut);
     assertShortcutSimplified(input.shortcut);
     assertShortcutPreloadUsage(input.shortcut);
+    assertNopShortcutUsage(input.shortcut);
     if (
       input.shortcut.propertyValue !== undefined &&
       !(
@@ -1029,6 +1074,7 @@ async function addNodeWithinWorkflow(
     assertShortcutPositionUsage(input.shortcut);
     assertShortcutSimplified(input.shortcut);
     assertShortcutPreloadUsage(input.shortcut);
+    assertNopShortcutUsage(input.shortcut);
     if (
       input.shortcut.propertyValue !== undefined &&
       !(
@@ -2550,6 +2596,36 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
         outputs: { output: [] },
         props: {},
       };
+
+    case 'nop': {
+      // Quill documents conventionally end in a newline because line-level
+      // formats (header/list/alignment) attach to that character. Preserve
+      // raw Delta operations byte-for-byte; normalize only the convenience
+      // plain-text path. Omitting both produces the official blank default.
+      const contents =
+        shortcut.noteDelta ??
+        (shortcut.noteText === undefined
+          ? []
+          : [
+              {
+                insert: shortcut.noteText.endsWith('\n')
+                  ? shortcut.noteText
+                  : `${shortcut.noteText}\n`,
+              },
+            ]);
+      return {
+        id,
+        type: 'nop',
+        cfg: {
+          ...baseCfg('nop'),
+          contents,
+          background: shortcut.noteBackground ?? '#80CAFF',
+        },
+        inputs: {},
+        outputs: { output: [] },
+        props: {},
+      };
+    }
 
     case 'condition':
       // condition routes a trigger to `met` or `unmet` based on the

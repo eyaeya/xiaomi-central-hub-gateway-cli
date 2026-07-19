@@ -181,7 +181,7 @@ xgg variable list --pretty
 
 ## 创建自动化的标准流程
 
-自动化规则在网关中是一张有向图：节点是卡片，边是卡片输出到输入的连线。推荐流程：
+自动化规则在网关中是一张有向图：节点是卡片，边是卡片输出到输入的连线。官方画布包含 25 种可执行卡片，另有 1 种无连接器、无运行时可达性语义的 `nop` 富文本备注节点。推荐流程：
 
 ```bash
 xgg device list --pretty
@@ -192,6 +192,8 @@ xgg rule node add --rule-id <rule-id> --type deviceInput \
   --device-did <button-did> --device-event click --id n-click
 xgg rule node add --rule-id <rule-id> --type deviceOutput \
   --device-did <target-did> --device-property <property> --value <value> --id n-action
+xgg rule node add --rule-id <rule-id> --type nop \
+  --text "按钮单击后执行目标动作" --background '#FFD966' --id n-note
 xgg rule edge add --rule-id <rule-id> --from n-click:output --to n-action:trigger
 xgg rule layout <rule-id>
 xgg rule validate --rule-id <rule-id>
@@ -206,6 +208,7 @@ xgg rule logs <rule-id> --tail 20
 - 连线完成后跑 `xgg rule layout <rule-id>`，让网页画布中的卡片按数据流排布。
 - 启用前跑 `xgg rule validate --rule-id <rule-id>` 和 `xgg rule lint --rule-id <rule-id> --strict`；启用后用 `xgg rule logs` 看真实触发日志。
 - 对 Agent 自测场景，可用 `onLoad` 作为触发节点，再通过 `rule disable` + `rule enable` 重放，不需要人类物理按按钮。
+- `nop` 只给网页画布添加备注，不参与连线或执行。纯文本用 `--text`；要保留标题、粗体、列表、对齐等格式，用 `--delta '<Quill ops JSON>'`（也接受 `{"ops":[...]}`），`rule export` / `rule import` 会无损往返 Delta、背景色和尺寸。
 - 严格 lint 与 enable 会按目标 pin 的必需输入语义检查动作可达性，并把状态“可用 / 可能为 true / 可能为 false”分开。独立事件源只有 `onLoad`、`alarmClock`、`deviceInput`、`deviceInputSetVar`、`varChange`；`timeRange` 只提供可真可假的条件状态，不能直接启动事件路径，但可经 `statusLast` 的“状态持续为 true 后触发”桥接成事件。`register` 初值与 `setFalse` 提供 false，只有可达的 `setTrue` 再增加 true；因此 `condition.met` 要 trigger + may-true，`condition.unmet` 要 trigger + may-false，`statusLast` 也只接受 may-true。`eventSequence` 的每个事件输入都必须可达；`logicAnd` / `logicOr` / `logicNot` 按布尔语义传播真假状态，直接传播事件时仍需更新路径，`signalOr` 则任一路事件即可。`loop.stop` 与 `onlyNTimes.zero` 是控制输入，不能单独证明下游动作可执行。
 
 ### 离线校验候选规则
@@ -317,7 +320,7 @@ npm publish release-artifacts/eyaeya-xgg-cli-*.tgz --access public
 
 ## Agent 权威参考
 
-供 AI Agent 操作本 CLI 的完整权威指南（含 25 种卡片、pin 颜色规则、变量模型、表达式、调试流程，均经真实网关验证）见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。
+供 AI Agent 操作本 CLI 的完整权威指南（含 25 种可执行卡片 + `nop` 备注节点、pin 颜色规则、变量模型、表达式、调试流程，均经真实网关验证）见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。
 
 ## License
 

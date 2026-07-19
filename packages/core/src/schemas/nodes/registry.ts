@@ -15,6 +15,7 @@ import {
   LogicOrNode,
   LoopNode,
   ModeSwitchNode,
+  NopNode,
   OnLoadNode,
   OnlyNTimesNode,
   RegisterNode,
@@ -28,7 +29,7 @@ import {
 } from './index.js';
 
 /**
- * Per-`type` schema lookup for the 25 modeled node types.
+ * Per-`type` schema lookup for the 25 executable node types plus `nop` note.
  *
  * Deliberately excludes `UnknownNode`: it is the `NodeUnion` fallback and only
  * requires `{ type: string, id }.passthrough()`, so running a cfg through it
@@ -56,6 +57,7 @@ const KNOWN: Record<string, z.ZodTypeAny> = {
   logicOr: LogicOrNode,
   loop: LoopNode,
   modeSwitch: ModeSwitchNode,
+  nop: NopNode,
   onLoad: OnLoadNode,
   onlyNTimes: OnlyNTimesNode,
   register: RegisterNode,
@@ -70,7 +72,7 @@ const KNOWN: Record<string, z.ZodTypeAny> = {
 
 /**
  * Resolve the strict zod schema for a node `type`, or `undefined` when the type
- * is not one of the 25 modeled types (caller should defer to the gateway).
+ * is not one of the modeled types (caller should defer to the gateway).
  */
 export function nodeSchemaForType(type: string): z.ZodTypeAny | undefined {
   return KNOWN[type];

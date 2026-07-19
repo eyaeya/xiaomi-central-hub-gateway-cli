@@ -202,7 +202,7 @@ export async function exportRuleFromView(
       typeof n.type === 'string' &&
       nodeSchemaForType(n.type) !== undefined
     ) {
-      const dropped = unknownCfgKeys(n.cfg);
+      const dropped = unknownCfgKeys(n.cfg, n.type);
       if (dropped.length > 0) {
         const msg = `node ${n.id} (${n.type}) carries cfg keys the exporter drops on round-trip: ${dropped.join(', ')}`;
         if (strictRoundtrip) {
@@ -431,6 +431,8 @@ async function renderNode(
     case 'onLoad':
     case 'condition':
       return simpleNode(n, n.type);
+    case 'nop':
+      return renderNop(n);
     case 'logicAnd':
     case 'logicOr':
     case 'signalOr':
@@ -971,6 +973,33 @@ function simpleNode(
   };
 }
 
+function renderNop(n: {
+  id: string;
+  cfg?: Record<string, unknown>;
+}): ExportedCommand {
+  const contents = n.cfg?.contents;
+  const background = n.cfg?.background;
+  if (!Array.isArray(contents) || typeof background !== 'string' || background.length === 0) {
+    throw new ConfigError(
+      `cannot export nop node ${n.id}: cfg.contents must be a Quill operations array and cfg.background must be a non-empty string`,
+      { nodeId: n.id },
+    );
+  }
+  return {
+    kind: 'node-add',
+    nodeId: n.id,
+    type: 'nop',
+    flags: [
+      { name: '--id', value: n.id },
+      { name: '--type', value: 'nop' },
+      ...cfgFlagsFromCfg(n.cfg, false, false),
+      { name: '--delta', value: JSON.stringify(contents), needsQuoting: true },
+      { name: '--background', value: background, needsQuoting: true },
+    ],
+    comment: 'nop canvas note (lossless Quill Delta)',
+  };
+}
+
 function logicGate(
   n: { id: string; cfg?: Record<string, unknown>; inputs?: Record<string, unknown> },
   type: string,
@@ -1269,9 +1298,18 @@ const KNOWN_CFG_KEYS = new Set([
   'simplified', // every modeled executable node — UI compact-card state
 ]);
 
-function unknownCfgKeys(cfg: Record<string, unknown>): string[] {
+const TYPE_SPECIFIC_CFG_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
+  nop: new Set(['contents', 'background']),
+};
+
+function unknownCfgKeys(cfg: Record<string, unknown>, type: string): string[] {
+  const typeSpecific = TYPE_SPECIFIC_CFG_KEYS[type];
   return Object.keys(cfg)
-    .filter((k) => !KNOWN_CFG_KEYS.has(k))
+    .filter(
+      (k) =>
+        (!KNOWN_CFG_KEYS.has(k) || (type === 'nop' && k === 'simplified')) &&
+        typeSpecific?.has(k) !== true,
+    )
     .sort();
 }
 
@@ -1284,6 +1322,7 @@ function isRecord(x: unknown): x is Record<string, unknown> {
 function cfgFlagsFromCfg(
   cfg: Record<string, unknown> | undefined,
   includeExprHeight = false,
+  includeSimplified = true,
 ): ExportFlag[] {
   if (!cfg) return [];
   const flags: ExportFlag[] = [];
@@ -1306,7 +1345,7 @@ function cfgFlagsFromCfg(
       flags.push({ name: '--pos', value });
     }
   }
-  if (typeof cfg.simplified === 'boolean') {
+  if (includeSimplified && typeof cfg.simplified === 'boolean') {
     flags.push({ name: '--simplified', value: String(cfg.simplified) });
   }
   return flags;

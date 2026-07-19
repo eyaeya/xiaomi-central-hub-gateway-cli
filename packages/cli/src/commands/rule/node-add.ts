@@ -86,6 +86,49 @@ function parseParamsJson(raw: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function parseNopDeltaJson(raw: string): NonNullable<AddNodeShortcut['noteDelta']> {
+  const parsed = parseJsonInput<unknown>(raw, '--delta');
+  const ops = Array.isArray(parsed)
+    ? parsed
+    : parsed !== null &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        Array.isArray((parsed as Record<string, unknown>).ops)
+      ? ((parsed as Record<string, unknown>).ops as unknown[])
+      : null;
+  if (ops === null) {
+    throw new ConfigError(
+      '--delta must be a Quill operations array or a Delta object shaped as {"ops":[...]}',
+    );
+  }
+  // The core NopNode schema performs the authoritative per-operation check.
+  return ops as NonNullable<AddNodeShortcut['noteDelta']>;
+}
+
+function assertNopOptionUsage(opts: NodeAddOpts): void {
+  const hasNopOption =
+    opts.text !== undefined || opts.delta !== undefined || opts.background !== undefined;
+  if (opts.type !== 'nop') {
+    if (hasNopOption) {
+      throw new ConfigError(
+        `--text/--delta/--background only apply to --type nop (got --type ${opts.type})`,
+      );
+    }
+    return;
+  }
+  if (opts.text !== undefined && opts.delta !== undefined) {
+    throw new ConfigError('--text and --delta are mutually exclusive for --type nop');
+  }
+  if (opts.cfg !== undefined && hasNopOption) {
+    throw new ConfigError(
+      '--cfg is mutually exclusive with nop shortcut flags --text/--delta/--background',
+    );
+  }
+  if (opts.background !== undefined && opts.background.length === 0) {
+    throw new ConfigError('--background must not be empty');
+  }
+}
+
 function parseFiniteDecimal(raw: string): number {
   const parsed = parseFiniteDecimalLiteral(raw);
   if (parsed === null) {
@@ -137,7 +180,11 @@ function assertPositionUsage(opts: NodeAddOpts): void {
 }
 
 function assertSimplifiedUsage(opts: NodeAddOpts): void {
-  if (opts.simplified === undefined || opts.cfg === undefined) return;
+  if (opts.simplified === undefined) return;
+  if (opts.type === 'nop') {
+    throw new ConfigError('--simplified applies to executable cards, not the nop canvas note');
+  }
+  if (opts.cfg === undefined) return;
   throw new ConfigError(
     '--simplified is a shortcut flag and is mutually exclusive with --cfg; set cfg.simplified in the JSON instead',
   );
@@ -203,6 +250,9 @@ interface NodeAddOpts extends RuleOpts {
   pos?: { x: number; y: number; width: number; height: number; exprHeight?: number };
   simplified?: boolean;
   // M10 F17 — non-device shortcut flags
+  text?: string;
+  delta?: string;
+  background?: string;
   inputs?: number;
   duration?: string;
   interval?: string;
@@ -356,9 +406,18 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--simplified <true|false>',
-      'set the shared UI-only compact-card state on any modeled shortcut',
+      'set the shared UI-only compact-card state on any executable shortcut',
       parseBooleanLiteral,
     )
+    .option(
+      '--text <S>',
+      'nop canvas-note plain text (normalized to a Quill document line; mutually exclusive with --delta)',
+    )
+    .option(
+      '--delta <JSON>',
+      'nop lossless Quill Delta operations array, or {"ops":[...]} object; mutually exclusive with --text',
+    )
+    .option('--background <CSS>', 'nop note background (default: #80CAFF)')
     // M10 F17 — non-device shortcut flags
     .option('--inputs <N>', 'logicAnd/logicOr/signalOr input count (default 2)', Number.parseInt)
     .option(
@@ -473,6 +532,8 @@ Examples (M7+M9 device shortcut path):
 
 Examples (M10 F17 non-device shortcut path):
   $ xgg rule node add --rule-id r1 --type onLoad
+  $ xgg rule node add --rule-id r1 --type nop --text '夜间规则说明' --background '#FFD966'
+  $ xgg rule node add --rule-id r1 --type nop --delta '[{"insert":"标题"},{"insert":"\\n","attributes":{"header":1}}]'
   $ xgg rule node add --rule-id r1 --type condition
   $ xgg rule node add --rule-id r1 --type logicAnd --inputs 3
   $ xgg rule node add --rule-id r1 --type logicOr --inputs 2
@@ -513,6 +574,8 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
         assertPositionUsage(opts);
         assertSimplifiedUsage(opts);
         assertPreloadUsage(opts);
+        assertNopOptionUsage(opts);
+        const parsedDelta = opts.delta !== undefined ? parseNopDeltaJson(opts.delta) : undefined;
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
@@ -529,6 +592,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
         let addNodeInput: Parameters<typeof addNode>[0];
         const NON_DEVICE_TYPES = new Set([
           'onLoad',
+          'nop',
           'condition',
           'logicAnd',
           'logicOr',
@@ -549,7 +613,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
           'modeSwitch',
           'alarmClock',
         ]);
-        if (NON_DEVICE_TYPES.has(opts.type)) {
+        if (NON_DEVICE_TYPES.has(opts.type) && !(opts.type === 'nop' && parsedCfg !== undefined)) {
           // M10 F17 — non-device shortcut: build from CLI flags only, no
           // gateway device/spec lookup
           const shortcut: AddNodeShortcut = {
@@ -557,6 +621,9 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             ...(opts.id !== undefined && { id: opts.id }),
             ...(opts.pos !== undefined && { pos: opts.pos }),
             ...(opts.simplified !== undefined && { simplified: opts.simplified }),
+            ...(opts.text !== undefined && { noteText: opts.text }),
+            ...(parsedDelta !== undefined && { noteDelta: parsedDelta }),
+            ...(opts.background !== undefined && { noteBackground: opts.background }),
             ...(opts.inputs !== undefined && { inputs: opts.inputs }),
             ...(opts.duration !== undefined && { duration: opts.duration }),
             ...(opts.interval !== undefined && { interval: opts.interval }),
@@ -714,7 +781,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
                 type: opts.type,
               }
             : { id: idFallback, type: opts.type, cfg: obj };
-          // For the 25 modeled node types, validate the hand-crafted node
+          // For every modeled type (25 executable cards plus nop), validate the hand-crafted node
           // against that type's strict schema *before* the gateway round-trip.
           // NodeUnion.safeParse can't do this — UnknownNode sits last and matches
           // any {type, id}, so a deviceInput with malformed props would fall

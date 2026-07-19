@@ -11,7 +11,8 @@
 // the fall-through. The 25 strict schemas already encode the official Ur
 // base checks (props/inputs/outputs/cfg.version presence) + per-card pin
 // and field presence, so a single re-validate collapses a whole class of
-// structural gaps.
+// structural gaps. `nop` is the official non-executable canvas note and is
+// modeled alongside those 25 cards.
 //
 // Forward-compat invariant: types NOT in this map are LEGITIMATELY allowed
 // to pass through as UnknownNode — newer gateway firmware may add types
@@ -35,6 +36,7 @@ import {
   LogicOrNode,
   LoopNode,
   ModeSwitchNode,
+  NopNode,
   OnLoadNode,
   OnlyNTimesNode,
   RegisterNode,
@@ -70,6 +72,7 @@ export const TYPED_SCHEMAS: Record<string, SafeParseLike> = {
   logicOr: LogicOrNode,
   loop: LoopNode,
   modeSwitch: ModeSwitchNode,
+  nop: NopNode,
   onLoad: OnLoadNode,
   onlyNTimes: OnlyNTimesNode,
   register: RegisterNode,

@@ -57,6 +57,7 @@ export const CARD_SIZE: Record<string, CardSize> = {
   logicNot: { width: 240, height: 120 },
   // other cards
   onLoad: { width: 200, height: 120 },
+  nop: { width: 320, height: 60 },
   eventSequence: { width: 524, height: 180 },
   register: { width: 340, height: 140 },
   modeSwitch: { width: 280, height: 160 },

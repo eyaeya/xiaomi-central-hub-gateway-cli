@@ -144,6 +144,12 @@ const PIN_TABLE: Record<string, NodePinSemantics> = {
     outputs: [{ name: 'output', color: 'event' }],
     independentEventSource: true,
   },
+  // The official serialized note keeps outputs.output=[] for envelope
+  // consistency, but the canvas exposes no connector at all.
+  nop: {
+    inputs: [],
+    outputs: [],
+  },
   eventSequence: {
     inputs: [
       { name: 'input1', color: 'event' },

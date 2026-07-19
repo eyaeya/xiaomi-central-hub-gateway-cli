@@ -42,7 +42,7 @@ const modeledNodeTypes = [
   { type: 'varSetString', inputs: ['input'], outputs: ['output'] },
 ];
 
-test('node-add hints follow the authoritative pin direction for all 25 modeled types', () => {
+test('node-add hints follow the authoritative pin direction for all 25 executable types', () => {
   assert.equal(modeledNodeTypes.length, 25);
   assert.equal(new Set(modeledNodeTypes.map(({ type }) => type)).size, 25);
 
@@ -78,6 +78,23 @@ test('node-add hints follow the authoritative pin direction for all 25 modeled t
     assert.ok(expected.inputs.length > 0, `${expected.type} needs a modeled input`);
     assert.match(edgeHint.cmd, new RegExp(`--to ${nodeId}:${expected.inputs[0]}(?: |$)`));
   }
+});
+
+test('nop is modeled as a connector-free note and never receives an edge hint', () => {
+  assert.deepEqual(modeledNodePinNames('nop', 'input'), []);
+  assert.deepEqual(modeledNodePinNames('nop', 'output'), []);
+  const hints = buildNextSteps(
+    'rule.node.add',
+    { nodeId: 'note1', ruleId: 'rule-80', type: 'nop' },
+    { type: 'nop' },
+  );
+  assert.deepEqual(hints, [
+    {
+      cmd: 'xgg rule node add --rule-id rule-80 --type <next-card>',
+      why: 'nop is a canvas-only note with no connectors or runtime behavior; keep authoring the executable graph without wiring the note',
+      lifecycle: 'drafting → drafting',
+    },
+  ]);
 });
 
 test('unknown node types preserve explicit placeholders instead of guessed pin semantics', () => {

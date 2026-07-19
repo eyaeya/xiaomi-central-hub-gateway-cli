@@ -14,6 +14,7 @@ import { LogicNotNode } from './logic-not.js';
 import { LogicOrNode } from './logic-or.js';
 import { LoopNode } from './loop.js';
 import { ModeSwitchNode } from './mode-switch.js';
+import { NopNode } from './nop.js';
 import { OnLoadNode } from './on-load.js';
 import { OnlyNTimesNode } from './only-n-times.js';
 import { RegisterNode } from './register.js';
@@ -27,7 +28,7 @@ import { VarSetNumberNode } from './var-set-number.js';
 import { VarSetStringNode } from './var-set-string.js';
 
 // z.union (not discriminatedUnion) so UnknownNode can act as fallback for any
-// type not yet modeled. Trade-off: O(n) parse vs O(1); negligible at n ≤ 25.
+// type not yet modeled. Trade-off: O(n) parse vs O(1); negligible at 26 types.
 // UnknownNode MUST stay last — it matches any { type: string }.
 export const NodeUnion = z.union([
   AlarmClockNode,
@@ -45,6 +46,7 @@ export const NodeUnion = z.union([
   LogicOrNode,
   LoopNode,
   ModeSwitchNode,
+  NopNode,
   OnLoadNode,
   OnlyNTimesNode,
   RegisterNode,
@@ -74,6 +76,16 @@ export { LogicNotNode } from './logic-not.js';
 export { LogicOrNode } from './logic-or.js';
 export { LoopNode } from './loop.js';
 export { ModeSwitchNode } from './mode-switch.js';
+export {
+  NopCfg,
+  NopContents,
+  NopDeltaOperation,
+  NopInputs,
+  NopNode,
+  NopOutputs,
+  NopProps,
+} from './nop.js';
+export type { QuillJsonValue } from './nop.js';
 export { OnLoadNode } from './on-load.js';
 export { OnlyNTimesNode } from './only-n-times.js';
 export { RegisterNode } from './register.js';
