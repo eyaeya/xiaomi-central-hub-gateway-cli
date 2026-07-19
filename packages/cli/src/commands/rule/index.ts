@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { attachDelete } from './delete.js';
+import { attachDeviceReplacement } from './device-replacement.js';
 import { attachDisable } from './disable.js';
 import { attachEdgeAdd } from './edge-add.js';
 import { attachEdgeRemove } from './edge-remove.js';
@@ -39,6 +40,7 @@ export function ruleCommand(): Command {
   attachNodeAdd(cmd);
   attachNodeUpdate(cmd);
   attachNodeRemove(cmd);
+  attachDeviceReplacement(cmd);
   attachEdgeAdd(cmd);
   attachEdgeRemove(cmd);
   attachLayout(cmd);

@@ -66,6 +66,12 @@ export class MiotSpecContentError extends SchemaError {
 export interface FetchMiotSpecOptions {
   timeoutMs?: number;
   baseUrl?: string;
+  /**
+   * `default` reuses the process-local resolved/in-flight caches. `reload`
+   * always performs a new registry request and publishes its successful
+   * response as the new resolved value for subsequent default reads.
+   */
+  cache?: 'default' | 'reload';
 }
 
 const DEFAULT_BASE_URL = 'https://miot-spec.org/miot-spec-v2/instance';
@@ -99,6 +105,19 @@ export async function fetchMiotSpec(
   // Constructing the effective URL before any lookup prevents a resolved
   // entry for another registry from bypassing validation of this call.
   const request = prepareMiotSpecRequest(urn, opts);
+
+  // A safety-sensitive caller may need to re-check a capability against the
+  // registry immediately before a write. Reloads deliberately do not join the
+  // default in-flight map: even a pending same-URL/default-timeout request may
+  // have started before the registry changed. A successful reload supersedes
+  // any older resolved value, while a failed reload leaves that value intact.
+  if (opts.cache === 'reload') {
+    const generation = specCacheGeneration;
+    const raw = await doFetchMiotSpec(urn, request);
+    if (generation === specCacheGeneration) resolvedSpecCache.set(request.url, raw);
+    return raw;
+  }
+
   if (resolvedSpecCache.has(request.url)) return resolvedSpecCache.get(request.url);
 
   const policyKey = JSON.stringify([request.url, request.timeoutMs]);
