@@ -3,9 +3,13 @@ import { MIOT_COMPARISON_CONTRACT } from '../miot-comparison.js';
 import { Connection, NodeId, Position, SimplifiableCfgFields } from './common.js';
 
 // F40 (2026-05-30) — props are now a dtype-discriminated union mirroring
-// the bundle's `Pr.deviceGet.checkWebNode` (identical shape to the
-// `Pr.deviceInput` property branch). See device-input.ts for the full
-// dtype × operator × v1 matrix and the probe trail.
+// the bundle's `Pr.deviceGet.checkWebNode` comparison contract. The MIoT
+// comparison matrix matches the `deviceInput` property branch, but the card
+// contract does not: the bundle's deviceGet template starts with `props:{}`
+// and its dedicated renderer exposes only the property comparison. It has no
+// preload toggle (unlike deviceInput/deviceInputSetVar/varChange), so strict
+// modeled props must reject that legacy/foreign extra instead of letting an
+// exporter silently drop it. See device-input.ts for the comparison matrix.
 // F14b (2026-05-28, UI-saved walk-02): web UI emits an extra
 // `simplified` boolean on cfg (the "默认设置 / 高级设置" toggle).
 export const DeviceGetCfg = z
@@ -23,7 +27,6 @@ const propertyBase = {
   did: z.string(),
   siid: z.number().int(),
   piid: z.number().int(),
-  preload: z.boolean().optional(),
 };
 
 const SafeInteger = z.number().refine(Number.isSafeInteger, 'Expected a safe integer');

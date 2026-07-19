@@ -75,7 +75,7 @@ xgg rule delete <rule-id>
 
 这些 node/edge/layout/set 写入默认保留 live `enable`；已启用规则的多步修改可能立即生效。先记录状态，会改变执行路径时在授权下 disable/readback，或离线构造后单次原子 `rule set`；验证后只按原状态和用户意图恢复。
 
-CLI 建模 25 种可执行卡片，另支持无连接器的 `nop` 画布备注。设备比较支持 string `--property-value`、整数 `--property-include`，以及事件参数的 repeatable `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--preload|--no-preload` 与 `--simplified true|false` 会被导出/导入保留。动作 `--params` 保留 MIoT 原生 number / boolean / string，并用 `{"param":{"$var":"global.id"}}` 引用动态变量。
+CLI 建模 25 种可执行卡片，另支持无连接器的 `nop` 画布备注。设备比较支持 string `--property-value`、整数 `--property-include`，以及事件参数的 repeatable `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--preload|--no-preload` 只适用于 property-mode `deviceInput` / `deviceInputSetVar` 与 `varChange`，`deviceGet` 不支持。旧 `deviceGet.props.preload` 会让 permissive export 警告、strict export 拒绝。受支持节点上的 preload 与 `--simplified true|false` 会被导出/导入保留。动作 `--params` 保留 MIoT 原生 number / boolean / string，并用 `{"param":{"$var":"global.id"}}` 引用动态变量。
 
 数值 `deviceInput` / `deviceGet` 与 number 型 `varChange` / `varGet` 使用 `--op between` 时，`--threshold <lower>` 和 `--threshold2 <upper>` 必须同时显式给出；省略任一边界会在 session、spec、快照与写图之前失败。显式下界 `0` 合法，非-between 标量比较继续保留历史默认 `0`。
 

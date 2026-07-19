@@ -255,7 +255,7 @@ xgg rule node add --rule-id <rule-id> --type deviceInput \
 
 `deviceInput` / `deviceGet` 的数值属性，以及 number 型 `varChange` / `varGet`，使用 `--op between` 时必须同时显式传 `--threshold <lower>` 与 `--threshold2 <upper>`。省略任一边界都会在 session、spec、快照和写图之前被拒绝；不会再把省略的下界静默解释为 `0`。显式 `--threshold 0` 合法，非-between 标量比较仍保留历史默认 `0`。
 
-`--preload` / `--no-preload` 适用于 `deviceInput`、`deviceInputSetVar` 的属性模式和 `varChange`，默认是官方新卡片行为 `false`；`--simplified true|false` 是执行卡的 UI 紧凑状态。导出会保留显式值。动作调用的 `--params` 依据 MIoT action input format 保留 number / boolean / string 原生类型，也支持动态变量：
+`--preload` / `--no-preload` 适用于 `deviceInput`、`deviceInputSetVar` 的属性模式和 `varChange`，默认是官方新卡片行为 `false`；`deviceGet` 由输入事件主动查询，不支持 `preload`。旧图若在 `deviceGet.props` 中带该字段，普通导出会警告，`--strict-roundtrip` 会拒绝，避免重放时静默丢字段。`--simplified true|false` 是执行卡的 UI 紧凑状态。导出会保留受支持节点上的显式值。动作调用的 `--params` 依据 MIoT action input format 保留 number / boolean / string 原生类型，也支持动态变量：
 
 ```bash
 xgg rule node add --rule-id <rule-id> --type deviceOutput \

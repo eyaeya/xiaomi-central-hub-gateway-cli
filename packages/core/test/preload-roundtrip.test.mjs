@@ -284,6 +284,84 @@ test('export emits exact positive/negative preload flags and replay preserves ev
   assert.deepEqual(replay.state.nodes, source.state.nodes);
 });
 
+test('deviceGet without preload remains schema-valid and strict-round-trips', async () => {
+  const source = createGateway();
+  await addShortcut(source, {
+    type: 'deviceGet',
+    id: 'device-get',
+    deviceDid: did,
+    deviceProperty: 'level',
+    op: 'gt',
+    threshold: 10,
+  });
+
+  const [sourceNode] = source.state.nodes;
+  assert.equal(Object.hasOwn(sourceNode.props, 'preload'), false);
+  assert.equal(nodeSchemaForType('deviceGet').safeParse(sourceNode).success, true);
+
+  const exported = await exportRuleFromView(
+    { id: ruleId, cfg: source.state.summary, nodes: source.state.nodes },
+    source.deps,
+    undefined,
+    true,
+  );
+  assert.deepEqual(exported.warnings, []);
+  const commands = exported.commands.filter((command) => command.kind === 'node-add');
+  assert.equal(commands.length, 1);
+  assert.equal(flag(commands[0], '--preload'), undefined);
+  assert.equal(flag(commands[0], '--no-preload'), undefined);
+
+  const replay = createGateway();
+  await addShortcut(replay, shortcutFromExport(commands[0]));
+  assert.deepEqual(replay.state.nodes, source.state.nodes);
+});
+
+test('legacy deviceGet preload values fail schema, warn on permissive export, and fail strict export', async () => {
+  const source = createGateway();
+  await addShortcut(source, {
+    type: 'deviceGet',
+    id: 'device-get',
+    deviceDid: did,
+    deviceProperty: 'level',
+    op: 'gt',
+    threshold: 10,
+  });
+
+  for (const preload of [true, false]) {
+    const legacyNode = structuredClone(source.state.nodes[0]);
+    legacyNode.id = `legacy-device-get-${String(preload)}`;
+    legacyNode.props.preload = preload;
+
+    assert.equal(nodeSchemaForType('deviceGet').safeParse(legacyNode).success, false);
+
+    const permissive = await exportRuleFromView(
+      { id: ruleId, cfg: source.state.summary, nodes: [legacyNode] },
+      source.deps,
+    );
+    assert.equal(permissive.warnings.length, 1);
+    assert.match(
+      permissive.warnings[0],
+      /deviceGet\) fails its modeled schema.*typed replay cannot guarantee semantic fidelity/,
+    );
+    const command = permissive.commands.find((candidate) => candidate.kind === 'node-add');
+    assert.ok(command);
+    assert.equal(flag(command, '--preload'), undefined);
+    assert.equal(flag(command, '--no-preload'), undefined);
+
+    await assert.rejects(
+      exportRuleFromView(
+        { id: ruleId, cfg: source.state.summary, nodes: [legacyNode] },
+        source.deps,
+        undefined,
+        true,
+      ),
+      (error) =>
+        error instanceof ConfigError &&
+        /strict round-trip cannot preserve node .* \(deviceGet\)/.test(error.message),
+    );
+  }
+});
+
 test('typed preload misuse fails before session access', async () => {
   let reads = 0;
   const deps = {
