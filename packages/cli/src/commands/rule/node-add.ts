@@ -74,6 +74,12 @@ function parseFiniteDecimal(raw: string): number {
   return parsed;
 }
 
+function parseBooleanLiteral(raw: string): boolean {
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  throw new InvalidArgumentError(`expected true or false (got "${raw}")`);
+}
+
 function assertPropertyValueUsage(opts: NodeAddOpts): void {
   if (opts.propertyValue === undefined) return;
   if (opts.type !== 'deviceInput' && opts.type !== 'deviceGet') {
@@ -107,6 +113,13 @@ function assertPositionUsage(opts: NodeAddOpts): void {
   if (opts.type === 'varSetNumber' || opts.type === 'varSetString') return;
   throw new ConfigError(
     `--pos exprHeight is only valid for varSetNumber/varSetString (got --type ${opts.type})`,
+  );
+}
+
+function assertSimplifiedUsage(opts: NodeAddOpts): void {
+  if (opts.simplified === undefined || opts.cfg === undefined) return;
+  throw new ConfigError(
+    '--simplified is a shortcut flag and is mutually exclusive with --cfg; set cfg.simplified in the JSON instead',
   );
 }
 
@@ -146,6 +159,7 @@ interface NodeAddOpts extends RuleOpts {
   forceOutOfRange?: boolean;
   allowNoPush?: boolean;
   pos?: { x: number; y: number; width: number; height: number; exprHeight?: number };
+  simplified?: boolean;
   // M10 F17 — non-device shortcut flags
   inputs?: number;
   duration?: string;
@@ -288,6 +302,11 @@ export function attachNodeAdd(cmd: Command): void {
           ...(exprHeight !== undefined && { exprHeight }),
         };
       },
+    )
+    .option(
+      '--simplified <true|false>',
+      'set the shared UI-only compact-card state on any modeled shortcut',
+      parseBooleanLiteral,
     )
     // M10 F17 — non-device shortcut flags
     .option('--inputs <N>', 'logicAnd/logicOr/signalOr input count (default 2)', Number.parseInt)
@@ -434,6 +453,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
         // authentication state cannot mask a deterministic authoring error.
         assertPropertyValueUsage(opts);
         assertPositionUsage(opts);
+        assertSimplifiedUsage(opts);
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
@@ -471,6 +491,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             type: opts.type as AddNodeShortcut['type'],
             ...(opts.id !== undefined && { id: opts.id }),
             ...(opts.pos !== undefined && { pos: opts.pos }),
+            ...(opts.simplified !== undefined && { simplified: opts.simplified }),
             ...(opts.inputs !== undefined && { inputs: opts.inputs }),
             ...(opts.duration !== undefined && { duration: opts.duration }),
             ...(opts.interval !== undefined && { interval: opts.interval }),
@@ -556,6 +577,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             type: opts.type as AddNodeShortcut['type'],
             ...(opts.id !== undefined && { id: opts.id }),
             ...(opts.pos !== undefined && { pos: opts.pos }),
+            ...(opts.simplified !== undefined && { simplified: opts.simplified }),
             deviceDid: opts.deviceDid,
             ...(opts.deviceSiid !== undefined && { deviceSiid: opts.deviceSiid }),
             ...(opts.deviceProperty !== undefined && { deviceProperty: opts.deviceProperty }),

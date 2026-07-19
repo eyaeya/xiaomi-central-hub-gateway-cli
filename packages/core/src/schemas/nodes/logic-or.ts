@@ -1,8 +1,15 @@
 import { z } from 'zod';
-import { Connection, NodeId, Position, hasContiguousNumberedPins } from './common.js';
+import {
+  Connection,
+  NodeId,
+  Position,
+  SimplifiableCfgFields,
+  hasContiguousNumberedPins,
+} from './common.js';
 
 export const LogicOrCfg = z
   .object({
+    ...SimplifiableCfgFields,
     urn: z.string().optional(),
     pos: Position,
     name: z.string(),

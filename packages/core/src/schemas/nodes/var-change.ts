@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Connection, NodeId, Position } from './common.js';
+import { Connection, NodeId, Position, SimplifiableCfgFields } from './common.js';
 
 // Fields derived from fixtures/responses/nodes/varChange/*.json.
 // F41 (2026-05-30): props are now a varType-discriminated z.union
@@ -16,6 +16,7 @@ import { Connection, NodeId, Position } from './common.js';
 
 export const VarChangeCfg = z
   .object({
+    ...SimplifiableCfgFields,
     urn: z.string().optional(),
     pos: Position,
     name: z.string(),

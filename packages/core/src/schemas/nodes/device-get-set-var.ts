@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Connection, NodeId, Position } from './common.js';
+import { Connection, NodeId, Position, SimplifiableCfgFields } from './common.js';
 
 // Fields derived from fixtures/responses/nodes/deviceGetSetVar/*.json.
 // Strict-where-known per M6 design: cfg/inputs/outputs key sets locked;
@@ -8,6 +8,7 @@ import { Connection, NodeId, Position } from './common.js';
 
 export const DeviceGetSetVarCfg = z
   .object({
+    ...SimplifiableCfgFields,
     urn: z.string(),
     pos: Position,
     name: z.string(),

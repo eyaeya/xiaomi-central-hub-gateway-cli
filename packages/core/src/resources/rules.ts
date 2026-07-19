@@ -689,6 +689,9 @@ export interface AddNodeShortcut {
   // different from the source). exprHeight is valid only for varSetNumber /
   // varSetString expression cards.
   pos?: { x: number; y: number; width: number; height: number; exprHeight?: number };
+  // Shared UI-only compact-card state exposed by every modeled executable
+  // node. Keep explicit false values so export -> replay is lossless.
+  simplified?: boolean;
   // ---- device-side fields (deviceInput / deviceOutput / device*SetVar) ----
   deviceDid?: string;
   // F63c (2026-05-30): disambiguates --device-property / --device-action /
@@ -861,11 +864,23 @@ function assertShortcutPositionUsage(shortcut: AddNodeShortcut): void {
   );
 }
 
+function assertShortcutSimplified(shortcut: AddNodeShortcut): void {
+  if (shortcut.simplified === undefined || typeof shortcut.simplified === 'boolean') return;
+  throw new ConfigError('shortcut simplified must be a boolean', {
+    simplified: shortcut.simplified,
+  });
+}
+
+function simplifiedCfgFromShortcut(shortcut: AddNodeShortcut): { simplified?: boolean } {
+  return shortcut.simplified === undefined ? {} : { simplified: shortcut.simplified };
+}
+
 function preflightAddNode(input: AddNodeInput): void {
   let localNode: unknown;
   if (input.shortcut !== undefined) {
     assertShortcutVariableIdentifiers(input.shortcut);
     assertShortcutPositionUsage(input.shortcut);
+    assertShortcutSimplified(input.shortcut);
     if (
       input.shortcut.propertyValue !== undefined &&
       !(
@@ -984,6 +999,7 @@ async function addNodeWithinWorkflow(
     // MIoT lookup so malformed authoring flags never reach a gateway path.
     assertShortcutVariableIdentifiers(input.shortcut);
     assertShortcutPositionUsage(input.shortcut);
+    assertShortcutSimplified(input.shortcut);
     if (
       input.shortcut.propertyValue !== undefined &&
       !(
@@ -1824,6 +1840,7 @@ function synthesizeNodeFromShortcut(
           pos: shortcut.pos ?? sizedPos('deviceInput'),
           name: 'deviceInput',
           version: 0,
+          ...simplifiedCfgFromShortcut(shortcut),
         },
         inputs: {},
         outputs: { output: [] },
@@ -1860,6 +1877,7 @@ function synthesizeNodeFromShortcut(
         pos: shortcut.pos ?? sizedPos('deviceInput'),
         name: 'deviceInput',
         version: 1,
+        ...simplifiedCfgFromShortcut(shortcut),
       },
       inputs: {},
       outputs: { output: [] },
@@ -1914,6 +1932,7 @@ function synthesizeNodeFromShortcut(
           pos: shortcut.pos ?? sizedPos('deviceOutput'),
           name: 'deviceOutput',
           version: 1,
+          ...simplifiedCfgFromShortcut(shortcut),
         },
         inputs: { trigger: null },
         outputs: { output: [] },
@@ -1965,6 +1984,7 @@ function synthesizeNodeFromShortcut(
           pos: shortcut.pos ?? sizedPos('deviceOutput'),
           name: 'deviceOutput',
           version: 1,
+          ...simplifiedCfgFromShortcut(shortcut),
         },
         inputs: { trigger: null },
         outputs: { output: [] },
@@ -2016,6 +2036,7 @@ function synthesizeNodeFromShortcut(
         pos: shortcut.pos ?? sizedPos('deviceGet'),
         name: 'deviceGet',
         version: 1,
+        ...simplifiedCfgFromShortcut(shortcut),
       },
       inputs: { input: null },
       outputs: { output: [], output2: [] },
@@ -2114,6 +2135,7 @@ function synthesizeNodeFromShortcut(
             pos: shortcut.pos ?? sizedPos(shortcut.type),
             name: shortcut.type,
             version: 1,
+            ...simplifiedCfgFromShortcut(shortcut),
           },
           inputs: {},
           outputs: { output: [] },
@@ -2149,6 +2171,7 @@ function synthesizeNodeFromShortcut(
             pos: shortcut.pos ?? sizedPos(shortcut.type),
             name: shortcut.type,
             version: 1,
+            ...simplifiedCfgFromShortcut(shortcut),
           },
           inputs: {},
           outputs: { output: [] },
@@ -2200,6 +2223,7 @@ function synthesizeNodeFromShortcut(
         pos: shortcut.pos ?? sizedPos(shortcut.type),
         name: shortcut.type,
         version: 1,
+        ...simplifiedCfgFromShortcut(shortcut),
       },
       outputs: { output: [] },
       props: {
@@ -2291,6 +2315,7 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
     pos: shortcut.pos ?? sizedPos(shortcut.type),
     name,
     version: 1,
+    ...simplifiedCfgFromShortcut(shortcut),
   });
 
   switch (shortcut.type) {

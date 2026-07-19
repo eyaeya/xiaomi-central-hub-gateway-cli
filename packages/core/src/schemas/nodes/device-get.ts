@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { MIOT_COMPARISON_CONTRACT } from '../miot-comparison.js';
-import { Connection, NodeId, Position } from './common.js';
+import { Connection, NodeId, Position, SimplifiableCfgFields } from './common.js';
 
 // F40 (2026-05-30) — props are now a dtype-discriminated union mirroring
 // the bundle's `Pr.deviceGet.checkWebNode` (identical shape to the
@@ -10,11 +10,11 @@ import { Connection, NodeId, Position } from './common.js';
 // `simplified` boolean on cfg (the "默认设置 / 高级设置" toggle).
 export const DeviceGetCfg = z
   .object({
+    ...SimplifiableCfgFields,
     urn: z.string(),
     pos: Position,
     name: z.string(),
     version: z.number(),
-    simplified: z.boolean().optional(),
   })
   .strict();
 export type DeviceGetCfg = z.infer<typeof DeviceGetCfg>;

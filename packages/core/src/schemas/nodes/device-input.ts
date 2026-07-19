@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { MIOT_COMPARISON_CONTRACT } from '../miot-comparison.js';
-import { Connection, NodeId, Position } from './common.js';
+import { Connection, NodeId, Position, SimplifiableCfgFields } from './common.js';
 
 // Fields derived from fixtures/responses/nodes/deviceInput/baseline-full.json.
 // Strict-where-known per M6 design: cfg/inputs/outputs key sets locked.
@@ -19,14 +19,14 @@ import { Connection, NodeId, Position } from './common.js';
 // 2026-05-30-f38-discovery.md adds F40 float-operator findings).
 
 // F14b (2026-05-28, UI-saved): web UI emits optional `cfg.simplified`
-// (the 默认设置 / 高级设置 toggle); CLI doesn't emit it.
+// (the 默认设置 / 高级设置 toggle), now shared by every modeled cfg.
 export const DeviceInputCfg = z
   .object({
+    ...SimplifiableCfgFields,
     urn: z.string(),
     pos: Position,
     name: z.string(),
     version: z.number(),
-    simplified: z.boolean().optional(),
   })
   .strict();
 export type DeviceInputCfg = z.infer<typeof DeviceInputCfg>;

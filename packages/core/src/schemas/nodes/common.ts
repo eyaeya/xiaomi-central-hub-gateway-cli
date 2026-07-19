@@ -3,6 +3,15 @@ import { z } from 'zod';
 export const NodeId = z.string().min(1);
 export type NodeId = z.infer<typeof NodeId>;
 
+// The official canvas exposes the same cosmetic "simplified card" toggle on
+// every executable node type (everything except the unmodelled `nop` note
+// card). Keep the optional field in one shared shape, then spread it into each
+// per-type cfg object before `.strict()` so no other unknown cfg keys become
+// accepted accidentally.
+export const SimplifiableCfgFields = {
+  simplified: z.boolean().optional(),
+} as const;
+
 /** Shared continuity rule for dynamic pin records such as input0..inputN. */
 export function hasContiguousNumberedPins(
   pins: Record<string, unknown>,

@@ -90,7 +90,7 @@ export interface ExportRuleInputs extends ExportRuleDeps {
   /**
    * F54 (2026-05-30) — when true, the exporter throws ConfigError if any
    * node carries a `cfg` key that the renderer would silently drop on
-   * round-trip (e.g. UI-saved `cfg.simplified`). Default false; the
+   * round-trip (e.g. an unrecognized future UI field). Default false; the
    * exporter then emits a `kind: 'warning'` command per dropped key so
    * the user can still re-import the script but is told what was lost.
    *
@@ -182,8 +182,8 @@ export async function exportRuleFromView(
     const result = await renderNode(node, deps, specCache, nodeWarnings);
     if (result) commands.push(result);
     // F54 (2026-05-30) — diff the node's cfg against the renderer's
-    // known keys. Anything else (e.g. UI-saved cfg.simplified, cfg.urn
-    // on a non-device card) would silently drop on the script-replay
+    // known keys. Anything else (e.g. cfg.urn on a non-device card or an
+    // unrecognized future UI field) would silently drop on the script-replay
     // round-trip. Emit a warning (and in strict mode, throw) so the
     // caller knows exactly which keys were lost.
     const n = node as { id?: unknown; type?: unknown; cfg?: unknown };
@@ -545,7 +545,7 @@ async function renderDeviceInput(
     { name: '--id', value: n.id },
     { name: '--type', value: 'deviceInput' },
     { name: '--device-did', value: did },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
   ];
   appendDeviceSiidFlag(flags, props.siid);
 
@@ -640,7 +640,7 @@ async function renderDeviceGet(
     { name: '--id', value: n.id },
     { name: '--type', value: 'deviceGet' },
     { name: '--device-did', value: did },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
   ];
   appendDeviceSiidFlag(flags, props.siid);
 
@@ -693,7 +693,7 @@ async function renderDeviceSetVar(
     { name: '--id', value: n.id },
     { name: '--type', value: n.type },
     { name: '--device-did', value: did },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
   ];
   appendDeviceSiidFlag(flags, props.siid);
 
@@ -793,7 +793,7 @@ async function renderDeviceOutput(
     { name: '--id', value: n.id },
     { name: '--type', value: 'deviceOutput' },
     { name: '--device-did', value: did },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
   ];
   appendDeviceSiidFlag(flags, props.siid);
 
@@ -881,7 +881,7 @@ function renderModeSwitch(n: {
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
     { name: '--type', value: 'modeSwitch' },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
   ];
   if (outputCount !== 2) flags.push({ name: '--outputs', value: String(outputCount) });
   return {
@@ -904,7 +904,7 @@ function simpleNode(
     flags: [
       { name: '--id', value: n.id },
       { name: '--type', value: type },
-      ...posFlagsFromCfg(n.cfg),
+      ...cfgFlagsFromCfg(n.cfg),
     ],
     comment: type,
   };
@@ -918,7 +918,7 @@ function logicGate(
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
     { name: '--type', value: type },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
   ];
   if (inputCount !== 2) flags.push({ name: '--inputs', value: String(inputCount) });
   return { kind: 'node-add', nodeId: n.id, type, flags, comment: `${type} (${inputCount} inputs)` };
@@ -931,7 +931,7 @@ function counterNode(
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
     { name: '--type', value: type },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
   ];
   if (typeof n.props?.n === 'number') flags.push({ name: '--threshold', value: String(n.props.n) });
   return { kind: 'node-add', nodeId: n.id, type, flags, comment: type };
@@ -946,7 +946,7 @@ function durationNode(
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
     { name: '--type', value: type },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
   ];
   const duration = renderDurationFromCfgAndProps(n.cfg, n.props?.[propName]);
   if (duration !== null) flags.push({ name: flagName, value: duration });
@@ -998,7 +998,7 @@ function renderTimeRange(n: {
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
     { name: '--type', value: 'timeRange' },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
   ];
   if (start) flags.push({ name: '--start', value: hms(start) });
   if (end) flags.push({ name: '--end', value: hms(end) });
@@ -1015,7 +1015,7 @@ function renderVarChange(n: {
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
     { name: '--type', value: 'varChange' },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
     { name: '--var-scope', value: String(props.scope ?? '') },
     { name: '--var-id', value: String(props.id ?? '') },
     { name: '--var-type', value: String(props.varType ?? '') },
@@ -1087,7 +1087,7 @@ function renderVarSet(
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
     { name: '--type', value: type },
-    ...posFlagsFromCfg(n.cfg, true),
+    ...cfgFlagsFromCfg(n.cfg, true),
     { name: '--var-scope', value: String(props.scope ?? '') },
     { name: '--var-id', value: String(props.id ?? '') },
     { name: '--expr', value: exprStr },
@@ -1133,7 +1133,7 @@ function renderVarGet(n: {
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
     { name: '--type', value: 'varGet' },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
     { name: '--var-scope', value: String(props.scope ?? '') },
     { name: '--var-id', value: String(props.id ?? '') },
     { name: '--var-type', value: String(props.varType ?? '') },
@@ -1157,7 +1157,7 @@ function renderAlarmClock(n: {
   const flags: ExportFlag[] = [
     { name: '--id', value: n.id },
     { name: '--type', value: 'alarmClock' },
-    ...posFlagsFromCfg(n.cfg),
+    ...cfgFlagsFromCfg(n.cfg),
   ];
   if (props.type === 'periodicAlarm') {
     flags.push({
@@ -1182,12 +1182,13 @@ function renderAlarmClock(n: {
   return { kind: 'node-add', nodeId: n.id, type: 'alarmClock', flags, comment: 'alarmClock' };
 }
 
-// Emit a `--pos x,y,width,height` flag when the source cfg carries a pos;
-// expression cards append their optional exprHeight as a fifth component.
+// Emit the shared UI cfg flags handled by every renderer. `--pos` preserves
+// canvas layout; expression cards append their optional exprHeight as a fifth
+// component. `--simplified true|false` preserves explicit compact-card state.
 // F54 (2026-05-30) — cfg keys that some renderer in this file knows how
-// to project back into CLI flags. Anything else (e.g. UI-saved
-// cfg.simplified, cfg.urn on a non-device card, an unrecognized future
-// field) silently drops on the script-replay round-trip; the F54 loop
+// to project back into CLI flags. Anything else (e.g. cfg.urn on a
+// non-device card or an unrecognized future field) silently drops on the
+// script-replay round-trip; the F54 loop
 // in exportRuleFromView surfaces those as warnings or (with
 // strictRoundtrip) throws. Keep this set in sync with the cfg reads
 // across the render* helpers.
@@ -1200,6 +1201,7 @@ const KNOWN_CFG_KEYS = new Set([
   'value', // delay / loop / statusLast / eventSequence — duration value
   'happenType', // alarmClock — UI scaffolding (re-rendered via --at etc.)
   'tempOffset', // alarmClock — same
+  'simplified', // every modeled executable node — UI compact-card state
 ]);
 
 function unknownCfgKeys(cfg: Record<string, unknown>): string[] {
@@ -1213,31 +1215,36 @@ function isRecord(x: unknown): x is Record<string, unknown> {
 }
 
 // Used by every node renderer so `xgg rule export | bash` round-trips also
-// preserve the canvas layout (cosmetic but reduces visual diff to zero).
-function posFlagsFromCfg(
+// preserve common UI state (cosmetic but reduces visual diff to zero).
+function cfgFlagsFromCfg(
   cfg: Record<string, unknown> | undefined,
   includeExprHeight = false,
 ): ExportFlag[] {
   if (!cfg) return [];
+  const flags: ExportFlag[] = [];
   const pos = cfg.pos as
     | { x?: number; y?: number; width?: number; height?: number; exprHeight?: number }
     | undefined;
-  if (!pos) return [];
-  const { x, y, width, height } = pos;
-  if (
-    typeof x !== 'number' ||
-    typeof y !== 'number' ||
-    typeof width !== 'number' ||
-    typeof height !== 'number'
-  ) {
-    return [];
+  if (pos) {
+    const { x, y, width, height } = pos;
+    if (
+      typeof x === 'number' &&
+      typeof y === 'number' &&
+      typeof width === 'number' &&
+      typeof height === 'number'
+    ) {
+      const exprHeight = includeExprHeight ? pos.exprHeight : undefined;
+      const value =
+        typeof exprHeight === 'number'
+          ? `${x},${y},${width},${height},${exprHeight}`
+          : `${x},${y},${width},${height}`;
+      flags.push({ name: '--pos', value });
+    }
   }
-  const exprHeight = includeExprHeight ? pos.exprHeight : undefined;
-  const value =
-    typeof exprHeight === 'number'
-      ? `${x},${y},${width},${height},${exprHeight}`
-      : `${x},${y},${width},${height}`;
-  return [{ name: '--pos', value }];
+  if (typeof cfg.simplified === 'boolean') {
+    flags.push({ name: '--simplified', value: String(cfg.simplified) });
+  }
+  return flags;
 }
 
 function hms(t: { hour: number; minute: number; second: number }): string {

@@ -1,15 +1,13 @@
 import { z } from 'zod';
-import { Connection, NodeId, Position } from './common.js';
+import { Connection, NodeId, Position, SimplifiableCfgFields } from './common.js';
 
 export const TimeRangeCfg = z
   .object({
+    ...SimplifiableCfgFields,
     urn: z.string().optional(),
     pos: Position,
     name: z.string(),
     version: z.number(),
-    // UI save of a timeRange card writes this cosmetic flag even when the
-    // c-shortcut-created wire omitted it.
-    simplified: z.boolean().optional(),
   })
   .strict();
 export type TimeRangeCfg = z.infer<typeof TimeRangeCfg>;
