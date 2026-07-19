@@ -19,7 +19,7 @@ const modeledNodeTypes = [
   { type: 'deviceGet', inputs: ['input'], outputs: ['output', 'output2'] },
   { type: 'deviceOutput', inputs: ['trigger'], outputs: ['output'] },
   { type: 'alarmClock', inputs: [], outputs: ['output'], source: 'event' },
-  { type: 'timeRange', inputs: [], outputs: ['output'], source: 'state' },
+  { type: 'timeRange', inputs: [], outputs: ['output'], source: 'event' },
   { type: 'delay', inputs: ['input'], outputs: ['output'] },
   { type: 'statusLast', inputs: ['input'], outputs: ['output'] },
   { type: 'condition', inputs: ['trigger', 'condition'], outputs: ['met', 'unmet'] },

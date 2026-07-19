@@ -1002,6 +1002,9 @@ function renderTimeRange(n: {
   ];
   if (start) flags.push({ name: '--start', value: hms(start) });
   if (end) flags.push({ name: '--end', value: hms(end) });
+  if (typeof props.mingTextShow === 'boolean') {
+    flags.push({ name: '--ming-text-show', value: String(props.mingTextShow) });
+  }
   addDayFilterFlags(flags, props.filter);
   return { kind: 'node-add', nodeId: n.id, type: 'timeRange', flags, comment: 'timeRange' };
 }

@@ -164,7 +164,7 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
     command: 'rule.new',
     match: (_r, opts) => !(has(opts, 'enable') && opts.enable === true),
     cmd: (r) => `xgg rule node add --rule-id ${readId(r)} --type <trigger>`,
-    why: "every automation needs an independent event source. Pick the source matching the user's requirement (deviceInput for a device event/property, alarmClock for time-of-day, varChange for variable observation, or deviceInputSetVar). timeRange is supporting state, while loop/register need an upstream control signal. NOTE: during early agent self-test or smoke-checking, onLoad is a useful optional source because `xgg rule disable <id> && xgg rule enable <id>` re-fires it deterministically without physical interaction — but it is not the default for real automations, choose by intent",
+    why: "every automation needs an independent event source. Pick the source matching the user's requirement (deviceInput for a device event/property, alarmClock for time-of-day, timeRange for the verified window-entry event plus current-window state, varChange for variable observation, or deviceInputSetVar). loop/register need an upstream control signal. NOTE: during early agent self-test or smoke-checking, onLoad is a useful optional source because `xgg rule disable <id> && xgg rule enable <id>` re-fires it deterministically without physical interaction — but it is not the default for real automations, choose by intent",
     lifecycle: 'created → drafting',
   },
   {
@@ -385,7 +385,7 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
  */
 export const TRIGGER_TYPES = new Set<string>(INDEPENDENT_EVENT_SOURCE_TYPES);
 
-/** Zero-input cards that expose supporting state rather than an event trigger. */
+/** Zero-input cards that expose independent supporting state (possibly plus an event). */
 export const STATE_SOURCE_TYPES = new Set<string>(INDEPENDENT_STATE_SOURCE_TYPES);
 
 /**

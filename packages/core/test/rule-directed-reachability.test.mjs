@@ -102,6 +102,7 @@ function independentSource(type, id, targets = []) {
       },
     };
   }
+  if (type === 'timeRange') return timeRange(id, targets);
   throw new Error(`missing source fixture for ${type}`);
 }
 
@@ -318,7 +319,7 @@ function unreachableSinkIds(nodes) {
 test('independent source fact table has the evidence-backed source set and each reaches a sink', () => {
   assert.deepEqual(
     new Set(INDEPENDENT_EVENT_SOURCE_TYPES),
-    new Set(['onLoad', 'alarmClock', 'deviceInput', 'deviceInputSetVar', 'varChange']),
+    new Set(['onLoad', 'alarmClock', 'timeRange', 'deviceInput', 'deviceInputSetVar', 'varChange']),
   );
 
   for (const type of INDEPENDENT_EVENT_SOURCE_TYPES) {
@@ -327,7 +328,7 @@ test('independent source fact table has the evidence-backed source set and each 
   }
 });
 
-test('reachability follows edge direction and controlled/state cards are not bootstrap sources', () => {
+test('reachability follows edge direction while controlled cards still need upstream input', () => {
   const reverse = [deviceOutput('sink', ['repeat.start']), loop('repeat')];
   assert.deepEqual(unreachableSinkIds(reverse), ['sink']);
 
@@ -365,8 +366,8 @@ test('reachability follows edge direction and controlled/state cards are not boo
   );
 
   assert.deepEqual(
-    unreachableSinkIds([timeRange('window', ['sink.trigger']), deviceOutput('sink')]),
-    ['sink'],
+    checkReachability([timeRange('window', ['sink.trigger']), deviceOutput('sink')]),
+    [],
   );
 });
 
@@ -482,7 +483,7 @@ test('logicAnd requires all state values and at least one event-driving update p
     multiInput('logicAnd', 'all', ['sink.trigger']),
     deviceOutput('sink'),
   ];
-  assert.deepEqual(unreachableSinkIds(staticStateOnly), ['sink']);
+  assert.deepEqual(checkReachability(staticStateOnly), []);
 
   const missingState = [
     independentSource('varChange', 'updating-state', ['all.input0']),
@@ -545,7 +546,7 @@ test('ANY-input cards activate from one live endpoint while reset-only onlyNTime
 test('state-card updates require a dual/state source endpoint, not an event-only cross-color wire', () => {
   const eventOnlyWithOtherState = [
     onLoad('event-only', ['any.input0']),
-    timeRange('supporting-state', ['any.input1']),
+    register('supporting-state', ['any.input1']),
     multiInput('logicOr', 'any', ['sink.trigger']),
     deviceOutput('sink'),
   ];
@@ -811,6 +812,53 @@ test('strict lint and enable expose the same directed diagnosis before follow-up
   assert.equal(
     calls.some((call) => call.options?.kind === 'write'),
     false,
+  );
+});
+
+test('timeRange directly reaches an event sink and passes the normal enable gate', async () => {
+  const id = 'rule-1';
+  const nodes = [timeRange('window', ['sink.trigger']), deviceOutput('sink')];
+  assert.deepEqual(checkReachability(nodes), []);
+  assert.deepEqual(
+    lintGraph({ graph: { id, nodes }, strict: true }).filter((issue) => issue.severity === 'error'),
+    [],
+  );
+
+  const summary = {
+    id,
+    enable: false,
+    uiType: 'test',
+    userData: {
+      name: 'timeRange direct sink',
+      transform: { x: 0, y: 0, scale: 1, rotate: 0 },
+      lastUpdateTime: 0,
+      version: 0,
+    },
+  };
+  const { deps, calls } = fakeDeps((method) => {
+    if (method === '/api/getGraph') return { id, nodes };
+    if (method === '/api/getVarList') return {};
+    if (method === '/api/getGraphList') return [summary];
+    if (method === '/api/changeGraphConfig') return null;
+    throw new Error(`unexpected RPC: ${method}`);
+  });
+
+  assert.deepEqual(await enableRule(id, deps), { id, prevEnable: false, enable: true });
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    [
+      '/api/getGraph',
+      '/api/getVarList',
+      '/api/getVarList',
+      '/api/getGraphList',
+      '/api/changeGraphConfig',
+    ],
+  );
+  assert.equal(
+    calls.some(
+      (call) => call.method === '/api/changeGraphConfig' && call.options?.kind === 'write',
+    ),
+    true,
   );
 });
 

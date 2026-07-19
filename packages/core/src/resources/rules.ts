@@ -190,8 +190,9 @@ async function enableRuleWithinWorkflow(
     // gateway accepts the graph; the official UI's save() hides the trap
     // (canvas makes it visually obvious). The CLI's save-then-enable split
     // makes it possible to silently enable a dead rule — this gate restores
-    // the invariant on the enable funnel. loop/register need upstream control
-    // and timeRange is supporting state, so none is a bootstrap source. NOT run
+    // the invariant on the enable funnel. loop/register need upstream control;
+    // timeRange is independently both state and a verified window-entry event
+    // source. NOT run
     // in setGraph (incremental authoring may leave cards floating while wiring).
     if (Array.isArray(body.nodes)) {
       const reachIssues = checkReachability(body.nodes);
@@ -750,6 +751,10 @@ export interface AddNodeShortcut {
   // timeRange: "HH:MM" or "HH:MM:SS" window. Plus weekday filter below.
   start?: string;
   end?: string;
+  // Optional official-UI display metadata. When omitted, the shortcut derives
+  // true for a start later than end (the bundle's "next day" shape) and leaves
+  // ordinary same-day windows untouched.
+  mingTextShow?: boolean;
   // Day-of-week filter shared by timeRange + alarmClock
   weekdayOnly?: boolean;
   holidayOnly?: boolean;
@@ -2266,6 +2271,10 @@ function parseHmsOrThrow(
   return { hour, minute, second };
 }
 
+function timePointSeconds(point: { hour: number; minute: number; second: number }): number {
+  return point.hour * 60 * 60 + point.minute * 60 + point.second;
+}
+
 function parseDurationOrThrow(
   raw: string | undefined,
   flag: string,
@@ -2433,13 +2442,26 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
       }
       const start = parseHmsOrThrow(shortcut.start, '--start');
       const end = parseHmsOrThrow(shortcut.end, '--end');
+      // ai-config-v5.28b650.pretty.js `ms(start, end)` sets the UI's
+      // `mingTextShow` marker when start is strictly later than end. Preserve
+      // an explicit export/replay value; otherwise synthesize the useful
+      // overnight marker without adding cosmetic false to legacy same-day
+      // nodes that legitimately omitted the optional field.
+      const mingTextShow =
+        shortcut.mingTextShow ??
+        (timePointSeconds(start) > timePointSeconds(end) ? true : undefined);
       return {
         id,
         type: 'timeRange',
         cfg: baseCfg('timeRange'),
         inputs: {},
         outputs: { output: [] },
-        props: { start, end, filter: buildDayFilter(shortcut) },
+        props: {
+          start,
+          end,
+          filter: buildDayFilter(shortcut),
+          ...(mingTextShow !== undefined && { mingTextShow }),
+        },
       };
     }
 

@@ -40,6 +40,10 @@ export const TimeRangeProps = z
     start: TimePoint,
     end: TimePoint,
     filter: TimeRangeFilter,
+    // The official UI writes this display-only marker after either endpoint
+    // is edited: true when start is later than end (the UI labels the end as
+    // "next day"), false otherwise. Older/default nodes may omit it.
+    mingTextShow: z.boolean().optional(),
   })
   .strict();
 export type TimeRangeProps = z.infer<typeof TimeRangeProps>;

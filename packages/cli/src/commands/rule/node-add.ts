@@ -166,6 +166,7 @@ interface NodeAddOpts extends RuleOpts {
   interval?: string;
   start?: string;
   end?: string;
+  mingTextShow?: boolean;
   weekdayOnly?: boolean;
   holidayOnly?: boolean;
   days?: number[];
@@ -320,6 +321,11 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option('--start <HH:MM[:SS]>', 'timeRange start time')
     .option('--end <HH:MM[:SS]>', 'timeRange end time')
+    .option(
+      '--ming-text-show <true|false>',
+      'preserve official timeRange next-day label metadata (default: derive true when start is later than end)',
+      parseBooleanLiteral,
+    )
     .option('--weekday-only', 'timeRange/alarmClock fires only on legal workdays')
     .option('--holiday-only', 'timeRange/alarmClock fires only on legal holidays')
     .option(
@@ -497,6 +503,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             ...(opts.interval !== undefined && { interval: opts.interval }),
             ...(opts.start !== undefined && { start: opts.start }),
             ...(opts.end !== undefined && { end: opts.end }),
+            ...(opts.mingTextShow !== undefined && { mingTextShow: opts.mingTextShow }),
             ...(opts.weekdayOnly === true && { weekdayOnly: true }),
             ...(opts.holidayOnly === true && { holidayOnly: true }),
             ...(opts.days !== undefined && { days: opts.days }),
