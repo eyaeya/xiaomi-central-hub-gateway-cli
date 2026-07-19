@@ -118,6 +118,21 @@ function outgoingNodeEdgeHint(r: unknown, opts: unknown): string {
   return `xgg rule edge add --rule-id ${readRuleId(r)} --from ${readNodeId(r)}:${outputPin} --to <downstream>:<state-pin>`;
 }
 
+const hasCleanSummary = (r: unknown): boolean =>
+  has(r, 'summary') &&
+  has(r.summary, 'errors') &&
+  r.summary.errors === 0 &&
+  has(r.summary, 'warnings') &&
+  r.summary.warnings === 0;
+
+const isSingleLiveRule = (opts: unknown): boolean =>
+  has(opts, 'ruleId') &&
+  typeof opts.ruleId === 'string' &&
+  opts.ruleId.length > 0 &&
+  !(has(opts, 'all') && opts.all === true);
+
+const isStrictLint = (opts: unknown): boolean => has(opts, 'strict') && opts.strict === true;
+
 /**
  * NEXT_STEP_RULES — the single source of truth for hint dispatch. Populated
  * by Task 7 of the implementation plan. Iteration order = priority order
@@ -233,40 +248,33 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
   // ----- C. Validate + enable + observe (spec §5.3) -----
   {
     command: 'rule.validate',
-    match: (r) =>
-      has(r, 'summary') &&
-      has(r.summary, 'errors') &&
-      r.summary.errors === 0 &&
-      has(r.summary, 'warnings') &&
-      r.summary.warnings === 0,
-    cmd: (r) => `xgg rule enable ${readRuleId(r)}`,
-    why: 'validator clean — safe to flip enable on; the enable-gate runs the same checks as a backstop',
-    lifecycle: 'validated → enabled',
-  },
-  {
-    command: 'rule.validate',
-    match: (r) =>
-      has(r, 'summary') &&
-      has(r.summary, 'errors') &&
-      r.summary.errors === 0 &&
-      has(r.summary, 'warnings') &&
-      typeof r.summary.warnings === 'number' &&
-      r.summary.warnings > 0,
-    cmd: (r) => [
-      `xgg rule lint --rule-id ${readRuleId(r)} --strict`,
-      `xgg rule enable ${readRuleId(r)}`,
-    ],
-    why: 'warnings can indicate unintended dangling edges, cross-color (event↔state) dead wires, or ghost scopes — but a deliberately disconnected sub-graph is also legitimate (e.g., reserved for future logic or a separate orchestration). Inspect each warning and confirm whether it is an intentional design choice before enable',
+    match: (r, opts) => hasCleanSummary(r) && isSingleLiveRule(opts),
+    cmd: (r) => `xgg rule lint --rule-id ${readRuleId(r)} --strict`,
+    why: 'save-button validation is clean; strict lint must also check topology, required inputs, and directed sink reachability before enable',
     lifecycle: 'validated → validated',
   },
-  // Rule 14: NO HINT when validate errors > 0 — handled implicitly by the
-  // absence of a matching rule (errors.ts ConfigError owns this channel).
+  // Validate warnings/errors and offline --body/--stdin inputs intentionally
+  // have no lifecycle hint. They are not a safe hand-off to live lint/enable.
   {
     command: 'rule.lint',
-    cmd: (r) => `xgg rule validate --rule-id ${readRuleId(r)}`,
-    why: 'lint covers topology + pin colours; validate additionally checks variable existence — both matter before enable',
-    lifecycle: 'wiring → validated',
+    match: (r, opts) => hasCleanSummary(r) && isSingleLiveRule(opts) && !isStrictLint(opts),
+    cmd: (r) => `xgg rule lint --rule-id ${readRuleId(r)} --strict`,
+    why: 'advisory lint is clean; rerun this single live rule with --strict to add save-button validation, required-input errors, and directed reachability',
+    lifecycle: 'validated → validated',
   },
+  {
+    command: 'rule.lint',
+    match: (r, opts) => hasCleanSummary(r) && isSingleLiveRule(opts) && isStrictLint(opts),
+    cmd: (r) => `xgg rule enable ${readRuleId(r)}`,
+    why: 'single-rule strict lint is clean across card validation, topology, required inputs, and directed reachability; enable is the next lifecycle step',
+    lifecycle: 'validated → enabled',
+  },
+  // Lint warnings/errors and --all runs intentionally have no lifecycle hint:
+  // they cannot safely identify one clean live rule to enable, and routing
+  // back to validate would create a validate↔lint loop.
+  // The remaining enable/disable/log hints in this section are post-enable
+  // observation and replay steps, not entry points into the authoring funnel.
+  // `rule enable` still runs its own full write gate on every replay.
   {
     command: 'rule.enable',
     cmd: (r) => [
@@ -349,9 +357,10 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
   // ----- E. Other (terminal / tools) (spec §5.5) -----
   {
     command: 'rule.set',
-    cmd: (r) => `xgg rule enable ${readId(r) === '<id>' ? readRuleId(r) : readId(r)}`,
-    why: 'rule set already gated by the per-card schema + variable-existence + scope-whitelist pre-flight; enable is the next move',
-    lifecycle: 'drafting → enabled',
+    cmd: (r) =>
+      `xgg rule lint --rule-id ${readId(r) === '<id>' ? readRuleId(r) : readId(r)} --strict`,
+    why: 'rule set checks card shape and variable references, but strict lint must still check topology, required inputs, and directed reachability before enable',
+    lifecycle: 'drafting → validated',
   },
   {
     command: 'rule.delete',
@@ -367,9 +376,9 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
   },
   {
     command: 'rule.import',
-    cmd: (r) => [`xgg rule validate --rule-id ${readId(r)}`, `xgg rule enable ${readId(r)}`],
-    why: 'imported rule is dormant — validate then enable to activate',
-    lifecycle: 'drafting → enabled',
+    cmd: (r) => `xgg rule validate --rule-id ${readId(r)}`,
+    why: 'after replaying the generated import script, validate the live graph; a clean result will route through single-rule strict lint before enable',
+    lifecycle: 'drafting → validated',
   },
 ];
 
