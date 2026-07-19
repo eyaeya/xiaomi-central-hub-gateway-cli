@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: 2026-07-20-between-explicit-bounds-v1 -->
+<!-- xgg-skill-content-build: 2026-07-20-between-bounds-device-input-mutex-v1 -->
 
 # xgg 自动化编写 Skill
 
@@ -192,7 +192,7 @@ xgg rule lint --rule-id <rid> --strict                          # 边拓扑 + pi
 
 优先级从高到低：
 
-1. **设备参数：** `xgg device spec <did> --pretty`。从 `Properties` 选 `--device-property`，`Actions` 选 `--device-action`，`Events` 选 `--device-event`。
+1. **设备参数：** `xgg device spec <did> --pretty`。从 `Properties` 选 `--device-property`，`Actions` 选 `--device-action`，`Events` 选 `--device-event`。`deviceInput` 的 property/event 模式严格二选一；event 模式只用 `--event-filter*` 比较事件参数，不能混入 `--op`、`--threshold*`、`--property-*` 或 `--force-out-of-range` 这类 property 比较 flag。
 2. **CLI shortcut 参数：** `xgg rule node add --help`。这是各卡片**参数名**的当前事实来源；25 种执行卡片和 `nop` 都有 shortcut，包括 `--type eventSequence --duration 5s`、`--type register`、`--type modeSwitch --outputs N`。
 3. **学已有规则：** `xgg rule view <id> --pretty` 看节点 `props/inputs/outputs`；`xgg rule export <id> --format shell` 反译成可复现的 CLI 命令。
 4. **没有 shortcut、要保留额外字段、或一次原子推整张图时才用 JSON。** `rule node add --cfg` 接受完整 `{cfg,inputs,outputs,props}`（推荐）或历史 cfg-only 形状；后者不能替代需要完整四段的卡片。`rule set --body <整图JSON文件>` 原子写整图。不要手拼残缺 payload；先从 `rule view` 取得现有全量 JSON，或按 [node catalog](references/node-catalog.md) 的 envelope/逐类结构构造，再用离线 `rule validate --body` 检查。设备卡 cfg 必须带 `urn`。

@@ -349,6 +349,30 @@ function assertPreloadUsage(opts: NodeAddOpts): void {
   );
 }
 
+function assertDeviceInputModeUsage(opts: NodeAddOpts): void {
+  if (opts.type !== 'deviceInput' || opts.deviceEvent === undefined) return;
+
+  if (opts.deviceProperty !== undefined) {
+    throw new ConfigError(
+      'deviceInput cannot mix --device-event with --device-property; choose exactly one input mode',
+    );
+  }
+
+  const propertyComparisonOptions = [
+    ...(opts.op !== undefined ? ['--op'] : []),
+    ...(opts.threshold !== undefined ? ['--threshold'] : []),
+    ...(opts.threshold2 !== undefined ? ['--threshold2'] : []),
+    ...(opts.propertyValue !== undefined ? ['--property-value'] : []),
+    ...(opts.propertyInclude !== undefined ? ['--property-include'] : []),
+    ...(opts.forceOutOfRange === true ? ['--force-out-of-range'] : []),
+  ];
+  if (propertyComparisonOptions.length === 0) return;
+
+  throw new ConfigError(
+    `deviceInput event mode cannot use property-only comparison option(s): ${propertyComparisonOptions.join(', ')}. Use --event-filter/--event-filter-include/--event-filter-between for event argument filters`,
+  );
+}
+
 interface NodeAddOpts extends RuleOpts {
   ruleId: string;
   type: string;
@@ -462,12 +486,12 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--device-property <P>',
-      'device property name (deviceInput/deviceInputSetVar trigger or capture source | deviceGet/deviceGetSetVar read source | deviceOutput property-write target)',
+      'device property name (deviceInput/deviceInputSetVar trigger or capture source; mutually exclusive with --device-event | deviceGet/deviceGetSetVar read source | deviceOutput property-write target)',
     )
     .option('--device-action <A>', 'device action name (deviceOutput action-invoke)')
     .option(
       '--device-event <E>',
-      'device event name for event-driven deviceInput/deviceInputSetVar trigger or capture source (e.g. click, double-click, long-press, motion-detected)',
+      'device event name for event-driven deviceInput/deviceInputSetVar trigger or capture source; mutually exclusive with --device-property (e.g. click, double-click, long-press, motion-detected)',
     )
     .option(
       '--event-filter <piid><op><v1>',
@@ -735,6 +759,7 @@ Raw/opaque fallback:
         // This flag's applicability is entirely local. Reject misuse before
         // Agent guards, session lookup, device warnings, snapshots, or IPC so
         // authentication state cannot mask a deterministic authoring error.
+        assertDeviceInputModeUsage(opts);
         assertPropertyValueUsage(opts);
         assertPropertyIncludeUsage(opts);
         assertEventFilterUsage(opts);

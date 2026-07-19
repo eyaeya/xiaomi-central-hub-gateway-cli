@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { ConfigError } from '@eyaeya/xgg-core';
 import { buildProgram } from '../dist/program.js';
 
 function nodeAddCommand(program) {
@@ -21,6 +22,64 @@ test('node-add help exposes a raw string-property comparison flag', () => {
   assert.match(help, /`between` requires explicit --threshold \(v1\) \+ --threshold2 \(v2\)/);
   assert.match(help, /required together with explicit --threshold/);
   assert.doesNotMatch(help, /optional second threshold/);
+  assert.match(help, /mutually exclusive with --device-event/);
+  assert.match(help, /mutually exclusive with --device-property/);
+});
+
+test('CLI rejects mixed deviceInput modes and event-mode property comparisons before guards', async (t) => {
+  const previousAgentMode = process.env.XGG_AGENT_MODE;
+  process.env.XGG_AGENT_MODE = '1';
+  t.after(() => {
+    if (previousAgentMode === undefined) Reflect.deleteProperty(process.env, 'XGG_AGENT_MODE');
+    else process.env.XGG_AGENT_MODE = previousAgentMode;
+  });
+
+  const prefix = [
+    'node',
+    'xgg',
+    'rule',
+    'node',
+    'add',
+    '--rule-id',
+    'rule-1',
+    '--type',
+    'deviceInput',
+    '--device-did',
+    'did-1',
+    '--device-event',
+    'changed',
+    '--no-snapshot',
+  ];
+  const cases = [
+    {
+      args: ['--device-property', 'value'],
+      message: /cannot mix --device-event with --device-property/,
+    },
+    {
+      args: ['--op', 'between', '--threshold', '1', '--threshold2', '2'],
+      message:
+        /event mode cannot use property-only comparison option\(s\): --op, --threshold, --threshold2/,
+    },
+    {
+      args: ['--property-value', 'open'],
+      message: /event mode cannot use property-only comparison option\(s\): --property-value/,
+    },
+    {
+      args: ['--property-include', '1,2'],
+      message: /event mode cannot use property-only comparison option\(s\): --property-include/,
+    },
+    {
+      args: ['--force-out-of-range'],
+      message: /event mode cannot use property-only comparison option\(s\): --force-out-of-range/,
+    },
+  ];
+
+  for (const { args, message } of cases) {
+    await assert.rejects(
+      buildProgram().parseAsync([...prefix, ...args]),
+      (error) => error instanceof ConfigError && message.test(error.message),
+    );
+  }
 });
 
 test('complete comparison flags parse without scalar/list ambiguity', () => {

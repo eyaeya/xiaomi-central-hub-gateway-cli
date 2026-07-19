@@ -1436,6 +1436,36 @@ function assertShortcutPreloadUsage(shortcut: AddNodeShortcut): void {
   );
 }
 
+function assertDeviceInputModeUsage(shortcut: AddNodeShortcut): void {
+  if (shortcut.type !== 'deviceInput' || shortcut.deviceEvent === undefined) return;
+
+  if (shortcut.deviceProperty !== undefined) {
+    throw new ConfigError(
+      'deviceInput cannot mix --device-event with --device-property; choose exactly one input mode',
+      { event: shortcut.deviceEvent, property: shortcut.deviceProperty },
+    );
+  }
+
+  const propertyComparisonFields = Object.entries({
+    op: shortcut.op,
+    threshold: shortcut.threshold,
+    thresholdLiteral: shortcut.thresholdLiteral,
+    threshold2: shortcut.threshold2,
+    threshold2Literal: shortcut.threshold2Literal,
+    propertyValue: shortcut.propertyValue,
+    propertyInclude: shortcut.propertyInclude,
+    forceOutOfRange: shortcut.forceOutOfRange === true ? true : undefined,
+  })
+    .filter(([, value]) => value !== undefined)
+    .map(([field]) => field);
+  if (propertyComparisonFields.length === 0) return;
+
+  throw new ConfigError(
+    `deviceInput event mode cannot use property-only comparison field(s): ${propertyComparisonFields.join(', ')}. Use deviceEventArgs/deviceEventIncludes/deviceEventBetweens for event argument filters`,
+    { event: shortcut.deviceEvent, fields: propertyComparisonFields },
+  );
+}
+
 function assertNopShortcutUsage(shortcut: AddNodeShortcut): void {
   const hasNopFlag =
     shortcut.noteText !== undefined ||
@@ -1620,6 +1650,7 @@ function preflightAddNode(input: AddNodeInput): void {
     assertShortcutVariableIdentifiers(input.shortcut);
     assertShortcutPositionUsage(input.shortcut);
     assertShortcutSimplified(input.shortcut);
+    assertDeviceInputModeUsage(input.shortcut);
     assertShortcutPreloadUsage(input.shortcut);
     assertNopShortcutUsage(input.shortcut);
     assertShortcutComparisonUsage(input.shortcut);

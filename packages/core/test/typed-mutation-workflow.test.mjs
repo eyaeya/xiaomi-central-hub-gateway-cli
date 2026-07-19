@@ -573,6 +573,87 @@ test('between shortcuts require both explicit bounds before session, spec, lease
   assert.deepEqual(effects, { session: 0, spec: 0, ipcClient: 0 });
 });
 
+test('deviceInput mode conflicts fail before session, spec, lease, or graph access', async () => {
+  const effects = { session: 0, spec: 0, ipcClient: 0 };
+  const deps = {
+    baseUrl,
+    store: {
+      async read() {
+        effects.session += 1;
+        throw new Error('session access must not happen');
+      },
+    },
+    ipcClient: () => {
+      effects.ipcClient += 1;
+      throw new Error('lease or graph access must not happen');
+    },
+  };
+  const getDeviceSpec = async () => {
+    effects.spec += 1;
+    throw new Error('spec access must not happen');
+  };
+  const invalid = [
+    {
+      shortcut: {
+        type: 'deviceInput',
+        deviceDid: 'd',
+        deviceEvent: 'changed',
+        deviceProperty: 'value',
+      },
+      message: /cannot mix --device-event with --device-property/,
+    },
+    {
+      shortcut: {
+        type: 'deviceInput',
+        deviceDid: 'd',
+        deviceEvent: 'changed',
+        op: 'between',
+        threshold: 1,
+        thresholdLiteral: '1',
+        threshold2: 2,
+        threshold2Literal: '2',
+      },
+      message:
+        /event mode cannot use property-only comparison field\(s\): op, threshold, thresholdLiteral, threshold2, threshold2Literal/,
+    },
+    {
+      shortcut: {
+        type: 'deviceInput',
+        deviceDid: 'd',
+        deviceEvent: 'changed',
+        propertyValue: 'open',
+      },
+      message: /event mode cannot use property-only comparison field\(s\): propertyValue/,
+    },
+    {
+      shortcut: {
+        type: 'deviceInput',
+        deviceDid: 'd',
+        deviceEvent: 'changed',
+        propertyInclude: [1, 2],
+      },
+      message: /event mode cannot use property-only comparison field\(s\): propertyInclude/,
+    },
+    {
+      shortcut: {
+        type: 'deviceInput',
+        deviceDid: 'd',
+        deviceEvent: 'changed',
+        forceOutOfRange: true,
+      },
+      message: /event mode cannot use property-only comparison field\(s\): forceOutOfRange/,
+    },
+  ];
+
+  for (const { shortcut, message } of invalid) {
+    await assert.rejects(
+      addNode({ ruleId, shortcut, getDeviceSpec, varCheck: false }, deps),
+      (error) => error instanceof ConfigError && message.test(error.message),
+    );
+  }
+  assert.deepEqual(effects, { session: 0, spec: 0, ipcClient: 0 });
+});
+
 test('standalone raw writes auto-lease, while an outer workflow remains the sole owner', async () => {
   for (const method of ['/api/setVarValue', '/custom/write']) {
     const fixture = workflowFixture();

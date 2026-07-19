@@ -589,7 +589,7 @@ test('string property shortcut rejects missing, empty, and mixed comparison lite
       deviceEvent: 'mixed-event',
       propertyValue: 'open',
     }),
-    /only applies to deviceInput\/deviceGet property-mode shortcuts/,
+    /event mode cannot use property-only comparison field\(s\): propertyValue/,
   );
   assert.equal(wrongMode.calls.length, 0);
 
@@ -610,6 +610,41 @@ test('string property shortcut rejects missing, empty, and mixed comparison lite
     emptyIssues.some((issue) => issue.path === 'nodes[0].props.v1'),
     true,
   );
+});
+
+test('exclusive deviceInput property and event modes keep their complete comparisons', async () => {
+  const gateway = createStatefulGateway();
+  await addShortcut(gateway, {
+    type: 'deviceInput',
+    id: 'property-mode',
+    deviceDid: did,
+    deviceProperty: 'count',
+    propertyInclude: [2, 4],
+  });
+  await addShortcut(gateway, {
+    type: 'deviceInput',
+    id: 'event-mode',
+    deviceDid: did,
+    deviceEvent: 'enum-event',
+    deviceEventIncludes: ['2=1,2'],
+  });
+
+  const props = comparisonProps(gateway.state.nodes);
+  assert.deepEqual(props['property-mode'], {
+    did,
+    siid: 2,
+    piid: 5,
+    dtype: 'int',
+    operator: 'include',
+    v1: [2, 4],
+    preload: false,
+  });
+  assert.deepEqual(props['event-mode'], {
+    did,
+    siid: 2,
+    eiid: 10,
+    arguments: [{ piid: 2, dtype: 'int', operator: 'include', v1: [1, 2] }],
+  });
 });
 
 test('continuous float property shortcut keeps its numeric comparison contract', async () => {
