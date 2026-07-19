@@ -56,7 +56,7 @@ xgg rule new --name "<自动化名称>"
 xgg rule node add --rule-id <rule-id> --type <type> ...
 xgg rule edge add --rule-id <rule-id> --from <node:pin> --to <node:pin>
 xgg rule layout <rule-id>
-xgg rule validate --rule-id <rule-id>
+xgg rule validate --rule-id <rule-id> --spec-aware
 xgg rule lint --rule-id <rule-id> --strict
 ```
 
@@ -75,11 +75,12 @@ xgg rule delete <rule-id>
 
 这些 node/edge/layout/set 写入默认保留 live `enable`；已启用规则的多步修改可能立即生效。先记录状态，会改变执行路径时在授权下 disable/readback，或离线构造后单次原子 `rule set`；验证后只按原状态和用户意图恢复。
 
-CLI 建模 25 种可执行卡片，另支持无连接器的 `nop` 画布备注。设备比较支持 string `--property-value`、整数 `--property-include`，以及事件参数的 repeatable `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--preload|--no-preload` 只适用于 property-mode `deviceInput` / `deviceInputSetVar` 与 `varChange`，`deviceGet` 不支持。旧 `deviceGet.props.preload` 会让 permissive export 警告、strict export 拒绝。受支持节点上的 preload 与 `--simplified true|false` 会被导出/导入保留。动作 `--params` 保留 MIoT 原生 number / boolean / string，并用 `{"param":{"$var":"global.id"}}` 引用动态变量。
+CLI 建模 25 种可执行卡片，另支持无连接器的 `nop` 画布备注。设备比较支持 string `--property-value`、整数 `--property-include`，以及事件参数的 repeatable `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--preload|--no-preload` 只适用于 property-mode `deviceInput` / `deviceInputSetVar` 与 `varChange`，`deviceGet` 不支持。旧 `deviceGet.props.preload` 会让 permissive export 警告、strict export 拒绝。受支持节点上的 preload 与 `--simplified true|false` 会被导出/导入保留。动作 `--params` 的 key 必须与 `action.in` property short-name 一一对应，值保留 MIoT 原生 number / boolean / string，并用 `{"param":{"$var":"global.id"}}` 引用动态变量。
 
 数值 `deviceInput` / `deviceGet` 与 number 型 `varChange` / `varGet` 使用 `--op between` 时，`--threshold <lower>` 和 `--threshold2 <upper>` 必须同时显式给出；省略任一边界会在 session、spec、快照与写图之前失败。显式下界 `0` 合法，非-between 标量比较继续保留历史默认 `0`。
 
-`deviceInput` / `deviceGet --force-out-of-range` 只跳过数值 range/step 检查，不绕过 value-list、finite/safe-integer、operator 或 operand shape 校验。
+`action.in` 不得重复 PIID，distinct PIID 的 short-name 必须唯一；持久化 `props.ins[i].piid` 必须等于 `action.in[i]`。原生 JSON 类型由 MIoT format 决定，只有数值 format 才应用数值 value-list/value-range/step；bool/string 即使带 numeric value-list 也仍持久化为 boolean/string。无效 range 会拒绝；number 变量必须携带当前 spec 的有效 min/max/step。permissive export 会明确警告不可无损 replay 的旧图，并用索引语义、唯一占位 key 与无原型字典避免乱序、重复名或 `__proto__` 静默丢值；strict export 直接拒绝。
+
 
 直接 `rule export --format shell` 与从 JSON import 渲染的脚本都要先落盘审阅；JSON import 必须用 `--from-file`：
 
@@ -116,7 +117,7 @@ xgg backup config set --from fds --auto-backup <true|false> --snapshots-dir "$PW
 
 云端 `generate` / `load` 前必须先对相同 `{did,ts,file-name}` 执行 `backup download`。`load`、`delete` 和 `backup config set` 都是写操作，需要用户明确授权与 rollback snapshot；完整参数以各子命令 `--help` 为准。
 
-本地候选图可直接用 `xgg rule validate --body candidate.json` 或管道到 `--stdin`。这两种模式默认不读取 session、不连接 daemon/网关，也不访问公网；只有显式添加 `--spec-aware` 才会查询公网 MIoT spec registry。`--rule-id` 会读取已登录网关的规则和变量，但同样只在添加 `--spec-aware` 后查询公网 spec。
+本地候选图可直接用 `xgg rule validate --body candidate.json` 或管道到 `--stdin`。这两种模式默认不读取 session、不连接 daemon/网关，也不访问公网；只有显式添加 `--spec-aware` 才会查询公网 MIoT spec registry，并核对 property/event dtype 以及 action input 的 missing/extra/duplicate PIID、逐索引顺序、重复 short-name、literal 原生类型/统一数值域、变量 dtype/有效 range。设备 action 图的主验收必须使用 `xgg rule validate --rule-id <rule-id> --spec-aware`；`--rule-id` 会读取已登录网关的规则和变量。
 
 `deviceOutput --value '$scope.id'` 表示变量引用。若字符串字面值本身以 `$` 开头，把第一个 `$` 写两次：例如 `--value '$$hello'` 实际写入 `$hello`；`rule export` 会自动添加这一层转义。
 

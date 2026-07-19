@@ -24,6 +24,7 @@ import { isValidVariableIdentifier } from '../schemas/variable-identifier.js';
 import { isValidVariableScopeName } from '../schemas/variable.js';
 import { ConfigError, NotFoundError } from '../transport/errors.js';
 import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
+import { checkDeviceOutputActionInputContract } from './validate-graph.js';
 import { scanVariableReference } from './variable-reference.js';
 
 /**
@@ -1115,18 +1116,49 @@ async function renderDeviceOutput(
       });
     } else {
       flags.push({ name: '--device-action', value: result.actionName });
-      const ins = Array.isArray(props.ins)
-        ? (props.ins as Array<Record<string, unknown> & { piid: number }>)
-        : [];
+      for (const contractIssue of checkDeviceOutputActionInputContract(
+        props,
+        spec,
+        `deviceOutput node ${n.id}.props`,
+      )) {
+        warnings.push(
+          `deviceOutput node ${n.id}: ${contractIssue.message} (${contractIssue.path})`,
+        );
+      }
+      const ins = Array.isArray(props.ins) ? props.ins : [];
       if (ins.length > 0) {
-        const params: Record<string, unknown> = {};
-        for (const arg of ins) {
-          const paramName =
-            findPropertyName(spec, Number(props.siid), arg.piid) ?? `piid-${arg.piid}`;
-          if (isDeviceOutputVariableRef(arg)) {
+        const params = Object.create(null) as Record<string, unknown>;
+        for (let index = 0; index < ins.length; index += 1) {
+          const rawArg = ins[index];
+          const arg = isRecord(rawArg) ? rawArg : null;
+          // The gateway bundle binds action inputs by array index. Project the
+          // value through action.in[index], not an untrusted persisted piid,
+          // so permissive export never silently swaps two action parameters.
+          const expectedPiid = result.action.in[index];
+          const persistedPiid = arg?.piid;
+          const projectionPiid =
+            typeof expectedPiid === 'number'
+              ? expectedPiid
+              : typeof persistedPiid === 'number'
+                ? persistedPiid
+                : index;
+          const baseParamName =
+            findPropertyName(spec, Number(props.siid), projectionPiid) ?? `piid-${projectionPiid}`;
+          let paramName = baseParamName;
+          if (Object.hasOwn(params, paramName)) {
+            paramName = `piid-${projectionPiid}-index-${index}`;
+            while (Object.hasOwn(params, paramName)) paramName += '-duplicate';
+          }
+          if (arg !== null && isDeviceOutputVariableRef(arg)) {
             params[paramName] = { $var: `${arg.scope}.${arg.id}` };
           } else {
-            params[paramName] = arg.value;
+            // `null` keeps malformed input slots visible in permissive output;
+            // typed replay then fails clearly instead of the renderer crashing
+            // or JSON.stringify silently dropping an undefined property.
+            params[paramName] =
+              arg === null || !Object.hasOwn(arg, 'value') || arg.value === undefined
+                ? null
+                : arg.value;
           }
         }
         flags.push({ name: '--params', value: JSON.stringify(params), needsQuoting: true });

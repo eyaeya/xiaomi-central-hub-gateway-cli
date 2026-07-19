@@ -95,11 +95,11 @@ pin 颜色有 event、state、event|state。只有源输出可以是 event|state
 
 三类均可重复，但同一 piid 只能出现一次。include 仅 int，between 支持 int/float。int 必须是精确 safe integer；所有数值按 value-list/value-range/step 验证。
 
-`--force-out-of-range` 只适用于 typed `deviceInput` / `deviceGet` 数值属性比较，只跳过 value-range 与 step 检查；它不绕过 value-list、finite/safe-integer、operator 或 operand shape 校验。strict export 会在需要时重放该 flag。
+`--force-out-of-range` 只适用于 typed `deviceInput` / `deviceGet` 数值属性比较，只跳过有效 value-range 的边界与 step 对齐检查；它不绕过无效 range metadata（非有限、min>max、step<=0）、value-list、finite/safe-integer、operator 或 operand shape 校验。strict export 会在需要时重放该 flag。
 
 变量 number 比较使用标量 `operator:"="`，不要套用设备 int 的 include 编码；string 变量只支持 `eq --var-value`。
 
-动作 `--params` 的 key 必须恰好覆盖 action.in 对应 property short-name。number / boolean / string 保持原生 JSON 类型；变量引用用 `{"$var":"scope.id"}`。number 变量要求目标 input 有 value-range，以生成 min/max/step。整数 action input 仅支持 safe integer，超出范围的 int64/uint64 会拒绝。
+动作 `--params` 的 key 必须恰好覆盖 `action.in` 对应 property short-name；`action.in` 不得重复 PIID，distinct PIID 的 short-name 也必须唯一。number / boolean / string 的原生 JSON 类型由 MIoT format 决定；只有数值 format 应用数值 value-list/value-range/step，bool/string 即使附带 numeric value-list 也仍是 boolean/string。变量引用用 `{"$var":"scope.id"}`。number 变量要求目标 input 有有效 value-range，以生成 min/max/step；非有限边界、min>max、step<=0 都拒绝。整数 action input 仅支持 safe integer，超出范围的 int64/uint64 会拒绝。bundle 按 index 绑定，因此持久化 `props.ins[i].piid` 必须等于 `action.in[i]`。`rule validate --spec-aware` 与 strict export 执行同一输入契约；permissive export 会明确 warning，并用索引投影、唯一占位 key 与无原型字典避免乱序、重复名或 `__proto__` 静默丢值。
 
 ## 整图与节点 JSON
 
