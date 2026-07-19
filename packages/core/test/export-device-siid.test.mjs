@@ -147,6 +147,9 @@ function shortcutFromExport(command) {
   copy('--var-id', 'varId');
   copy('--op', 'op');
   copy('--property-value', 'propertyValue');
+  const propertyInclude = one('--property-include');
+  if (propertyInclude !== undefined)
+    shortcut.propertyInclude = propertyInclude.split(',').map(Number);
 
   const deviceSiid = one('--device-siid');
   if (deviceSiid !== undefined) shortcut.deviceSiid = Number(deviceSiid);
@@ -163,6 +166,14 @@ function shortcutFromExport(command) {
   }
   const eventFilters = flagValues(command, '--event-filter').filter((value) => value !== undefined);
   if (eventFilters.length > 0) shortcut.deviceEventArgs = eventFilters;
+  const eventIncludes = flagValues(command, '--event-filter-include').filter(
+    (value) => value !== undefined,
+  );
+  if (eventIncludes.length > 0) shortcut.deviceEventIncludes = eventIncludes;
+  const eventBetweens = flagValues(command, '--event-filter-between').filter(
+    (value) => value !== undefined,
+  );
+  if (eventBetweens.length > 0) shortcut.deviceEventBetweens = eventBetweens;
   const eventArgVars = flagValues(command, '--event-arg-var').filter(
     (value) => value !== undefined,
   );

@@ -6,6 +6,7 @@ import {
   nodeSchemaForType,
   parseEventArgVarTarget,
   parseFiniteDecimalLiteral,
+  parseSafeIntegerDecimalLiteral,
   parseVarSetExpr,
 } from '@eyaeya/xgg-core';
 import type { AddNodeShortcut } from '@eyaeya/xgg-core';
@@ -134,9 +135,12 @@ function assertNopOptionUsage(opts: NodeAddOpts): void {
     ...(opts.deviceAction !== undefined ? ['--device-action'] : []),
     ...(opts.deviceEvent !== undefined ? ['--device-event'] : []),
     ...((opts.eventFilter?.length ?? 0) > 0 ? ['--event-filter'] : []),
+    ...((opts.eventFilterInclude?.length ?? 0) > 0 ? ['--event-filter-include'] : []),
+    ...((opts.eventFilterBetween?.length ?? 0) > 0 ? ['--event-filter-between'] : []),
     ...((opts.eventArgVar?.length ?? 0) > 0 ? ['--event-arg-var'] : []),
     ...(opts.threshold !== undefined ? ['--threshold'] : []),
     ...(opts.propertyValue !== undefined ? ['--property-value'] : []),
+    ...(opts.propertyInclude !== undefined ? ['--property-include'] : []),
     ...(opts.op !== undefined ? ['--op'] : []),
     ...(opts.params !== undefined ? ['--params'] : []),
     ...(opts.value !== undefined ? ['--value'] : []),
@@ -174,18 +178,39 @@ function assertNopOptionUsage(opts: NodeAddOpts): void {
   }
 }
 
-function parseFiniteDecimal(raw: string): number {
+interface ParsedDecimalOption {
+  literal: string;
+  value: number;
+}
+
+function parseFiniteDecimal(raw: string): ParsedDecimalOption {
   const parsed = parseFiniteDecimalLiteral(raw);
   if (parsed === null) {
     throw new InvalidArgumentError(`expected a finite decimal number (got "${raw}")`);
   }
-  return parsed;
+  return { literal: raw.trim(), value: parsed };
 }
 
 function parseBooleanLiteral(raw: string): boolean {
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   throw new InvalidArgumentError(`expected true or false (got "${raw}")`);
+}
+
+function parseFiniteIntegerList(raw: string): number[] {
+  const tokens = raw.split(',');
+  if (tokens.length === 0 || tokens.some((token) => token.trim().length === 0)) {
+    throw new InvalidArgumentError(
+      `expected one or more comma-separated finite integers (got "${raw}")`,
+    );
+  }
+  const values = tokens.map((token) => parseSafeIntegerDecimalLiteral(token));
+  if (values.some((value) => value === null)) {
+    throw new InvalidArgumentError(
+      `expected one or more comma-separated finite integers within JavaScript's safe range (got "${raw}")`,
+    );
+  }
+  return values as number[];
 }
 
 function assertPropertyValueUsage(opts: NodeAddOpts): void {
@@ -213,6 +238,73 @@ function assertPropertyValueUsage(opts: NodeAddOpts): void {
   }
   if (opts.op !== undefined && opts.op !== 'eq') {
     throw new ConfigError('--property-value only supports --op eq');
+  }
+}
+
+function assertPropertyIncludeUsage(opts: NodeAddOpts): void {
+  if (opts.propertyInclude === undefined) return;
+  if (opts.type !== 'deviceInput' && opts.type !== 'deviceGet') {
+    throw new ConfigError(
+      `--property-include only applies to deviceInput/deviceGet property-mode shortcuts (got --type ${opts.type})`,
+    );
+  }
+  if (
+    opts.deviceDid === undefined ||
+    opts.deviceProperty === undefined ||
+    opts.deviceEvent !== undefined ||
+    opts.cfg !== undefined
+  ) {
+    throw new ConfigError(
+      '--property-include requires --device-did plus --device-property and is not valid with --device-event or legacy --cfg',
+    );
+  }
+  if (
+    opts.op !== undefined ||
+    opts.threshold !== undefined ||
+    opts.threshold2 !== undefined ||
+    opts.propertyValue !== undefined
+  ) {
+    throw new ConfigError(
+      '--property-include is mutually exclusive with --op/--threshold/--threshold2/--property-value',
+    );
+  }
+}
+
+function assertEventFilterUsage(opts: NodeAddOpts): void {
+  const count =
+    (opts.eventFilter?.length ?? 0) +
+    (opts.eventFilterInclude?.length ?? 0) +
+    (opts.eventFilterBetween?.length ?? 0);
+  if (count === 0) return;
+  if (opts.type !== 'deviceInput') {
+    throw new ConfigError(
+      `event comparison filters only apply to deviceInput event-mode (got --type ${opts.type})`,
+    );
+  }
+  if (opts.deviceEvent === undefined) {
+    throw new ConfigError(
+      'event comparison filters require --device-event. Property-mode triggers use --op/--threshold or --property-include.',
+    );
+  }
+  if (opts.cfg !== undefined) {
+    throw new ConfigError(
+      'event comparison filters are mutually exclusive with --cfg. Drop --cfg or hand-craft props.arguments.',
+    );
+  }
+}
+
+function assertForceOutOfRangeUsage(opts: NodeAddOpts): void {
+  if (opts.forceOutOfRange !== true) return;
+  if (
+    (opts.type !== 'deviceInput' && opts.type !== 'deviceGet') ||
+    opts.deviceDid === undefined ||
+    opts.deviceProperty === undefined ||
+    opts.deviceEvent !== undefined ||
+    opts.cfg !== undefined
+  ) {
+    throw new ConfigError(
+      '--force-out-of-range only applies to typed deviceInput/deviceGet property comparisons',
+    );
   }
 }
 
@@ -279,13 +371,16 @@ interface NodeAddOpts extends RuleOpts {
   // deviceInput event-mode. Each value is `<piid><op><v1>` (op ∈ =, !=, >,
   // <, >=, <=). Commander collects via the accumulator function below.
   eventFilter?: string[];
+  eventFilterInclude?: string[];
+  eventFilterBetween?: string[];
   // B4 / F65a (2026-05-30) — repeatable per-piid variable routing for
   // deviceInputSetVar event-mode. Each value is `<piid>=<scope>.<id>`
   // (e.g. `1=global.lockOpId`). Used for multi-arg events where each
   // captured event-argument flows into its own destination variable.
   eventArgVar?: string[];
-  threshold?: number;
+  threshold?: ParsedDecimalOption;
   propertyValue?: string;
+  propertyInclude?: number[];
   op?: string;
   params?: string;
   value?: string;
@@ -315,7 +410,7 @@ interface NodeAddOpts extends RuleOpts {
   // --threshold. Forwarded as-is (no Number.parseFloat coercion which
   // would NaN-out any non-numeric input).
   varValue?: string;
-  threshold2?: number;
+  threshold2?: ParsedDecimalOption;
   allowUnknownScope?: boolean;
   at?: string;
   sunrise?: boolean;
@@ -380,6 +475,18 @@ export function attachNodeAdd(cmd: Command): void {
       [] as string[],
     )
     .option(
+      '--event-filter-include <piid=values>',
+      'deviceInput event-mode safe-int membership filter (repeatable). Form: <piid>=<v1>[,<v2>...]. The target arg must project to int; every value is checked against value-list/value-range. Example: --event-filter-include 2=1,2,3',
+      (v: string, acc: string[] = []) => acc.concat(v),
+      [] as string[],
+    )
+    .option(
+      '--event-filter-between <piid=lower,upper>',
+      'deviceInput event-mode safe-int/float range filter (repeatable). Exactly two ordered bounds, checked against dtype/value-list/value-range. Example: --event-filter-between 3=18.5,26.5',
+      (v: string, acc: string[] = []) => acc.concat(v),
+      [] as string[],
+    )
+    .option(
       '--event-arg-var <piid>=<scope>.<id>',
       'deviceInputSetVar event-mode per-arg variable routing (repeatable). scope/id are non-empty ASCII alphanumeric [A-Za-z0-9]+. Mutually exclusive with --var-scope/--var-id and --cfg. Example: --event-arg-var 1=global.lockOpId',
       (v: string, acc: string[] = []) => acc.concat(v),
@@ -395,6 +502,11 @@ export function attachNodeAdd(cmd: Command): void {
       'deviceInput/deviceGet string-property equality literal (required for string properties; mutually exclusive with --threshold/--threshold2)',
     )
     .option(
+      '--property-include <N,N,...>',
+      'deviceInput/deviceGet safe-int membership values (one or more, exact order preserved); implies gateway operator include and is mutually exclusive with --op/--threshold/--threshold2/--property-value',
+      parseFiniteIntegerList,
+    )
+    .option(
       '--op <OP>',
       'comparison operator: gt|lt|eq|ne|gte|lte|between. F49 — `between` requires --threshold (v1) + --threshold2 (v2); int/float deviceInput/deviceGet + number varType varChange/varGet only.',
     )
@@ -408,7 +520,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--force-out-of-range',
-      'bypass the M11 F19 threshold ∈ MIoT value-range check on deviceInput',
+      'bypass numeric value-range/step checks for property comparisons (does not bypass a closed value-list)',
     )
     .option(
       '--allow-no-push',
@@ -546,6 +658,13 @@ Examples (M7+M9 device shortcut path):
   $ xgg rule node add --rule-id r1 --type deviceInput \\
       --device-did lumi.<DID> --device-event lock-event \\
       --event-filter 1=1 --event-filter 3=2
+  # Complete comparison operands: enum membership + continuous range
+  $ xgg rule node add --rule-id r1 --type deviceInput \\
+      --device-did lumi.<DID> --device-event mixed-event \\
+      --event-filter-include 2=1,2,3 --event-filter-between 3=18.5,26.5
+  # Property membership (deviceInput and deviceGet)
+  $ xgg rule node add --rule-id r1 --type deviceGet \\
+      --device-did lumi.<DID> --device-property mode --property-include 1,2,3
   # Action invoke (e.g. speaker play-text)
   $ xgg rule node add --rule-id r1 --type deviceOutput \\
       --device-did lumi.<DID> --device-action play-text \\
@@ -616,6 +735,9 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
         // Agent guards, session lookup, device warnings, snapshots, or IPC so
         // authentication state cannot mask a deterministic authoring error.
         assertPropertyValueUsage(opts);
+        assertPropertyIncludeUsage(opts);
+        assertEventFilterUsage(opts);
+        assertForceOutOfRangeUsage(opts);
         assertPositionUsage(opts);
         assertSimplifiedUsage(opts);
         assertPreloadUsage(opts);
@@ -694,9 +816,9 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             ...(opts.op !== undefined && {
               op: opts.op as 'gt' | 'lt' | 'eq' | 'ne' | 'gte' | 'lte' | 'between',
             }),
-            ...(opts.threshold !== undefined && { threshold: opts.threshold }),
+            ...(opts.threshold !== undefined && { threshold: opts.threshold.value }),
             ...(opts.varValue !== undefined && { varValue: opts.varValue }),
-            ...(opts.threshold2 !== undefined && { threshold2: opts.threshold2 }),
+            ...(opts.threshold2 !== undefined && { threshold2: opts.threshold2.value }),
             ...(opts.preload !== undefined && { preload: opts.preload }),
             ...(opts.allowUnknownScope === true && { allowUnknownScope: true }),
             ...(opts.at !== undefined && { at: opts.at }),
@@ -719,21 +841,6 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
           };
         } else if (opts.deviceDid) {
           // Device shortcut path — synthesizes 4-piece node from device spec
-          // B9 / F63d (2026-05-30) — --event-filter is event-mode-only; reject
-          // when the user didn't pass --device-event so the synth doesn't
-          // silently drop the flag.
-          if ((opts.eventFilter?.length ?? 0) > 0) {
-            if (opts.type !== 'deviceInput') {
-              throw new ConfigError(
-                `--event-filter only applies to deviceInput event-mode (got --type ${opts.type})`,
-              );
-            }
-            if (opts.deviceEvent === undefined) {
-              throw new ConfigError(
-                '--event-filter requires --device-event (event-mode only). Property-mode triggers use --op/--threshold.',
-              );
-            }
-          }
           // B4 / F65a (2026-05-30) — --event-arg-var is deviceInputSetVar
           // event-mode-only; reject misuse up front so the synth doesn't
           // silently drop the flag.
@@ -761,14 +868,31 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             ...(opts.deviceEvent !== undefined && { deviceEvent: opts.deviceEvent }),
             ...(opts.eventFilter !== undefined &&
               opts.eventFilter.length > 0 && { deviceEventArgs: opts.eventFilter }),
+            ...(opts.eventFilterInclude !== undefined &&
+              opts.eventFilterInclude.length > 0 && {
+                deviceEventIncludes: opts.eventFilterInclude,
+              }),
+            ...(opts.eventFilterBetween !== undefined &&
+              opts.eventFilterBetween.length > 0 && {
+                deviceEventBetweens: opts.eventFilterBetween,
+              }),
             ...(opts.eventArgVar !== undefined &&
               opts.eventArgVar.length > 0 && { deviceEventArgVars: opts.eventArgVar }),
-            ...(opts.threshold !== undefined && { threshold: opts.threshold }),
+            ...(opts.threshold !== undefined && {
+              threshold: opts.threshold.value,
+              thresholdLiteral: opts.threshold.literal,
+            }),
             ...(opts.propertyValue !== undefined && { propertyValue: opts.propertyValue }),
+            ...(opts.propertyInclude !== undefined && {
+              propertyInclude: opts.propertyInclude,
+            }),
             // F49 (2026-05-30) — --threshold2 must reach device-shortcut
             // path too (used by deviceInput/deviceGet `--op between`).
             // Previously only forwarded inside the non-device branch.
-            ...(opts.threshold2 !== undefined && { threshold2: opts.threshold2 }),
+            ...(opts.threshold2 !== undefined && {
+              threshold2: opts.threshold2.value,
+              threshold2Literal: opts.threshold2.literal,
+            }),
             ...(opts.op !== undefined && {
               op: opts.op as 'gt' | 'lt' | 'eq' | 'ne' | 'gte' | 'lte' | 'between',
             }),
@@ -790,13 +914,6 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
           if (parsedCfg === undefined) {
             throw new ConfigError(
               'Either a non-device --type, --device-did (device shortcut), or --cfg (legacy) is required',
-            );
-          }
-          // B9 / F63d (2026-05-30) — --event-filter is shortcut-only; reject
-          // when the user mixes it with --cfg to avoid silent drop.
-          if ((opts.eventFilter?.length ?? 0) > 0) {
-            throw new ConfigError(
-              '--event-filter is mutually exclusive with --cfg. Either drop --cfg and use the device shortcut path, or hand-craft the arguments[] elements inside --cfg.',
             );
           }
           // B4 / F65a (2026-05-30) — --event-arg-var is shortcut-only;
