@@ -15,6 +15,7 @@ import {
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { durationToMilliseconds, isDurationUnit } from '../schemas/nodes/duration.js';
+import { NopNode } from '../schemas/nodes/nop.js';
 import { nodeSchemaForType } from '../schemas/nodes/registry.js';
 import { isValidVariableIdentifier } from '../schemas/variable-identifier.js';
 import { isValidVariableScopeName } from '../schemas/variable.js';
@@ -202,7 +203,7 @@ export async function exportRuleFromView(
       typeof n.type === 'string' &&
       nodeSchemaForType(n.type) !== undefined
     ) {
-      const dropped = unknownCfgKeys(n.cfg);
+      const dropped = unknownCfgKeys(n.cfg, n.type);
       if (dropped.length > 0) {
         const msg = `node ${n.id} (${n.type}) carries cfg keys the exporter drops on round-trip: ${dropped.join(', ')}`;
         if (strictRoundtrip) {
@@ -431,6 +432,8 @@ async function renderNode(
     case 'onLoad':
     case 'condition':
       return simpleNode(n, n.type);
+    case 'nop':
+      return renderNop(n);
     case 'logicAnd':
     case 'logicOr':
     case 'signalOr':
@@ -971,6 +974,36 @@ function simpleNode(
   };
 }
 
+function renderNop(n: unknown): ExportedCommand {
+  const parsed = NopNode.safeParse(n);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    const path = first?.path.length ? first.path.join('.') : '<root>';
+    const nodeId =
+      n !== null && typeof n === 'object' && typeof (n as { id?: unknown }).id === 'string'
+        ? (n as { id: string }).id
+        : '<unknown>';
+    throw new ConfigError(
+      `cannot export nop node ${nodeId}: strict schema failed at ${path}: ${first?.message ?? 'invalid nop node'}`,
+      { nodeId, path },
+    );
+  }
+  const node = parsed.data;
+  return {
+    kind: 'node-add',
+    nodeId: node.id,
+    type: 'nop',
+    flags: [
+      { name: '--id', value: node.id },
+      { name: '--type', value: 'nop' },
+      ...cfgFlagsFromCfg(node.cfg, false, false),
+      { name: '--delta', value: JSON.stringify(node.cfg.contents), needsQuoting: true },
+      { name: '--background', value: node.cfg.background, needsQuoting: true },
+    ],
+    comment: 'nop canvas note (lossless Quill Delta)',
+  };
+}
+
 function logicGate(
   n: { id: string; cfg?: Record<string, unknown>; inputs?: Record<string, unknown> },
   type: string,
@@ -1269,9 +1302,18 @@ const KNOWN_CFG_KEYS = new Set([
   'simplified', // every modeled executable node — UI compact-card state
 ]);
 
-function unknownCfgKeys(cfg: Record<string, unknown>): string[] {
+const TYPE_SPECIFIC_CFG_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
+  nop: new Set(['contents', 'background']),
+};
+
+function unknownCfgKeys(cfg: Record<string, unknown>, type: string): string[] {
+  const typeSpecific = TYPE_SPECIFIC_CFG_KEYS[type];
   return Object.keys(cfg)
-    .filter((k) => !KNOWN_CFG_KEYS.has(k))
+    .filter(
+      (k) =>
+        (!KNOWN_CFG_KEYS.has(k) || (type === 'nop' && k === 'simplified')) &&
+        typeSpecific?.has(k) !== true,
+    )
     .sort();
 }
 
@@ -1284,6 +1326,7 @@ function isRecord(x: unknown): x is Record<string, unknown> {
 function cfgFlagsFromCfg(
   cfg: Record<string, unknown> | undefined,
   includeExprHeight = false,
+  includeSimplified = true,
 ): ExportFlag[] {
   if (!cfg) return [];
   const flags: ExportFlag[] = [];
@@ -1306,7 +1349,7 @@ function cfgFlagsFromCfg(
       flags.push({ name: '--pos', value });
     }
   }
-  if (typeof cfg.simplified === 'boolean') {
+  if (includeSimplified && typeof cfg.simplified === 'boolean') {
     flags.push({ name: '--simplified', value: String(cfg.simplified) });
   }
   return flags;

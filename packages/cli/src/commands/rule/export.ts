@@ -97,13 +97,13 @@ Limitations:
     to reverse siid+piid into property/action/event names).
   - All modeled flow / logic / timing / variable node types (including
     eventSequence, register, modeSwitch, signalOr, logicAnd/Or/Not, condition,
-    counter, onlyNTimes, loop, delay, statusLast) DO have c-shortcut
-    equivalents and round-trip as \`rule node add\` commands. Genuinely
-    unknown future node types are retained as complete opaque
-    \`rule node add --cfg '<JSON>'\` fallbacks, with their edges restored after
-    every endpoint exists. Same-id replay is lossless; \`--target-id\` cloning
-    is rejected for opaque nodes because their unknown payload may contain
-    rule-local references that cannot be remapped safely.`,
+    counter, onlyNTimes, loop, delay, statusLast), plus the non-executable
+    \`nop\` Quill note, DO have c-shortcut equivalents and round-trip as
+    \`rule node add\` commands. Genuinely unknown future node types are retained
+    as complete opaque \`rule node add --cfg '<JSON>'\` fallbacks, with their
+    edges restored after every endpoint exists. Same-id replay is lossless;
+    \`--target-id\` cloning is rejected for opaque nodes because their unknown
+    payload may contain rule-local references that cannot be remapped safely.`,
     )
     .action(
       wrap('rule.export', async (id: string, opts: ExportOpts) => {

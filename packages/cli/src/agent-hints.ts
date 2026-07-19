@@ -191,6 +191,13 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
   },
   {
     command: 'rule.node.add',
+    match: (_r, opts) => has(opts, 'type') && opts.type === 'nop',
+    cmd: (r) => `xgg rule node add --rule-id ${readRuleId(r)} --type <next-card>`,
+    why: 'nop is a canvas-only note with no connectors or runtime behavior; keep authoring the executable graph without wiring the note',
+    lifecycle: 'drafting → drafting',
+  },
+  {
+    command: 'rule.node.add',
     match: (_r, opts) =>
       has(opts, 'type') &&
       ACTION_TYPES.has(String(opts.type)) &&
@@ -241,7 +248,7 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
   {
     command: 'rule.layout',
     cmd: (r) => `xgg rule validate --rule-id ${readRuleId(r)}`,
-    why: 'layout only changes cosmetic pos.x/y; `rule validate` runs the same per-card schema + variable-existence + scope-whitelist pre-flight that `rule set` / `rule enable` use, and must pass before enable',
+    why: 'layout only changes executable-card pos.x/y and preserves free-form nop note positions; `rule validate` runs the same per-card schema + variable-existence + scope-whitelist pre-flight that `rule set` / `rule enable` use, and must pass before enable',
     lifecycle: 'laid-out → validated',
   },
 

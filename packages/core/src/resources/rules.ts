@@ -13,7 +13,7 @@ import {
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { type DurationRange, parseDurationLiteral } from '../schemas/nodes/duration.js';
-import { NodeUnion } from '../schemas/nodes/index.js';
+import { NodeUnion, NopContents, type NopDeltaOperation } from '../schemas/nodes/index.js';
 import {
   GraphSetRequest,
   type Node,
@@ -652,6 +652,7 @@ export async function deleteGraph(id: string, deps: ResourceDeps): Promise<void>
 // fields relevant to each branch.
 export type NonDeviceNodeType =
   | 'onLoad'
+  | 'nop'
   | 'condition'
   | 'logicAnd'
   | 'logicOr'
@@ -748,6 +749,11 @@ export interface AddNodeShortcut {
   // now pass `preload: true` explicitly.
   preload?: boolean;
   // ---- non-device-side fields (M10 F17) ----
+  // nop rich-text canvas note. `noteText` is normalized to a Quill document
+  // line; `noteDelta` is the lossless cfg.contents operations path.
+  noteText?: string;
+  noteDelta?: NopDeltaOperation[];
+  noteBackground?: string;
   // logicAnd / logicOr: number of inputs (default 2 → input0..inputN-1).
   inputs?: number;
   // Duration-card display value. delay/loop retain the gateway-compatible
@@ -801,6 +807,7 @@ export interface AddNodeShortcut {
 // CLI-typed helper: which shortcut types skip device/spec fetch
 const NON_DEVICE_SHORTCUT_TYPES = new Set<string>([
   'onLoad',
+  'nop',
   'condition',
   'logicAnd',
   'logicOr',
@@ -876,7 +883,11 @@ function assertShortcutPositionUsage(shortcut: AddNodeShortcut): void {
 }
 
 function assertShortcutSimplified(shortcut: AddNodeShortcut): void {
-  if (shortcut.simplified === undefined || typeof shortcut.simplified === 'boolean') return;
+  if (shortcut.simplified === undefined) return;
+  if (shortcut.type === 'nop') {
+    throw new ConfigError('shortcut simplified applies to executable cards, not nop');
+  }
+  if (typeof shortcut.simplified === 'boolean') return;
   throw new ConfigError('shortcut simplified must be a boolean', {
     simplified: shortcut.simplified,
   });
@@ -902,6 +913,86 @@ function assertShortcutPreloadUsage(shortcut: AddNodeShortcut): void {
   );
 }
 
+function assertNopShortcutUsage(shortcut: AddNodeShortcut): void {
+  const hasNopFlag =
+    shortcut.noteText !== undefined ||
+    shortcut.noteDelta !== undefined ||
+    shortcut.noteBackground !== undefined;
+  if (shortcut.type !== 'nop') {
+    if (hasNopFlag) {
+      throw new ConfigError(
+        `note text/delta/background only apply to the nop canvas-note shortcut (got type ${shortcut.type})`,
+        { type: shortcut.type },
+      );
+    }
+    return;
+  }
+  if (shortcut.noteText !== undefined && shortcut.noteDelta !== undefined) {
+    throw new ConfigError('nop shortcut --text and --delta are mutually exclusive');
+  }
+  if (shortcut.noteBackground !== undefined && shortcut.noteBackground.length === 0) {
+    throw new ConfigError('nop shortcut --background must not be empty');
+  }
+  const unsupported = Object.entries({
+    deviceDid: shortcut.deviceDid,
+    deviceSiid: shortcut.deviceSiid,
+    deviceProperty: shortcut.deviceProperty,
+    deviceAction: shortcut.deviceAction,
+    deviceEvent: shortcut.deviceEvent,
+    deviceEventArgs: shortcut.deviceEventArgs,
+    deviceEventArgVars: shortcut.deviceEventArgVars,
+    threshold: shortcut.threshold,
+    propertyValue: shortcut.propertyValue,
+    op: shortcut.op,
+    params: shortcut.params,
+    value: shortcut.value,
+    forceOutOfRange: shortcut.forceOutOfRange,
+    inputs: shortcut.inputs,
+    duration: shortcut.duration,
+    interval: shortcut.interval,
+    start: shortcut.start,
+    end: shortcut.end,
+    mingTextShow: shortcut.mingTextShow,
+    weekdayOnly: shortcut.weekdayOnly,
+    holidayOnly: shortcut.holidayOnly,
+    days: shortcut.days,
+    varScope: shortcut.varScope,
+    varId: shortcut.varId,
+    varType: shortcut.varType,
+    varValue: shortcut.varValue,
+    threshold2: shortcut.threshold2,
+    allowUnknownScope: shortcut.allowUnknownScope,
+    expr: shortcut.expr,
+    defaultExprScope: shortcut.defaultExprScope,
+    outputsCount: shortcut.outputsCount,
+    at: shortcut.at,
+    sunrise: shortcut.sunrise,
+    sunset: shortcut.sunset,
+    offsetMin: shortcut.offsetMin,
+    latitude: shortcut.latitude,
+    longitude: shortcut.longitude,
+  })
+    .filter(([, value]) => value !== undefined)
+    .map(([field]) => field);
+  if (unsupported.length > 0) {
+    throw new ConfigError(
+      `nop shortcut does not accept executable-card option(s): ${unsupported.join(', ')}`,
+      { fields: unsupported },
+    );
+  }
+  if (shortcut.noteDelta !== undefined) {
+    const parsed = NopContents.safeParse(shortcut.noteDelta);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      const where = first?.path.length ? first.path.join('.') : '<root>';
+      throw new ConfigError(
+        `nop shortcut --delta is not a Quill document at ${where}: ${first?.message ?? 'invalid operation'}`,
+        { field: where },
+      );
+    }
+  }
+}
+
 function preflightAddNode(input: AddNodeInput): void {
   let localNode: unknown;
   if (input.shortcut !== undefined) {
@@ -909,6 +1000,7 @@ function preflightAddNode(input: AddNodeInput): void {
     assertShortcutPositionUsage(input.shortcut);
     assertShortcutSimplified(input.shortcut);
     assertShortcutPreloadUsage(input.shortcut);
+    assertNopShortcutUsage(input.shortcut);
     if (
       input.shortcut.propertyValue !== undefined &&
       !(
@@ -1029,6 +1121,7 @@ async function addNodeWithinWorkflow(
     assertShortcutPositionUsage(input.shortcut);
     assertShortcutSimplified(input.shortcut);
     assertShortcutPreloadUsage(input.shortcut);
+    assertNopShortcutUsage(input.shortcut);
     if (
       input.shortcut.propertyValue !== undefined &&
       !(
@@ -2551,6 +2644,36 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
         props: {},
       };
 
+    case 'nop': {
+      // Quill documents conventionally end in a newline because line-level
+      // formats (header/list/alignment) attach to that character. Preserve
+      // raw Delta operations byte-for-byte; normalize only the convenience
+      // plain-text path. Omitting both produces the official blank default.
+      const contents =
+        shortcut.noteDelta ??
+        (shortcut.noteText === undefined
+          ? []
+          : [
+              {
+                insert: shortcut.noteText.endsWith('\n')
+                  ? shortcut.noteText
+                  : `${shortcut.noteText}\n`,
+              },
+            ]);
+      return {
+        id,
+        type: 'nop',
+        cfg: {
+          ...baseCfg('nop'),
+          contents,
+          background: shortcut.noteBackground ?? '#80CAFF',
+        },
+        inputs: {},
+        outputs: { output: [] },
+        props: {},
+      };
+    }
+
     case 'condition':
       // condition routes a trigger to `met` or `unmet` based on the
       // boolean-valued condition pin. Inputs/outputs are fixed.
@@ -3631,7 +3754,8 @@ export interface RelayoutGraphResult {
   moved: number;
 }
 
-// Flow-aware relayout (`xgg rule layout`): re-position every card by its wiring.
+// Flow-aware relayout (`xgg rule layout`): re-position every executable card
+// by its wiring while retaining free-form nop canvas-note positions.
 // The per-node auto-layout (card-geometry) runs at add-time before edges exist,
 // so it can only flow by insertion order; run this ONCE after the graph is fully
 // wired to arrange cards by data flow — triggers left, each node right of its
@@ -3657,9 +3781,14 @@ async function relayoutGraphWithinWorkflow(
   for (const raw of current.nodes) {
     const node = raw as {
       id: string;
+      type?: unknown;
       cfg?: { pos?: Record<string, unknown> };
       outputs?: Record<string, unknown>;
     };
+    // A nop note has no connector semantics and its position conveys which
+    // region of the canvas it annotates. Treating it as an isolated component
+    // would move it into an unrelated band and destroy that spatial meaning.
+    if (node.type === 'nop') continue;
     const pos = node.cfg?.pos ?? {};
     layoutNodes.push({
       id: node.id,
