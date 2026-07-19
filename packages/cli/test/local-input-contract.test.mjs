@@ -213,6 +213,18 @@ test('property comparison flag misuse fails before Agent guards, snapshots, or I
   }
 });
 
+test('exprHeight position rejects unsupported card types before Agent guards or IPC', async (t) => {
+  const agent = await startFakeAgent(t);
+  const result = await runCli(
+    ['rule', 'node', 'add', '--rule-id', 'r', '--type', 'onLoad', '--pos', '1,2,200,120,30'],
+    agent,
+  );
+  const payload = assertSingleConfig(result);
+
+  assert.match(payload.error.message, /exprHeight is only valid for varSetNumber\/varSetString/);
+  assert.deepEqual(agent.frames, []);
+});
+
 test('every user JSON surface reports CONFIG without echoing malformed payloads or using IPC', async (t) => {
   const agent = await startFakeAgent(t);
   const secret = 'issue31-sensitive-payload';
