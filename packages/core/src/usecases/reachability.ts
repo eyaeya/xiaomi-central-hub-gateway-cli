@@ -2,9 +2,9 @@
 // reachability gate for `rule enable` and `rule lint --strict`.
 //
 // GitHub #64 refines that gate from node-level BFS to an endpoint-aware,
-// monotone fixed point. Runtime-driving events and supporting state are
-// deliberately separate facts: timeRange can satisfy condition.condition,
-// for example, but cannot bootstrap condition.trigger or an action by itself.
+// monotone fixed point. Runtime-driving events and supporting state remain
+// separate facts. GitHub #97 records that timeRange supplies both: its output
+// is independently available as state and emits an event on window entry.
 
 import { NodeUnion } from '../schemas/nodes/index.js';
 import { isModeledNodeType, targetInputPinStatus } from './edge-integrity.js';

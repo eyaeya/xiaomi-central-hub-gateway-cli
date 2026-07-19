@@ -70,6 +70,9 @@ const PIN_TABLE: Record<string, NodePinSemantics> = {
   timeRange: {
     inputs: [],
     outputs: [{ name: 'output', color: 'event|state' }],
+    // Live gateway evidence: entering the configured window emits an event.
+    // The same endpoint independently exposes the current in-window state.
+    independentEventSource: true,
     independentStateSource: true,
   },
   delay: {
@@ -216,8 +219,9 @@ export function modeledNodePinNames(
 
 /**
  * Cards that can bootstrap a directed runtime path without another graph node
- * first driving an input. In particular, timeRange is state, loop needs start,
- * and register needs setTrue/setFalse, so none of those are independent sources.
+ * first driving an input. timeRange is both an entry-event source and an
+ * independent state source; loop still needs start and register still needs
+ * setTrue/setFalse.
  */
 export const INDEPENDENT_EVENT_SOURCE_TYPES: readonly string[] = Object.freeze(
   Object.entries(PIN_TABLE)
