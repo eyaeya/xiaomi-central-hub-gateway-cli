@@ -713,6 +713,67 @@ test('complete property/event operands survive strict JSON and rendered-shell re
   assert.deepEqual(shellReplay.state.nodes, source.state.nodes);
 });
 
+test('event filter export requires membership in the exact selected event arguments', async () => {
+  const source = createStatefulGateway();
+  for (const shortcut of [
+    {
+      type: 'deviceInput',
+      id: 'valid-scalar',
+      deviceDid: did,
+      deviceEvent: 'mixed-event',
+      deviceEventArgs: ['5>=2'],
+    },
+    {
+      type: 'deviceInput',
+      id: 'valid-include',
+      deviceDid: did,
+      deviceEvent: 'enum-event',
+      deviceEventIncludes: ['2=1,2'],
+    },
+    {
+      type: 'deviceInput',
+      id: 'valid-between',
+      deviceDid: did,
+      deviceEvent: 'continuous-event',
+      deviceEventBetweens: ['3=1.5,2.5'],
+    },
+  ]) {
+    await addShortcut(source, shortcut);
+  }
+
+  const validView = { id: 'rule-1', cfg: source.state.summary, nodes: source.state.nodes };
+  const validExport = await exportRuleFromView(validView, source.deps, undefined, true);
+  assert.deepEqual(validExport.warnings, []);
+  const validReplay = createStatefulGateway();
+  for (const command of validExport.commands.filter((entry) => entry.kind === 'node-add')) {
+    await addShortcut(validReplay, shortcutFromExport(command));
+  }
+  assert.deepEqual(validReplay.state.nodes, source.state.nodes);
+
+  const invalid = structuredClone(source.state.nodes[2]);
+  invalid.id = 'filter-outside-event';
+  invalid.props.arguments = [{ piid: 2, dtype: 'int', operator: 'between', v1: 1, v2: 2 }];
+  const invalidView = { id: 'rule-1', cfg: source.state.summary, nodes: [invalid] };
+  const warning =
+    'deviceInput node filter-outside-event: event filter piid=2 is not declared by selected event siid=2 eiid=11 (event.arguments=[3]); typed replay will reject';
+
+  const permissive = await exportRuleFromView(invalidView, source.deps);
+  assert.deepEqual(permissive.warnings, [warning]);
+  const command = permissive.commands.find((entry) => entry.kind === 'node-add');
+  assert.ok(command);
+  assert.deepEqual(flagValues(command, '--event-filter-between'), ['2=1,2']);
+
+  const replay = createStatefulGateway();
+  await assert.rejects(
+    addShortcut(replay, shortcutFromExport(command)),
+    /piid=2 not declared by event \(event.arguments=\[3\]\)/,
+  );
+  await assert.rejects(
+    exportRuleFromView(invalidView, source.deps, undefined, true),
+    /strict round-trip cannot preserve node filter-outside-event.*event filter piid=2 is not declared by selected event siid=2 eiid=11/,
+  );
+});
+
 test('int operands preserve MAX_SAFE_INTEGER and reject every unsafe numeric path', async () => {
   const max = Number.MAX_SAFE_INTEGER;
   const source = createStatefulGateway();

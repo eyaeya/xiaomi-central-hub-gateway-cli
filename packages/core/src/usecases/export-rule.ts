@@ -744,8 +744,8 @@ async function renderDeviceInput(
 
   if (isEvent) {
     const spec = await ensureSpec(did, deps, specCache);
-    const eventName = findEventName(spec, Number(props.siid), Number(props.eiid));
-    if (eventName === null) {
+    const eventDetails = findEventDetails(spec, Number(props.siid), Number(props.eiid));
+    if (eventDetails === null) {
       warnings.push(
         `deviceInput node ${n.id}: event siid=${props.siid} eiid=${props.eiid} not found in device spec — exporting raw cfg fallback may be needed`,
       );
@@ -754,7 +754,7 @@ async function renderDeviceInput(
         value: `<UNKNOWN_EVENT_siid${props.siid}_eiid${props.eiid}>`,
       });
     } else {
-      flags.push({ name: '--device-event', value: eventName });
+      flags.push({ name: '--device-event', value: eventDetails.eventName });
     }
     // Round-trip per-arg event filters via --event-filter. Pre-fix these were
     // silently dropped, so the replayed rule fired on ANY value of the event
@@ -772,6 +772,11 @@ async function renderDeviceInput(
           seenPiids.add(arg.piid);
         }
         if (!isRecord(arg) || typeof arg.piid !== 'number' || !('operator' in arg)) continue;
+        if (eventDetails !== null && !eventDetails.argumentPiids.includes(arg.piid)) {
+          warnings.push(
+            `deviceInput node ${n.id}: event filter piid=${arg.piid} is not declared by selected event siid=${String(props.siid)} eiid=${String(props.eiid)} (event.arguments=[${eventDetails.argumentPiids.join(', ')}]); typed replay will reject`,
+          );
+        }
         const argProperty = findPropertyDetails(spec, Number(props.siid), arg.piid)?.property;
         if (argProperty === undefined) {
           warnings.push(
@@ -1667,17 +1672,26 @@ function findActionName(
   return null;
 }
 
-function findEventName(spec: DeviceSpec, siid: number, eiid: number): string | null {
+function findEventDetails(
+  spec: DeviceSpec,
+  siid: number,
+  eiid: number,
+): { eventName: string; argumentPiids: number[] } | null {
   for (const service of spec.services) {
     if (service.iid !== siid) continue;
     for (const event of service.events ?? []) {
       if (event.iid === eiid) {
         const segments = event.type.split(':');
-        return segments[3] ?? null;
+        const eventName = segments[3];
+        return eventName === undefined ? null : { eventName, argumentPiids: event.arguments ?? [] };
       }
     }
   }
   return null;
+}
+
+function findEventName(spec: DeviceSpec, siid: number, eiid: number): string | null {
+  return findEventDetails(spec, siid, eiid)?.eventName ?? null;
 }
 
 function isDeviceOutputVariableRef(
