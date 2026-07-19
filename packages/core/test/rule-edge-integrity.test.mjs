@@ -29,6 +29,21 @@ function delay(id, targets = []) {
   };
 }
 
+function loop(id, targets = []) {
+  return {
+    id,
+    type: 'loop',
+    cfg: { pos: position(510, 160), name: 'loop', version: 1, unit: 's', value: 1 },
+    inputs: { start: null, stop: null },
+    outputs: { output: targets },
+    props: { interval: 1_000 },
+  };
+}
+
+function selfStoppingLoopNodes() {
+  return [onLoad('start', ['repeat.start']), loop('repeat', ['repeat.stop'])];
+}
+
 function condition(id, met = [], unmet = []) {
   return {
     id,
@@ -264,18 +279,25 @@ test('fan-in remains a generic invariant for an unknown target type', () => {
   );
 });
 
-test('self-loops are errors in strict mode and warnings in advisory mode', () => {
-  const node = delay('loop', ['loop.input']);
+test('finite self-loop remains a warning in strict and advisory lint', () => {
+  const nodes = selfStoppingLoopNodes();
   const strictIssue = lintGraph({
-    graph: { id: 'rule-1', nodes: [node] },
+    graph: { id: 'rule-1', nodes },
     strict: true,
   }).find((issue) => issue.message.includes('self-loop'));
   const advisoryIssue = lintGraph({
-    graph: { id: 'rule-1', nodes: [node] },
+    graph: { id: 'rule-1', nodes },
   }).find((issue) => issue.message.includes('self-loop'));
 
-  assert.equal(strictIssue?.severity, 'error');
+  assert.equal(strictIssue?.severity, 'warn');
   assert.equal(advisoryIssue?.severity, 'warn');
+  assert.match(strictIssue?.message ?? '', /verify feedback terminates/);
+  assert.deepEqual(
+    lintGraph({ graph: { id: 'rule-1', nodes }, strict: true }).filter(
+      (issue) => issue.severity === 'error',
+    ),
+    [],
+  );
 });
 
 test('reachability ignores an edge whose modeled target pin does not exist', () => {
@@ -309,24 +331,83 @@ test('setGraph rejects invalid edge integrity before any RPC', async () => {
   assert.equal(calls.length, 0);
 });
 
-test('enableRule rejects invalid edge integrity before any write RPC', async () => {
+test('setGraph permits finite loop.output -> loop.stop feedback', async () => {
   const id = 'rule-1';
-  const nodes = [delay('loop', ['loop.input'])];
+  const nodes = selfStoppingLoopNodes();
   const { deps, calls } = fakeDeps((method) => {
-    if (method === '/api/getGraph') return { id, nodes };
+    if (method === '/api/setGraph') return null;
     throw new Error(`unexpected RPC: ${method}`);
   });
 
-  await assert.rejects(
-    enableRule(id, deps),
-    (error) => error?.code === 'CONFIG' && error.message.includes('self-loop'),
-  );
+  await setGraph({ id, cfg: ruleSummary(id), nodes }, deps);
+
   assert.deepEqual(
     calls.map((call) => call.method),
-    ['/api/getGraph'],
+    ['/api/setGraph'],
   );
+  assert.deepEqual(calls[0].params.nodes, nodes);
+});
+
+test('enableRule permits finite loop.output -> loop.stop feedback', async () => {
+  const id = 'rule-1';
+  const nodes = selfStoppingLoopNodes();
+  const { deps, calls } = fakeDeps((method) => {
+    if (method === '/api/getGraph') return { id, nodes };
+    if (method === '/api/getVarList') return {};
+    if (method === '/api/getGraphList') return [ruleSummary(id)];
+    if (method === '/api/changeGraphConfig') return null;
+    throw new Error(`unexpected RPC: ${method}`);
+  });
+
+  assert.deepEqual(await enableRule(id, deps), { id, prevEnable: false, enable: true });
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    [
+      '/api/getGraph',
+      '/api/getVarList',
+      '/api/getVarList',
+      '/api/getGraphList',
+      '/api/changeGraphConfig',
+    ],
+  );
+  assert.equal(calls.at(-1).options?.kind, 'write');
+  assert.equal(calls.at(-1).params.enable, true);
+});
+
+test('addEdge permits finite loop.output -> loop.stop feedback', async () => {
+  const id = 'rule-1';
+  const nodes = [onLoad('start', ['repeat.start']), loop('repeat')];
+  const { deps, calls } = fakeDeps((method) => {
+    if (method === '/api/getGraphList') return [ruleSummary(id)];
+    if (method === '/api/getGraph') return { id, nodes };
+    if (method === '/api/setGraph') return null;
+    throw new Error(`unexpected RPC: ${method}`);
+  });
+
+  const result = await addEdge(
+    {
+      ruleId: id,
+      from: { nodeId: 'repeat', pin: 'output' },
+      to: { nodeId: 'repeat', pin: 'stop' },
+      varCheck: false,
+    },
+    deps,
+  );
+
+  assert.deepEqual(result, { edgeString: 'repeat.stop' });
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ['/api/getGraphList', '/api/getGraph', '/api/setGraph'],
+  );
+  const writtenLoop = calls.at(-1).params.nodes.find((node) => node.id === 'repeat');
+  assert.deepEqual(writtenLoop.outputs.output, ['repeat.stop']);
+  const strictIssues = lintGraph({
+    graph: { id, nodes: calls.at(-1).params.nodes },
+    strict: true,
+  });
+  assert.equal(strictIssues.find((issue) => issue.message.includes('self-loop'))?.severity, 'warn');
   assert.equal(
-    calls.some((call) => call.options?.kind === 'write'),
+    strictIssues.some((issue) => issue.severity === 'error'),
     false,
   );
 });

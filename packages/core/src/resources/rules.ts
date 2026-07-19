@@ -174,9 +174,9 @@ async function enableRuleWithinWorkflow(
 ): Promise<RuleEnableResult> {
   if (opts.validate !== false) {
     const body = await getRule(id, deps);
-    // F66a (2026-05-31) — lintGraph strict gate. Same canvas-predicate
-    // rejection setGraph runs; on enable it guards a live rule against being
-    // activated with edges the UI canvas would have refused at draw time.
+    // F66a (2026-05-31) — lintGraph strict gate. On enable it blocks invalid
+    // topology while retaining advisory warnings such as a same-node feedback
+    // edge (GitHub #96), which the canvas permits and may intentionally stop.
     const lintIssues = lintGraph({ graph: { id, nodes: body.nodes }, strict: true });
     const firstLintError = lintIssues.find((i) => i.severity === 'error');
     if (firstLintError !== undefined) {
@@ -329,13 +329,12 @@ async function setGraphWithinWorkflow(
   if (opts.validate !== false) {
     // F66a (2026-05-31) — lintGraph gate on the write funnel. Bundle
     // ai-config-v5.28b650.js connectTool.connect (the canvas wire-drag
-    // predicate) rejects 5 edge classes (dangling, cross-color, self-loop,
-    // fan-in>1, duplicate) before they ever reach setGraph. CLI bodies
-    // (`rule set --stdin`, `rule import`, `rule node add` chains) skip the
-    // canvas and let the gateway accept silently-broken edges. Promote
-    // lintGraph's error issues to a ConfigError here so every CLI write path
-    // inherits the canvas-equivalent rejection without each command needing
-    // to wire lintGraph individually.
+    // predicate) rejects dangling targets, cross-color edges, fan-in>1, and
+    // duplicates before they ever reach setGraph. Same-node feedback is canvas-
+    // legal and remains a warning (GitHub #96). CLI bodies (`rule set --stdin`,
+    // `rule import`, `rule node add` chains) skip the canvas and may otherwise
+    // persist broken edges. Promote only lintGraph's error issues to a
+    // ConfigError so every CLI write path inherits the blocking predicates.
     // `skipLint` is the internal-mutator opt-out (see SetGraphOptions).
     if (opts.skipLint !== true) {
       const lintIssues = lintGraph({ graph: params, strict: true });
@@ -3135,18 +3134,6 @@ async function addEdgeWithinWorkflow(
       nodeId: input.to.nodeId,
     });
   }
-  // F66a (2026-05-31) — self-loop guard. Bundle connectTool.connect refuses a
-  // wire whose source and target node are the same (the canvas reads it as a
-  // misdrag and reverts). The gateway accepts the persisted edge silently and
-  // the runtime engine queues a tight feedback loop — never a user intent.
-  if (input.from.nodeId === input.to.nodeId) {
-    throw new ConfigError(`self-loop: source and target node are the same (${input.from.nodeId})`, {
-      ruleId: input.ruleId,
-      nodeId: input.from.nodeId,
-      fromPin: input.from.pin,
-      toPin: input.to.pin,
-    });
-  }
   const tgtInputKeys = inputPinNames(tgtNode);
   if (targetInputPinStatus(tgtNode, input.to.pin) !== 'valid') {
     const tgtType = String(tgtNode.type ?? 'unknown');
@@ -3264,9 +3251,10 @@ async function addEdgeWithinWorkflow(
 
   const updatedNodes = [...current.nodes];
   updatedNodes[srcIdx] = validated;
-  // F66a (2026-05-31) — skipLint: the new edge was already vetted inline
-  // (self-loop / cross-color / fan-in / target-pin existence / duplicate);
-  // pre-existing edges on other nodes shouldn't gate this write.
+  // F66a / GitHub #96 — skipLint: the new edge was already vetted inline for
+  // blocking predicates (cross-color / fan-in / target-pin existence /
+  // duplicate). Same-node feedback is allowed and remains visible on the next
+  // advisory or strict lint. Pre-existing edges shouldn't gate this write.
   // F66f (2026-05-31) — wire listAvailVars (default-on). New edge can route
   // a ghost-var trigger into a sink the user expects to fire.
   await setGraph({ id: current.id, nodes: updatedNodes, cfg: refreshTimestamp(summary) }, deps, {

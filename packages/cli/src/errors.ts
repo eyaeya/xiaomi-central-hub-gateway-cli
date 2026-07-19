@@ -258,12 +258,6 @@ const HINTS: HintRule[] = [
   {
     code: 'CONFIG',
     command: 'rule.edge.add',
-    messageMatches: 'self-loop:',
-    hint: 'A node cannot connect to itself. Route through a distinct node or remove the feedback edge; inspect the graph with `xgg rule view <id>`.',
-  },
-  {
-    code: 'CONFIG',
-    command: 'rule.edge.add',
     messageMatches: 'target pin "',
     hint: 'Use one of the target node inputs listed in error.details.availablePins (and error.details.suggestion when present). Action cards commonly use `trigger` rather than `input`.',
   },
