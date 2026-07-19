@@ -46,6 +46,7 @@ export type {
 export {
   addEdge,
   addNode,
+  assertExplicitBetweenBounds,
   createRule,
   deleteGraph,
   disableRule,

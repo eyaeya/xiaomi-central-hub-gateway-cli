@@ -77,6 +77,8 @@ xgg rule delete <rule-id>
 
 CLI 建模 25 种可执行卡片，另支持无连接器的 `nop` 画布备注。设备比较支持 string `--property-value`、整数 `--property-include`，以及事件参数的 repeatable `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--preload|--no-preload` 与 `--simplified true|false` 会被导出/导入保留。动作 `--params` 保留 MIoT 原生 number / boolean / string，并用 `{"param":{"$var":"global.id"}}` 引用动态变量。
 
+数值 `deviceInput` / `deviceGet` 与 number 型 `varChange` / `varGet` 使用 `--op between` 时，`--threshold <lower>` 和 `--threshold2 <upper>` 必须同时显式给出；省略任一边界会在 session、spec、快照与写图之前失败。显式下界 `0` 合法，非-between 标量比较继续保留历史默认 `0`。
+
 `deviceInput` / `deviceGet --force-out-of-range` 只跳过数值 range/step 检查，不绕过 value-list、finite/safe-integer、operator 或 operand shape 校验。
 
 直接 `rule export --format shell` 与从 JSON import 渲染的脚本都要先落盘审阅；JSON import 必须用 `--from-file`：

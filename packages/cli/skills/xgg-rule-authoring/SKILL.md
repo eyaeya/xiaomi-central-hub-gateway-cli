@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: 2026-07-19-capability-surface-v1 -->
+<!-- xgg-skill-content-build: 2026-07-20-between-explicit-bounds-v1 -->
 
 # xgg 自动化编写 Skill
 
@@ -228,6 +228,7 @@ xgg rule import --from-file rule-export.json --target-id <target-id> \
 - 同节点反馈边合法且只报 warning；保留 warning 并验证终止。
 - condition.condition 可不连，默认 false，只有 unmet 可达。
 - timeRange 同时提供窗口状态和 start 进入事件；没有观察到等价 end 事件。
+- 数值 `deviceInput` / `deviceGet` 与 number 型 `varChange` / `varGet` 使用 `--op between` 时，必须同时显式传 `--threshold <lower>` 和 `--threshold2 <upper>`；省略任一边界会在任何 session/spec/快照/写图前失败，不会静默补 `0`。显式下界 `0` 合法；非-between 标量比较仍保留历史默认 `0`。
 - 已建模编辑优先用 simplified、preload、typed include/between 与原生 action 参数 shortcut；要保留 shortcut 不认识的额外字段时，从 `rule view` 做完整 JSON 往返，避免手工构造残缺 raw payload。
 
 ## 五、变量模型

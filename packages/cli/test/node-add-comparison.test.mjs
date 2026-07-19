@@ -18,6 +18,9 @@ test('node-add help exposes a raw string-property comparison flag', () => {
   assert.match(help, /--property-include <N,N,...>/);
   assert.match(help, /--event-filter-include <piid=values>/);
   assert.match(help, /--event-filter-between <piid=lower,upper>/);
+  assert.match(help, /`between` requires explicit --threshold \(v1\) \+ --threshold2 \(v2\)/);
+  assert.match(help, /required together with explicit --threshold/);
+  assert.doesNotMatch(help, /optional second threshold/);
 });
 
 test('complete comparison flags parse without scalar/list ambiguity', () => {
