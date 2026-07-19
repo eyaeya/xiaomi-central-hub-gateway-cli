@@ -302,7 +302,7 @@ test('all device shortcut branches export one SIID and replay duplicate MIoT nam
   ]);
   assert.equal(props['output-action'].aiid, 10);
   assert.deepEqual(props['output-action'].ins, [
-    { piid: 1, value: '9' },
+    { piid: 1, value: 9 },
     { piid: 2, value: 'payload' },
   ]);
   assert.equal(props['output-property'].piid, 1);

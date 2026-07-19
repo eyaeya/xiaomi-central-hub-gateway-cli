@@ -1539,6 +1539,156 @@ function coercePropertyValue(raw: string, format: string): number | string | boo
   return n;
 }
 
+type DeviceOutputActionLiteral = number | string | boolean;
+
+const ACTION_INTEGER_LITERAL = /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/;
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const MIN_SAFE_INTEGER_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
+
+function actionInputNumber(raw: unknown, context: string): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string') {
+    const parsed = parseFiniteDecimalLiteral(raw);
+    if (parsed !== null) return parsed;
+  }
+  throw new ConfigError(`${context} requires a finite numeric value`, {
+    value: raw,
+  });
+}
+
+// Parse the decimal text before converting it to Number. Calling Number()
+// first is insufficient: "9007199254740993" becomes 9007199254740992, and a
+// near-boundary fractional string can round to an apparently integral Number.
+function exactSafeIntegerFromString(raw: string): number | null {
+  const match = ACTION_INTEGER_LITERAL.exec(raw.trim());
+  if (match === null) return null;
+
+  const whole = match[2] ?? '0';
+  const fraction = match[3] ?? match[4] ?? '';
+  let digits = `${whole}${fraction}`;
+  if (/^0+$/.test(digits)) return 0;
+
+  const exponent = BigInt(match[5] ?? '0');
+  const scale = BigInt(fraction.length) - exponent;
+  if (scale > 0n) {
+    if (scale > BigInt(digits.length)) return null;
+    const trailingDigits = Number(scale);
+    if (!digits.endsWith('0'.repeat(trailingDigits))) return null;
+    digits = digits.slice(0, digits.length - trailingDigits);
+  } else if (scale < 0n) {
+    const appendedZeros = -scale;
+    const significantLength = digits.replace(/^0+/, '').length;
+    if (appendedZeros > 16n || BigInt(significantLength) + appendedZeros > 16n) return null;
+    digits += '0'.repeat(Number(appendedZeros));
+  }
+
+  digits = digits.replace(/^0+/, '') || '0';
+  if (digits.length > 16) return null;
+  let exact = BigInt(digits);
+  if (match[1] === '-') exact = -exact;
+  if (exact < MIN_SAFE_INTEGER_BIGINT || exact > MAX_SAFE_INTEGER_BIGINT) return null;
+  return Number(exact);
+}
+
+function actionInputSafeInteger(raw: unknown, format: string, context: string): number {
+  if (typeof raw === 'number' && Number.isSafeInteger(raw)) return raw;
+  if (typeof raw === 'string') {
+    const parsed = exactSafeIntegerFromString(raw);
+    if (parsed !== null) return parsed;
+  }
+  throw new ConfigError(
+    `${context} requires an exact safe integer for format ${format} between ${Number.MIN_SAFE_INTEGER} and ${Number.MAX_SAFE_INTEGER}`,
+    { value: raw, format },
+  );
+}
+
+function isActionIntegerFormat(format: string): boolean {
+  return format !== 'string' && format !== 'bool' && format !== 'float' && format !== 'double';
+}
+
+function validateActionInputRange(value: number, property: MiotProperty, context: string): void {
+  const range = property['value-range'];
+  if (range === undefined) return;
+  const [min, max, step] = range;
+  if (
+    !Number.isFinite(min) ||
+    !Number.isFinite(max) ||
+    !Number.isFinite(step) ||
+    min > max ||
+    step <= 0
+  ) {
+    throw new ConfigError(`${context} has an invalid MIoT value-range`, {
+      valueRange: range,
+    });
+  }
+  if (value < min || value > max) {
+    throw new ConfigError(`${context} value ${value} is outside value-range [${min}, ${max}]`, {
+      value,
+      valueRange: range,
+    });
+  }
+  const stepsFromMin = (value - min) / step;
+  const stepError = Math.abs(stepsFromMin - Math.round(stepsFromMin));
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(stepsFromMin)) * 16;
+  if (stepError > tolerance) {
+    throw new ConfigError(
+      `${context} value ${value} does not align with value-range step ${step} from ${min}`,
+      { value, valueRange: range },
+    );
+  }
+}
+
+function coerceActionInputLiteral(
+  raw: unknown,
+  property: MiotProperty,
+  context: string,
+): DeviceOutputActionLiteral {
+  const valueList = property['value-list'];
+  if (valueList !== undefined && valueList.length > 0) {
+    const value = isActionIntegerFormat(property.format)
+      ? actionInputSafeInteger(raw, property.format, context)
+      : actionInputNumber(raw, context);
+    const allowed = valueList.map((entry) => entry.value);
+    if (!allowed.includes(value)) {
+      throw new ConfigError(
+        `${context} value ${value} is not in value-list [${allowed.join(', ')}]`,
+        {
+          value,
+          allowed,
+        },
+      );
+    }
+    validateActionInputRange(value, property, context);
+    return value;
+  }
+
+  if (property.format === 'string') {
+    if (typeof raw !== 'string') {
+      throw new ConfigError(`${context} requires a string value`, {
+        value: raw,
+        format: property.format,
+      });
+    }
+    return raw;
+  }
+
+  if (property.format === 'bool') {
+    if (typeof raw === 'boolean') return raw;
+    if (raw === 1 || raw === '1' || raw === 'true') return true;
+    if (raw === 0 || raw === '0' || raw === 'false') return false;
+    throw new ConfigError(`${context} requires true|false|0|1`, {
+      value: raw,
+      format: property.format,
+    });
+  }
+
+  const value = isActionIntegerFormat(property.format)
+    ? actionInputSafeInteger(raw, property.format, context)
+    : actionInputNumber(raw, context);
+  validateActionInputRange(value, property, context);
+  return value;
+}
+
 // F63c (2026-05-30) — formats a candidate list for the ambiguity ConfigError.
 // Each line carries `siid=<N>:"<service description>"` so the agent can paste
 // the right --device-siid back into the command.
@@ -1925,32 +2075,69 @@ function synthesizeNodeFromShortcut(
         shortcut.deviceSiid,
         deviceModel,
       );
-      // Build ins[] from action.in (property iids) + shortcut.params
+      // Build ins[] from action.in (property iids) + shortcut.params. Every
+      // action.in entry is required by the official editor; fail before write
+      // instead of silently emitting a partial action invocation. Resolve the
+      // backing property first so literal values retain their native MIoT type.
+      const actionInputs = action.in.map((piid) => {
+        const property = (service.properties ?? []).find((candidate) => candidate.iid === piid);
+        if (property === undefined) {
+          throw new ConfigError(
+            `action "${shortcut.deviceAction}" input piid=${piid} is missing from service siid=${service.iid} properties`,
+            { action: shortcut.deviceAction, siid: service.iid, piid },
+          );
+        }
+        const paramKey = property.type.split(':')[3] ?? `piid-${piid}`;
+        return { piid, property, paramKey };
+      });
+      const expectedKeys = actionInputs.map(({ paramKey }) => paramKey);
+      const suppliedParams = shortcut.params ?? {};
+      const missingKeys = expectedKeys.filter((key) => !Object.hasOwn(suppliedParams, key));
+      const expectedKeySet = new Set(expectedKeys);
+      const unknownKeys = Object.keys(suppliedParams).filter((key) => !expectedKeySet.has(key));
+      if (missingKeys.length > 0 || unknownKeys.length > 0) {
+        const problems = [
+          ...(missingKeys.length > 0
+            ? [`missing required parameter(s): ${missingKeys.join(', ')}`]
+            : []),
+          ...(unknownKeys.length > 0 ? [`unknown parameter(s): ${unknownKeys.join(', ')}`] : []),
+        ];
+        throw new ConfigError(
+          `action "${shortcut.deviceAction}" parameters invalid: ${problems.join('; ')}. Expected: ${expectedKeys.join(', ') || '(none)'}`,
+          {
+            action: shortcut.deviceAction,
+            missing: missingKeys,
+            unknown: unknownKeys,
+            expectedKeys,
+          },
+        );
+      }
+
       const ins: Array<
-        { piid: number; value: string } | ({ piid: number } & DeviceOutputVariableRef)
+        | { piid: number; value: DeviceOutputActionLiteral }
+        | ({ piid: number } & DeviceOutputVariableRef)
       > = [];
-      for (const piid of action.in) {
-        const prop = (service.properties ?? []).find((p) => p.iid === piid);
-        const paramKey = prop
-          ? (prop.type.split(':')[3] ?? `piid-${piid}`) // short name, e.g. "text-content"
-          : `piid-${piid}`;
-        // Only emit an ins entry for piids the caller actually supplied a param
-        // for. Filling every action.in piid with `value:''` grew an external
-        // rule's ins on export→import round-trips (the exporter emits --params
-        // only for present ins). xgg-authored nodes are unaffected.
-        if (shortcut.params === undefined || !Object.hasOwn(shortcut.params, paramKey)) continue;
-        const rawValue = shortcut.params[paramKey] ?? '';
+      for (const { piid, property, paramKey } of actionInputs) {
+        const rawValue = suppliedParams[paramKey];
         const varRef = parseVariableParamObject(
           rawValue,
-          mapFormatToVariableDtype(prop?.format ?? 'string'),
+          mapFormatToVariableDtype(property.format),
         );
         if (varRef)
           ins.push({
             piid,
             ...varRef,
-            ...variableRangeFields(varRef, prop, `action input piid=${piid}`),
+            ...variableRangeFields(varRef, property, `action input "${paramKey}" (piid=${piid})`),
           });
-        else ins.push({ piid, value: String(rawValue) });
+        else
+          ins.push({
+            piid,
+            value: coerceActionInputLiteral(
+              rawValue,
+              property,
+              `action input "${paramKey}" (piid=${piid})`,
+            ),
+          });
       }
       return {
         id,
