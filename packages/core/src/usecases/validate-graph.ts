@@ -457,7 +457,7 @@ function checkVarRefs(
   node: Record<string, unknown>,
   idx: number,
   ruleId: string,
-  availableByScope: Map<string, Set<string>>,
+  availableByScope: Map<string, Set<string>> | null,
 ): LintIssue[] {
   const out: LintIssue[] = [];
   const localScope = `R${ruleId}`;
@@ -472,7 +472,11 @@ function checkVarRefs(
       );
       continue; // matches UI: scope error short-circuits this ref
     }
-    if (availableByScope.get(ref.scope)?.has(ref.id) !== true) {
+    // Scope visibility is a graph-local invariant and does not require a
+    // gateway variable inventory, so offline --body/--stdin validation must
+    // enforce it too. Existence remains an online-only check because an
+    // offline graph intentionally has no authoritative variable list.
+    if (availableByScope !== null && availableByScope.get(ref.scope)?.has(ref.id) !== true) {
       out.push(issue(base, `卡片变量丢失: ${ref.scope}.${ref.id}`));
     }
   }
@@ -849,9 +853,7 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
     // (请选择对比方式 / 未选择变量 / 输入不能为空 …).
     const localPerCard: LintIssue[] = [];
     localPerCard.push(...checkKnownWebShape(node, idx));
-    if (availableByScope !== null) {
-      localPerCard.push(...checkVarRefs(node, idx, input.graph.id, availableByScope));
-    }
+    localPerCard.push(...checkVarRefs(node, idx, input.graph.id, availableByScope));
     issues.push(...localPerCard);
     // F24 KEYSTONE backstop: only when the precise checks found nothing, run
     // the strict per-type schema to catch the structural fall-throughs they

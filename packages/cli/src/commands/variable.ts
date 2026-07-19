@@ -14,6 +14,7 @@ import {
   getVariableValue,
   isMissingScopeError,
   isValidVariableIdentifier,
+  listRules,
   listScopes,
   listVariables,
   setVariableConfig,
@@ -33,6 +34,11 @@ import {
 } from '../agent-hints.js';
 import { parsePositiveTimerMs } from '../local-input.js';
 import { type TableColumn, emit, emitList } from '../output.js';
+import {
+  GLOBAL_VARIABLE_SCOPE,
+  isRuleLocalScopeCandidate,
+  warnIfUnknownStandaloneScope,
+} from '../variable-scope-awareness.js';
 import {
   type ResolvedMutationGuard,
   addRefreshHintFlag,
@@ -83,7 +89,7 @@ function addMutationFlags<T extends Command>(c: T): T {
   c.option('--snapshots-dir <path>', 'directory for pre-write snapshots (env: XGG_SNAPSHOTS_DIR)');
   c.option(
     '--allow-unknown-scope',
-    'silence the M10 F29 warning for scopes the 米家网关 UI cannot display',
+    'silence the warning for a scope other than global or R<existing-rule-id> (raw experiments only)',
   );
   // B10 / F63e — opt-out for the post-write "refresh 米家 web UI" hint.
   addRefreshHintFlag(c);
@@ -92,20 +98,14 @@ function addMutationFlags<T extends Command>(c: T): T {
   return c;
 }
 
-// M10 F29 (codex M8 T4): the gateway happily persists variables in any
-// scope name, but the 米家网关 web UI only renders the `global` scope.
-// Anything else (e.g. `rule`, `m7probe`) becomes ghost data the user
-// will never see in their UI. Print a one-line stderr warning so the
-// AI agent or human operator at least notices; suppress with the
-// `--allow-unknown-scope` opt-in for tests / experiments.
-const KNOWN_UI_SCOPES = new Set(['global']);
-
-function warnIfGhostScope(scope: string, allow: boolean | undefined): void {
-  if (allow === true) return;
-  if (KNOWN_UI_SCOPES.has(scope)) return;
-  process.stderr.write(
-    `[xgg variable] warning: scope "${scope}" is not in the web-UI-known set (${[...KNOWN_UI_SCOPES].join(', ')}); the gateway will persist it but the 米家网关 UI will not display the variable. Pass --allow-unknown-scope to silence (M10 F29).\n`,
-  );
+async function warnIfGhostScope(
+  scope: string,
+  allow: boolean | undefined,
+  deps: ReturnType<typeof makeDeps>,
+): Promise<void> {
+  if (allow === true || scope === GLOBAL_VARIABLE_SCOPE) return;
+  const liveRules = isRuleLocalScopeCandidate(scope) ? await listRules(deps) : [];
+  warnIfUnknownStandaloneScope({ scope, liveRules, allowUnknownScope: allow });
 }
 
 // F16 (2026-05-28 audit): gateway variable type vocab is strictly
@@ -311,7 +311,7 @@ export function variableCommand(): Command {
         };
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const deps = makeDeps(opts);
-        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
+        await warnIfGhostScope(opts.scope, opts.allowUnknownScope, deps);
         // --check-only is intentionally read-only. Every path that may create
         // is moved below into the mutation lease before its compatibility read.
         if (opts.checkOnly === true) {
@@ -470,7 +470,7 @@ export function variableCommand(): Command {
         }
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const deps = makeDeps(opts);
-        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
+        await warnIfGhostScope(opts.scope, opts.allowUnknownScope, deps);
         const { snapshotPath } = await runMutationWorkflow('variable.delete', deps, async () => {
           const snapshot = await maybeSnapshot(guard, deps);
           if (opts.all) {
@@ -583,7 +583,7 @@ to intentionally re-type a variable in place.`,
         // a single local CONFIG result with zero IPC traffic.
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const deps = makeDeps(opts);
-        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
+        await warnIfGhostScope(opts.scope, opts.allowUnknownScope, deps);
         const { effectiveType, value, snapshotPath } = await runMutationWorkflow(
           'variable.set-value',
           deps,
@@ -666,7 +666,7 @@ to intentionally re-type a variable in place.`,
       wrap('variable.set-config', async (opts: SetConfigOpts) => {
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const deps = makeDeps(opts);
-        warnIfGhostScope(opts.scope, opts.allowUnknownScope);
+        await warnIfGhostScope(opts.scope, opts.allowUnknownScope, deps);
         const { snapshotPath } = await runMutationWorkflow(
           'variable.set-config',
           deps,

@@ -67,6 +67,8 @@ xgg rule export <rule-id> --target-id <new-rule-id>
 
 `variable create/set-value --value` 按变量类型处理：`number` 使用数值转换；`string` 原样保存收到的 argv 文本。`--value Seed` 保存 `Seed`，而 `--value '"Seed"'` 会把双引号也作为数据保存；不要为字符串额外添加 JSON 引号。
 
+规则变量 scope 只有两类是编辑器可见的：`global`，以及当前规则的 `R<rule-id>`。变量写命令会用在线规则清单识别现存的 `R<id>`，`rule node add` 则只把与自身 `--rule-id` 精确匹配的 `R<id>` 视为本地 scope；正常本地变量流程不需要 `--allow-unknown-scope`。跨规则、不存在或自定义 scope 仍会告警，并在严格规则校验中失败。
+
 克隆规则时，CLI 只把 `R<source-id>` 规则内变量迁移到 `R<target-id>`，先只读预检完整变量计划，再以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备本地变量、节点、边和 enable。已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前停止，且永不覆盖。已有目标变量只有在类型、当前值和显示名完全兼容时才保留；真实创建仍会重新检查变量竞态。网关没有跨变量事务，并发变量修改仍可能让脚本中途停止，可用每次写前生成的 snapshot 恢复。`global` 变量作为明确的外部依赖保留，必须由目标网关预先提供。
 
 默认 stdout 输出 JSON，适合脚本和 Agent 解析；加 `--pretty` 输出人读表格。
