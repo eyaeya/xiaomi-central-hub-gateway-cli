@@ -71,49 +71,81 @@ export interface FetchMiotSpecOptions {
 const DEFAULT_BASE_URL = 'https://miot-spec.org/miot-spec-v2/instance';
 const DEFAULT_TIMEOUT_MS = 5000;
 
-// F66g: per-process cache. Bundle parity — gateway.6cbc85.js spec-translator
-// (bundle:0x61f50) fetches miot-spec.org once per session + caches by URN;
-// ai-config-v5.28b650.js holds the result in a per-page-load Map. xgg daemon
-// is the analogous long-lived process, so an indefinite Map<urn, Promise> is
-// safe: specs do not change within a daemon lifetime. We cache the *promise*
-// (not the resolved value) so concurrent callers for the same URN dedupe onto
-// one in-flight fetch. Failures are evicted so a retry actually retries.
-const specCache = new Map<string, Promise<unknown>>();
+interface PreparedMiotSpecRequest {
+  url: string;
+  timeoutMs: number;
+}
+
+// F66g/#77: cache successful specs by their effective registry request URL,
+// not by URN alone. A caller's timeout is an in-flight deadline policy rather
+// than response identity, so a resolved same-URL value can be reused across
+// later timeouts while concurrent requests only dedupe when both URL and
+// timeout match. Different deadlines therefore never share an AbortController.
+const resolvedSpecCache = new Map<string, unknown>();
+const inFlightSpecCache = new Map<string, Promise<unknown>>();
+let specCacheGeneration = 0;
 
 /** Test-only helper: clear the module-level cache for unit isolation. */
 export function __resetSpecCache(): void {
-  specCache.clear();
+  specCacheGeneration += 1;
+  resolvedSpecCache.clear();
+  inFlightSpecCache.clear();
 }
 
 export async function fetchMiotSpec(
   urn: string,
   opts: FetchMiotSpecOptions = {},
 ): Promise<unknown> {
-  const cached = specCache.get(urn);
+  // Constructing the effective URL before any lookup prevents a resolved
+  // entry for another registry from bypassing validation of this call.
+  const request = prepareMiotSpecRequest(urn, opts);
+  if (resolvedSpecCache.has(request.url)) return resolvedSpecCache.get(request.url);
+
+  const policyKey = JSON.stringify([request.url, request.timeoutMs]);
+  const cached = inFlightSpecCache.get(policyKey);
   if (cached) return cached;
 
-  const promise = doFetchMiotSpec(urn, opts);
-  specCache.set(urn, promise);
-  // Evict on failure so retries actually retry. Use .then to keep the original
-  // promise identity for concurrent callers and avoid double-handling.
-  promise.catch(() => {
-    if (specCache.get(urn) === promise) specCache.delete(urn);
+  const generation = specCacheGeneration;
+  const promise = doFetchMiotSpec(urn, request).then((raw) => {
+    // Specs are treated as stable within a process. When different timeout
+    // policies race, keep the first successful response as the resolved value.
+    // A test reset also fences older in-flight work from repopulating the cache.
+    if (generation === specCacheGeneration && !resolvedSpecCache.has(request.url)) {
+      resolvedSpecCache.set(request.url, raw);
+    }
+    return raw;
   });
+  inFlightSpecCache.set(policyKey, promise);
+  // Remove only this exact URL+timeout entry. A failed short-deadline request
+  // must not evict or replace a longer request for the same registry URL.
+  void promise.then(
+    () => {
+      if (inFlightSpecCache.get(policyKey) === promise) inFlightSpecCache.delete(policyKey);
+    },
+    () => {
+      if (inFlightSpecCache.get(policyKey) === promise) inFlightSpecCache.delete(policyKey);
+    },
+  );
   return promise;
 }
 
-async function doFetchMiotSpec(urn: string, opts: FetchMiotSpecOptions): Promise<unknown> {
+function prepareMiotSpecRequest(urn: string, opts: FetchMiotSpecOptions): PreparedMiotSpecRequest {
   const baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  let url: string;
   try {
     const requestUrl = new URL(baseUrl);
     requestUrl.searchParams.set('type', urn);
-    url = requestUrl.toString();
+    // URL fragments never reach an HTTP server and therefore are not part of
+    // the effective registry request identity.
+    requestUrl.hash = '';
+    return { url: requestUrl.toString(), timeoutMs };
   } catch (cause) {
     throw new MiotSpecFetchError('MIoT spec registry URL is invalid', baseUrl, { cause, urn });
   }
+}
 
+async function doFetchMiotSpec(urn: string, request: PreparedMiotSpecRequest): Promise<unknown> {
+  const { url, timeoutMs } = request;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
