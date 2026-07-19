@@ -99,7 +99,7 @@ pin 颜色有 event、state、event|state。只有源输出可以是 event|state
 
 变量 number 比较使用标量 `operator:"="`，不要套用设备 int 的 include 编码；string 变量只支持 `eq --var-value`。
 
-动作 `--params` 的 key 必须恰好覆盖 action.in 对应 property short-name。number / boolean / string 保持原生 JSON 类型；变量引用用 `{"$var":"scope.id"}`。number 变量要求目标 input 有 value-range，以生成 min/max/step。整数 action input 仅支持 safe integer，超出范围的 int64/uint64 会拒绝。
+动作 `--params` 的 key 必须恰好覆盖 action.in 对应 property short-name。number / boolean / string 保持原生 JSON 类型；变量引用用 `{"$var":"scope.id"}`。number 变量要求目标 input 有 value-range，以生成 min/max/step。整数 action input 仅支持 safe integer，超出范围的 int64/uint64 会拒绝。`rule validate --spec-aware` 与 strict export 也会对持久化 `props.ins` 执行同一输入契约检查；missing/extra/duplicate PIID、非原生 literal、越界值或不匹配的变量 dtype/range 都不会被当成可无损重放。
 
 ## 整图与节点 JSON
 

@@ -24,6 +24,7 @@ import { isValidVariableIdentifier } from '../schemas/variable-identifier.js';
 import { isValidVariableScopeName } from '../schemas/variable.js';
 import { ConfigError, NotFoundError } from '../transport/errors.js';
 import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
+import { checkDeviceOutputActionInputContract } from './validate-graph.js';
 import { scanVariableReference } from './variable-reference.js';
 
 /**
@@ -1115,6 +1116,15 @@ async function renderDeviceOutput(
       });
     } else {
       flags.push({ name: '--device-action', value: result.actionName });
+      for (const contractIssue of checkDeviceOutputActionInputContract(
+        props,
+        spec,
+        `deviceOutput node ${n.id}.props`,
+      )) {
+        warnings.push(
+          `deviceOutput node ${n.id}: ${contractIssue.message} (${contractIssue.path})`,
+        );
+      }
       const ins = Array.isArray(props.ins)
         ? (props.ins as Array<Record<string, unknown> & { piid: number }>)
         : [];

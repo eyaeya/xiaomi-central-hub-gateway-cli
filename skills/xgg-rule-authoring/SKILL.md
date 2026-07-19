@@ -212,7 +212,7 @@ xgg rule import --from-file rule-export.json --target-id <target-id> \
 
 `rule import` 自身只做离线文本转换，stdout 是 shell，不代表已写入。脚本先只读预检已捕获的本地变量；若导出包含本地变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 同时生效）。clone 保留 `--expect-absent`，先创建禁用空壳，再准备 `R<target-id>` 变量。所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，禁用源保持禁用。脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg/API writer 并发修改目标；staging 后失败会留下禁用 partial graph，用逐写快照检查或恢复。重放后总是 `validate → lint --strict → view/readback`；只有用户授权时才触发并读日志。
 
-- 对当前 spec 有效的已建模节点，完整 typed `include` / `between`、`preload`、`simplified`、原生 action 参数、`nop` Delta/背景/几何与可由 DSL 无损表示的表达式可在 strict 模式往返；语义损失 warning 会使 strict export 拒绝。
+- 对当前 spec 有效的已建模节点，完整 typed `include` / `between`、`preload`、`simplified`、原生 action 参数、`nop` Delta/背景/几何与可由 DSL 无损表示的表达式可在 strict 模式往返；strict export 会按 `action.in` 核对持久化 action input 的 missing/extra/duplicate、literal 原生类型/取值域和变量 dtype/range，任何语义损失 warning 都会使导出拒绝。
 - `varSetNumber` / `varSetString` elements 若存在 DSL 歧义边界，任何 export 模式都会在输出前失败，不依赖 `--strict-roundtrip`；先给表达式增加显式分隔符。
 - clone 只把 `R<source-id>` 改为 `R<target-id>`，预检本地变量计划后以 expect-absent 预留目标；`global` 是外部依赖，不创建、不改写。
 - 未建模的未来节点导出为完整 opaque `--cfg` 结构，可同 ID 无损重放。因为 CLI 无法安全发现/改写 opaque payload 内的规则本地引用，带 opaque 节点时拒绝 `--target-id` clone。

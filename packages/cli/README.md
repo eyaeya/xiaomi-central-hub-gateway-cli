@@ -78,8 +78,8 @@ xgg rule delete <rule-id>
 CLI 建模 25 种可执行卡片，另支持无连接器的 `nop` 画布备注。设备比较支持 string `--property-value`、整数 `--property-include`，以及事件参数的 repeatable `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--preload|--no-preload` 只适用于 property-mode `deviceInput` / `deviceInputSetVar` 与 `varChange`，`deviceGet` 不支持。旧 `deviceGet.props.preload` 会让 permissive export 警告、strict export 拒绝。受支持节点上的 preload 与 `--simplified true|false` 会被导出/导入保留。动作 `--params` 保留 MIoT 原生 number / boolean / string，并用 `{"param":{"$var":"global.id"}}` 引用动态变量。
 
 数值 `deviceInput` / `deviceGet` 与 number 型 `varChange` / `varGet` 使用 `--op between` 时，`--threshold <lower>` 和 `--threshold2 <upper>` 必须同时显式给出；省略任一边界会在 session、spec、快照与写图之前失败。显式下界 `0` 合法，非-between 标量比较继续保留历史默认 `0`。
+CLI 建模 25 种可执行卡片，另支持无连接器的 `nop` 画布备注。设备比较支持 string `--property-value`、整数 `--property-include`，以及事件参数的 repeatable `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--preload|--no-preload` 与 `--simplified true|false` 会被导出/导入保留。动作 `--params` 的 key 必须与 `action.in` 一一对应，值保留 MIoT 原生 number / boolean / string，并用 `{"param":{"$var":"global.id"}}` 引用动态变量。
 
-`deviceInput` / `deviceGet --force-out-of-range` 只跳过数值 range/step 检查，不绕过 value-list、finite/safe-integer、operator 或 operand shape 校验。
 
 直接 `rule export --format shell` 与从 JSON import 渲染的脚本都要先落盘审阅；JSON import 必须用 `--from-file`：
 
@@ -116,7 +116,7 @@ xgg backup config set --from fds --auto-backup <true|false> --snapshots-dir "$PW
 
 云端 `generate` / `load` 前必须先对相同 `{did,ts,file-name}` 执行 `backup download`。`load`、`delete` 和 `backup config set` 都是写操作，需要用户明确授权与 rollback snapshot；完整参数以各子命令 `--help` 为准。
 
-本地候选图可直接用 `xgg rule validate --body candidate.json` 或管道到 `--stdin`。这两种模式默认不读取 session、不连接 daemon/网关，也不访问公网；只有显式添加 `--spec-aware` 才会查询公网 MIoT spec registry。`--rule-id` 会读取已登录网关的规则和变量，但同样只在添加 `--spec-aware` 后查询公网 spec。
+本地候选图可直接用 `xgg rule validate --body candidate.json` 或管道到 `--stdin`。这两种模式默认不读取 session、不连接 daemon/网关，也不访问公网；只有显式添加 `--spec-aware` 才会查询公网 MIoT spec registry，并核对 property/event dtype 以及 action 的 missing/extra/duplicate inputs、literal 类型/取值域、变量 dtype/range。`--rule-id` 会读取已登录网关的规则和变量，但同样只在添加 `--spec-aware` 后查询公网 spec。
 
 `deviceOutput --value '$scope.id'` 表示变量引用。若字符串字面值本身以 `$` 开头，把第一个 `$` 写两次：例如 `--value '$$hello'` 实际写入 `$hello`；`rule export` 会自动添加这一层转义。
 

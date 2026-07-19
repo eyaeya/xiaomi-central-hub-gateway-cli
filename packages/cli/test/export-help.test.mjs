@@ -14,5 +14,6 @@ test('rule export help describes strict opaque-node semantics accurately', () =>
   const help = command.helpInformation().replace(/\s+/g, ' ');
   assert.match(help, /unmodeled opaque cards remain allowed for lossless same-id replay/);
   assert.match(help, /--target-id clone rejects them/);
+  assert.match(help, /cfg\/spec mapping\/operand\/action input/);
   assert.doesNotMatch(help, /including unknown cards/);
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { addNode, exportRuleFromView } from '../dist/index.js';
+import { addNode, exportRuleFromView, validateGraph } from '../dist/index.js';
 
 const baseUrl = 'http://gateway.invalid';
 const startedAt = '2026-07-19T00:00:00.000Z';
@@ -175,6 +175,72 @@ function completeParams(overrides = {}) {
   };
 }
 
+function actionNode(ins, { id = 'action', aiid = 10 } = {}) {
+  return {
+    id,
+    type: 'deviceOutput',
+    cfg: {
+      urn,
+      pos: { x: 0, y: 0, width: 684, height: 204 },
+      name: 'deviceOutput',
+      version: 1,
+    },
+    inputs: { trigger: null },
+    outputs: { output: [] },
+    props: { did, siid: 2, aiid, ins },
+  };
+}
+
+function propertyWriteNode() {
+  return {
+    id: 'property-write',
+    type: 'deviceOutput',
+    cfg: {
+      urn,
+      pos: { x: 0, y: 0, width: 684, height: 204 },
+      name: 'deviceOutput',
+      version: 1,
+    },
+    inputs: { trigger: null },
+    outputs: { output: [] },
+    props: { did, siid: 2, piid: 2, value: true },
+  };
+}
+
+function validIns(overrides = {}) {
+  const byPiid = new Map([
+    [1, { piid: 1, value: 4 }],
+    [2, { piid: 2, value: true }],
+    [3, { piid: 3, value: 'hello' }],
+    [4, { piid: 4, value: 2 }],
+    [5, { piid: 5, value: 0.5 }],
+  ]);
+  for (const [piid, value] of Object.entries(overrides)) {
+    byPiid.set(Number(piid), value);
+  }
+  return [...byPiid.values()];
+}
+
+async function validateNodes(nodes) {
+  return validateGraph({
+    graph: { id: ruleId, nodes },
+    getDeviceSpec: async (requestedUrn) => {
+      assert.equal(requestedUrn, urn);
+      return spec;
+    },
+  });
+}
+
+async function exportNodes(nodes, strictRoundtrip = true) {
+  const gateway = createGateway();
+  return exportRuleFromView(
+    { id: ruleId, cfg: gateway.state.summary, nodes },
+    gateway.deps,
+    undefined,
+    strictRoundtrip,
+  );
+}
+
 async function addAction(gateway, params, id = 'action') {
   return addNode(
     {
@@ -263,6 +329,8 @@ test('action variables retain their wire shape and native literals round-trip th
   const exported = await exportRuleFromView(
     { id: ruleId, cfg: source.state.summary, nodes: source.state.nodes },
     source.deps,
+    undefined,
+    true,
   );
   const command = nodeCommand(exported);
   const params = JSON.parse(flagValue(command, '--params'));
@@ -277,6 +345,213 @@ test('action variables retain their wire shape and native literals round-trip th
   const replay = createGateway();
   await addAction(replay, params);
   assert.deepEqual(replay.state.nodes, source.state.nodes);
+  assert.deepEqual(await validateNodes(source.state.nodes), []);
+});
+
+test('valid number, boolean, and string action variable refs survive strict export/replay', async () => {
+  const source = createGateway();
+  await addAction(
+    source,
+    completeParams({
+      level: { $var: 'global.targetLevel' },
+      enabled: { $var: 'global.targetEnabled' },
+      label: { $var: 'global.targetLabel' },
+    }),
+  );
+
+  const exported = await exportRuleFromView(
+    { id: ruleId, cfg: source.state.summary, nodes: source.state.nodes },
+    source.deps,
+    undefined,
+    true,
+  );
+  const params = JSON.parse(flagValue(nodeCommand(exported), '--params'));
+  assert.deepEqual(params, {
+    level: { $var: 'global.targetLevel' },
+    enabled: { $var: 'global.targetEnabled' },
+    label: { $var: 'global.targetLabel' },
+    mode: 2,
+    ratio: 0.5,
+  });
+
+  const replay = createGateway();
+  await addAction(replay, params);
+  assert.deepEqual(replay.state.nodes, source.state.nodes);
+  assert.deepEqual(await validateNodes(source.state.nodes), []);
+});
+
+test('spec-aware validation enforces a one-to-one action.in to props.ins mapping', async () => {
+  const cases = [
+    {
+      name: 'missing',
+      ins: validIns({ 1: undefined }).filter(Boolean),
+      message: /missing required action input piid=1/i,
+    },
+    {
+      name: 'extra',
+      ins: [...validIns(), { piid: 99, value: 1 }],
+      message: /unexpected action input piid=99/i,
+    },
+    {
+      name: 'duplicate',
+      ins: [...validIns(), { piid: 1, value: 4 }],
+      message: /duplicate action input piid=1/i,
+    },
+  ];
+
+  for (const { name, ins, message } of cases) {
+    const issues = await validateNodes([actionNode(ins)]);
+    assert.equal(
+      issues.some((entry) => message.test(entry.message)),
+      true,
+      `${name}: ${JSON.stringify(issues)}`,
+    );
+  }
+});
+
+test('spec-aware validation rejects non-native action literals and out-of-domain numbers', async () => {
+  const cases = [
+    { name: 'number type', input: { piid: 1, value: '4' }, message: /requires a number/i },
+    { name: 'boolean type', input: { piid: 2, value: 1 }, message: /requires a boolean/i },
+    { name: 'string type', input: { piid: 3, value: 3 }, message: /requires a string/i },
+    { name: 'integer', input: { piid: 1, value: 1.5 }, message: /exact safe integer/i },
+    { name: 'step', input: { piid: 1, value: 3 }, message: /not aligned.*step 2/i },
+    { name: 'value-list', input: { piid: 4, value: 3 }, message: /not in MIoT value-list/i },
+    { name: 'range', input: { piid: 5, value: 1.1 }, message: /outside MIoT value-range/i },
+  ];
+
+  for (const { name, input, message } of cases) {
+    const issues = await validateNodes([actionNode(validIns({ [input.piid]: input }))]);
+    assert.equal(
+      issues.some((entry) => message.test(entry.message)),
+      true,
+      `${name}: ${JSON.stringify(issues)}`,
+    );
+  }
+});
+
+test('spec-aware validation checks action variable dtype and exact numeric range metadata', async () => {
+  const cases = [
+    {
+      name: 'dtype',
+      input: { piid: 2, scope: 'global', id: 'enabled', dtype: 'number', min: 0, max: 1, step: 1 },
+      message: /expects variable dtype "boolean"/i,
+    },
+    {
+      name: 'range',
+      input: { piid: 1, scope: 'global', id: 'level', dtype: 'number', min: 0, max: 9, step: 2 },
+      message: /range metadata.*\[0, 10, 2\]/i,
+    },
+    {
+      name: 'identifier',
+      input: {
+        piid: 1,
+        scope: 'global',
+        id: 'bad-id',
+        dtype: 'number',
+        min: 0,
+        max: 10,
+        step: 2,
+      },
+      message: /variable id must be non-empty ASCII alphanumeric/i,
+    },
+  ];
+
+  for (const { name, input, message } of cases) {
+    const issues = await validateNodes([actionNode(validIns({ [input.piid]: input }))]);
+    assert.equal(
+      issues.some((entry) => message.test(entry.message)),
+      true,
+      `${name}: ${JSON.stringify(issues)}`,
+    );
+  }
+});
+
+test('spec-aware action validation leaves property-write deviceOutput nodes unchanged', async () => {
+  assert.deepEqual(await validateNodes([propertyWriteNode()]), []);
+});
+
+test('strict export rejects persisted action mapping, literal, and variable contract failures', async () => {
+  const cases = [
+    {
+      name: 'missing',
+      ins: validIns({ 1: undefined }).filter(Boolean),
+      message: /missing required action input piid=1/i,
+    },
+    {
+      name: 'extra',
+      ins: [...validIns(), { piid: 99, value: 1 }],
+      message: /unexpected action input piid=99/i,
+    },
+    {
+      name: 'duplicate',
+      ins: [...validIns(), { piid: 1, value: 4 }],
+      message: /duplicate action input piid=1/i,
+    },
+    {
+      name: 'literal type',
+      ins: validIns({ 2: { piid: 2, value: 1 } }),
+      message: /requires a boolean/i,
+    },
+    {
+      name: 'literal domain',
+      ins: validIns({ 1: { piid: 1, value: 3 } }),
+      message: /not aligned.*step 2/i,
+    },
+    {
+      name: 'literal integer',
+      ins: validIns({ 1: { piid: 1, value: 1.5 } }),
+      message: /exact safe integer/i,
+    },
+    {
+      name: 'variable dtype',
+      ins: validIns({
+        3: { piid: 3, scope: 'global', id: 'label', dtype: 'boolean' },
+      }),
+      message: /expects variable dtype "string"/i,
+    },
+    {
+      name: 'variable range',
+      ins: validIns({
+        1: { piid: 1, scope: 'global', id: 'level', dtype: 'number', min: 0, max: 9, step: 2 },
+      }),
+      message: /range metadata.*\[0, 10, 2\]/i,
+    },
+    {
+      name: 'variable identifier',
+      ins: validIns({
+        1: {
+          piid: 1,
+          scope: 'global',
+          id: 'bad-id',
+          dtype: 'number',
+          min: 0,
+          max: 10,
+          step: 2,
+        },
+      }),
+      message: /variable id must be non-empty ASCII alphanumeric/i,
+    },
+  ];
+
+  for (const { name, ins, message } of cases) {
+    await assert.rejects(
+      exportNodes([actionNode(ins)]),
+      (error) => error?.code === 'CONFIG' && message.test(error.message),
+      name,
+    );
+  }
+});
+
+test('permissive export warns before emitting an incomplete action replay', async () => {
+  const exported = await exportNodes(
+    [actionNode(validIns({ 1: undefined }).filter(Boolean))],
+    false,
+  );
+  assert.equal(
+    exported.warnings.some((warning) => /missing required action input piid=1/i.test(warning)),
+    true,
+  );
 });
 
 test('action synthesis rejects missing required and unknown parameters clearly', async () => {
