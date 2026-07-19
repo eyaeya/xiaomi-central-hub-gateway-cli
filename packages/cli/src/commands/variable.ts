@@ -255,7 +255,10 @@ export function variableCommand(): Command {
         'variable id within scope (non-empty [A-Za-z0-9]+, may start with a digit)',
       )
       .requiredOption('--type <type>', 'number|string')
-      .requiredOption('--value <value>', 'initial value (JSON-parsed)')
+      .requiredOption(
+        '--value <value>',
+        'initial value (number: numeric conversion; string: argv text verbatim, including quotes)',
+      )
       .requiredOption('--name <name>', 'display name')
       .option(
         '--if-compatible',
@@ -512,7 +515,10 @@ export function variableCommand(): Command {
       .description('Update a variable value')
       .requiredOption('--scope <name>', 'scope name (non-empty [A-Za-z0-9]+)')
       .requiredOption('--id <id>', 'variable id (non-empty [A-Za-z0-9]+)')
-      .requiredOption('--value <value>', 'new value (JSON-parsed)')
+      .requiredOption(
+        '--value <value>',
+        'new value (number: numeric conversion; string: argv text verbatim, including quotes)',
+      )
       // F66d (2026-05-31): --type semantics changed. Pre-F66d --type was a
       // parser hint defaulting to "string" — passing the wrong --type on a
       // number var pushed a string the gateway accepted but the UI silently
@@ -536,6 +542,11 @@ export function variableCommand(): Command {
       `
 Example:
   $ xgg variable set-value --scope my --id temp --value 42
+
+Value parsing follows the stored (or explicit) type. Numbers use Number(...).
+Strings use the argv text verbatim: --value Seed stores Seed, while
+--value '"Seed"' stores the quote characters too; do not add JSON quotes
+unless those quotes are intended data.
 
 F66d (2026-05-31): xgg now fetches the stored variable's type via
 getVarConfig before pushing the new value, so --type can be omitted and

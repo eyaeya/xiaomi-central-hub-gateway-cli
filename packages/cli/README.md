@@ -65,6 +65,8 @@ xgg rule export <rule-id> --target-id <new-rule-id>
 
 `deviceOutput --value '$scope.id'` 表示变量引用。若字符串字面值本身以 `$` 开头，把第一个 `$` 写两次：例如 `--value '$$hello'` 实际写入 `$hello`；`rule export` 会自动添加这一层转义。
 
+`variable create/set-value --value` 按变量类型处理：`number` 使用数值转换；`string` 原样保存收到的 argv 文本。`--value Seed` 保存 `Seed`，而 `--value '"Seed"'` 会把双引号也作为数据保存；不要为字符串额外添加 JSON 引号。
+
 克隆规则时，CLI 只把 `R<source-id>` 规则内变量迁移到 `R<target-id>`，先只读预检完整变量计划，再在空规则、节点、边和 enable 之前准备被引用的本地变量。已有目标变量只有在类型、当前值和显示名完全兼容时才保留；稳定目标上的任何既有冲突都在首次创建前停止，且永不覆盖。真实创建仍会重新检查以防竞态；网关没有跨变量事务，并发修改仍可能让脚本中途停止，可用每次写前生成的 snapshot 恢复。`global` 变量作为明确的外部依赖保留，必须由目标网关预先提供。
 
 默认 stdout 输出 JSON，适合脚本和 Agent 解析；加 `--pretty` 输出人读表格。
