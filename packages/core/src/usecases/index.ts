@@ -56,6 +56,28 @@ export type { LoginInputs, LoginResult, SpawnFn } from './login.js';
 export { logout } from './logout.js';
 export type { LogoutInputs, LogoutResult, SignalFn } from './logout.js';
 export { defaultSnapshotsDir } from './snapshots-dir.js';
+export {
+  collectLocalBackup,
+  decodeLocalBackup,
+  encodeLocalBackup,
+  exportLocalBackup,
+  importLocalBackup,
+  planLocalBackupImport,
+  readLocalBackup,
+  validateLocalBackupPayload,
+} from './local-backup.js';
+export type {
+  LocalBackupAppliedCounts,
+  LocalBackupExportOptions,
+  LocalBackupExportResult,
+  LocalBackupImportOptions,
+  LocalBackupImportPlan,
+  LocalBackupImportResult,
+  LocalBackupImportSide,
+  LocalBackupPayload,
+  LocalBackupRulePlanEntry,
+  LocalBackupVariablePlanEntry,
+} from './local-backup.js';
 export { status } from './status.js';
 export type { IpcProbe, StatusInputs, StatusResult } from './status.js';
 export { getDeviceSpec } from './get-device-spec.js';

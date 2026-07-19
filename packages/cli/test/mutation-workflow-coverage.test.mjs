@@ -22,11 +22,18 @@ const funnels = new Map([
   ],
   [
     'src/commands/backup.ts',
-    ['backup.create', 'backup.download', 'backup.load', 'backup.delete', 'backup.config.set'],
+    [
+      'backup.create',
+      'backup.download',
+      'backup.load',
+      'backup.delete',
+      'backup.config.set',
+      'backup.local-import',
+    ],
   ],
 ]);
 
-test('all 22 typed CLI mutation funnels enter a named workflow lease', async () => {
+test('all 23 typed CLI mutation funnels enter a named workflow lease', async () => {
   let count = 0;
   for (const [relativePath, operations] of funnels) {
     const source = await readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
@@ -39,7 +46,7 @@ test('all 22 typed CLI mutation funnels enter a named workflow lease', async () 
       );
     }
   }
-  assert.equal(count, 22);
+  assert.equal(count, 23);
 });
 
 test('raw writes and the programmatic probe funnel are leased', async () => {

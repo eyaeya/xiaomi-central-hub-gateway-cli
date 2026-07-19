@@ -1,0 +1,60 @@
+{
+  "source": "Constructed from gateway.6cbc85.js Nr.compress + jr.generateBackup format",
+  "payload": {
+    "version": 2,
+    "rules": [
+      {
+        "id": "fixtureRule",
+        "cfg": {
+          "id": "fixtureRule",
+          "enable": false,
+          "uiType": "rule",
+          "userData": {
+            "name": "Fixture rule",
+            "transform": {
+              "x": 0,
+              "y": 0,
+              "scale": 1,
+              "rotate": 0
+            },
+            "lastUpdateTime": 0,
+            "version": 0
+          }
+        },
+        "nodes": [
+          {
+            "id": "source",
+            "type": "onLoad",
+            "cfg": {
+              "pos": {
+                "x": 0,
+                "y": 0,
+                "width": 200,
+                "height": 120
+              },
+              "name": "onLoad",
+              "version": 1
+            },
+            "inputs": {},
+            "outputs": {
+              "output": []
+            },
+            "props": {}
+          }
+        ]
+      }
+    ],
+    "variables": {
+      "global": {
+        "fixtureVar": {
+          "type": "number",
+          "value": 7,
+          "userData": {
+            "name": "Fixture variable"
+          }
+        }
+      }
+    }
+  },
+  "backupBase64": "6gEAAH1Qu2oDMRD8lTD1Fmc3AdUhVargpDEu1nd7PoEsHXo4Nkb/HtanOCGEqBC7zDCPveIkMdngYdaEWJwkmO0VdoDBaM+5RHktTkDoxwPMn0hJEp84s8KejwKD54XwEBdGjuzTGOJRKWeYjnC5/alnJzArQgyZs8B0leA45bd54Cwbq3IdfcdUvNjNZVabJi+e9yozsktSCT4MrUdeeMG/BB5AS/oUSux/VJpD+p3rww55gll3HWESe5gyzGqt3q3gXfEebFUJ1s8lq1glhJLb0kaY7a4S5hjmG6Xu6o5w4mg1/Y14cGHPTqd24XeOurUavhz3EtWUXRGYx39v/6WMqu8TqHaSTUkcYYv0tJFcvil2E867Q5mMIEZM8gJ/ljr+Uhw="
+}

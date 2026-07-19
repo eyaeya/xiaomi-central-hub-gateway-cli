@@ -44,6 +44,8 @@ Examples:
   $ xgg rule list --pretty                         Table view
   $ xgg rule new --name "Evening automation"       Create an empty rule
   $ xgg backup list --from fds --pretty            List gateway cloud backups
+  $ xgg backup local-export --output rules.bak     Export official-format local backup
+  $ xgg backup local-import --input rules.bak --dry-run  Plan a replace-all restore
   $ xgg rule set --body rule.json                  Upsert with pre-write snapshot
   $ xgg variable create --scope my --id v --type number --value 0 --name X
   $ xgg api /api/getDevList --pretty               Raw JSON-RPC escape hatch
