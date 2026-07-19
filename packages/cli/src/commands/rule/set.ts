@@ -23,6 +23,7 @@ interface SetOpts extends RuleOpts {
   snapshotsDir?: string;
   validate?: boolean;
   allowCfgOverwrite?: boolean;
+  expectAbsent?: boolean;
   refreshHint?: boolean;
   nextHint?: boolean;
 }
@@ -37,6 +38,10 @@ export function attachSet(cmd: Command): void {
     .option(
       '--allow-cfg-overwrite',
       "write the body's cfg (enable/uiType/userData) verbatim instead of preserving the live rule's (default: preserve, mirroring the UI save() flow)",
+    )
+    .option(
+      '--expect-absent',
+      'create-only: fail if the body rule id already exists (used by --target-id clone replay)',
     )
     .option('--snapshots-dir <path>', 'directory for pre-write snapshots (env: XGG_SNAPSHOTS_DIR)')
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
@@ -79,6 +84,7 @@ export function attachSet(cmd: Command): void {
         const result = await upsertGraph(body, deps, {
           validate: opts.validate !== false,
           ...(opts.allowCfgOverwrite === true && { allowCfgOverwrite: true }),
+          ...(opts.expectAbsent === true && { expectAbsent: true }),
         });
         if (result.cfgEnableIgnored) {
           process.stderr.write(

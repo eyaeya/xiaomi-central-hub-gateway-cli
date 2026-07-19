@@ -31,7 +31,7 @@ export function attachExport(cmd: Command): void {
     .option('--format <fmt>', 'output format: shell (default) | json', 'shell')
     .option(
       '--target-id <ID>',
-      'clone the rule under a new id (script will recreate a new rule, not overwrite the source)',
+      'clone under a new id; replay fails instead of overwriting an existing target rule',
     )
     .option(
       '--target-name <NAME>',
@@ -67,7 +67,8 @@ Examples:
   $ xgg rule export 1779888258312 --target-id 9999999999999
       # Clone the rule under a new id; name becomes "[Cloned] <orig>".
       # R1779888258312 local-variable references become R9999999999999;
-      # referenced local variables are prepared before the empty rule.
+      # referenced local variables are preflighted read-only, then prepared
+      # only after the create-only target rule succeeds.
 
   $ xgg rule export 1779888258312 --target-id 9999999999999 \\
         --target-name "按钮播报-备份"
@@ -79,12 +80,14 @@ Limitations:
     variable/constant boundary would be absorbed or rejected; add an explicit
     separator in the source expression or use rule view JSON round-trip.
   - Rule-local variables are captured with their current value and display
-    name. Replay preflights the complete variable plan before any create,
-    then repeats each compatibility check while writing. A stable
-    type/value/name mismatch therefore aborts before any variable or rule
-    write and is never overwritten. The gateway has no cross-variable
-    transaction, so concurrent changes can still stop a replay after an
-    earlier create; the per-write snapshots remain the recovery path.
+    name. Replay preflights the complete variable plan, then creates the empty
+    target with create-only/expect-absent semantics before any variable write.
+    An existing target, including one which appears during read-only preflight,
+    therefore aborts without changing its graph or variables. Each later
+    variable create repeats its compatibility check. The gateway has no
+    cross-variable transaction, so concurrent variable changes can still stop
+    a replay after the target is reserved; the per-write snapshots remain the
+    recovery path.
     --target-id must differ from the source id.
   - global variables are explicit external dependencies: export lists them in
     JSON/warnings but never creates or modifies them. Any non-global scope

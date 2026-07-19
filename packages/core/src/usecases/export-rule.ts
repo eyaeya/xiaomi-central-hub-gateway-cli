@@ -37,7 +37,13 @@ export type ExportedCommand =
       value: number | string;
       userData: { name: string; [key: string]: unknown };
     }
-  | { kind: 'rule-set-body'; bodyJson: string; description: string }
+  | {
+      kind: 'rule-set-body';
+      bodyJson: string;
+      description: string;
+      /** Clone replay must create this rule id, never upsert an existing target. */
+      expectAbsent?: boolean;
+    }
   | { kind: 'node-add'; nodeId: string; type: string; flags: ExportFlag[]; comment: string }
   | { kind: 'edge-add'; from: string; to: string }
   | { kind: 'rule-enable' }
@@ -144,10 +150,12 @@ export async function exportRuleFromView(
   commands.push(...variablePlan.dependencyCommands);
   commands.push(...variablePlan.createCommands);
 
-  // Variable preparation deliberately precedes even the empty graph write.
-  // Replay-safe variable creation retains an exact compatible target but
-  // rejects every mismatch without overwriting it, so a conflict aborts
-  // before this script can touch the rule body.
+  // The renderer preflights every captured variable before the empty graph
+  // write. For an in-place replay it preserves the historical create-before-
+  // set order. applyRename marks clone bodies expectAbsent, so rule set runs
+  // an explicit live absence guard before its first write (the empty graph),
+  // and rule-local variables are created only after that guarded create. The
+  // empty graph is the create payload, not a substitute for the guard.
   const shellCfg = {
     id: view.id,
     nodes: [] as unknown[],
@@ -1411,7 +1419,7 @@ export function applyRename(exported: ExportedRule, rename: RenameOptions): Expo
     assertRenameHasCompleteVariablePlan(exported, sourceScope, targetScope);
   }
 
-  const commands = exported.commands.map((cmd): ExportedCommand => {
+  const remappedCommands = exported.commands.map((cmd): ExportedCommand => {
     if (cmd.kind === 'shell-prelude') {
       return {
         ...cmd,
@@ -1427,7 +1435,11 @@ export function applyRename(exported: ExportedRule, rename: RenameOptions): Expo
       body.id = finalId;
       body.cfg.id = finalId;
       body.cfg.userData = { ...body.cfg.userData, name: finalName };
-      return { ...cmd, bodyJson: JSON.stringify(body, null, 2) };
+      return {
+        ...cmd,
+        bodyJson: JSON.stringify(body, null, 2),
+        ...(rename.targetId !== undefined && { expectAbsent: true }),
+      };
     }
     if (rename.targetId !== undefined && cmd.kind === 'variable-create') {
       return { ...cmd, scope: cmd.scope === sourceScope ? targetScope : cmd.scope };
@@ -1440,6 +1452,10 @@ export function applyRename(exported: ExportedRule, rename: RenameOptions): Expo
     }
     return cmd;
   });
+  const commands =
+    rename.targetId === undefined
+      ? remappedCommands
+      : orderCreateOnlyCloneCommands(exported.ruleId, remappedCommands);
 
   return {
     ...exported,
@@ -1447,6 +1463,32 @@ export function applyRename(exported: ExportedRule, rename: RenameOptions): Expo
     ruleName: finalName,
     commands,
   };
+}
+
+function orderCreateOnlyCloneCommands(
+  sourceRuleId: string,
+  commands: ExportedCommand[],
+): ExportedCommand[] {
+  const bodies = commands.filter(
+    (command): command is Extract<ExportedCommand, { kind: 'rule-set-body' }> =>
+      command.kind === 'rule-set-body',
+  );
+  if (bodies.length !== 1 || bodies[0]?.expectAbsent !== true) {
+    throw new ConfigError(
+      `cannot clone export for rule ${sourceRuleId}: expected exactly one create-only rule body`,
+      { sourceRuleId, ruleBodyCount: bodies.length },
+    );
+  }
+
+  const variableCreates = commands.filter((command) => command.kind === 'variable-create');
+  if (variableCreates.length === 0) return commands;
+  const withoutVariables = commands.filter((command) => command.kind !== 'variable-create');
+  const bodyIndex = withoutVariables.findIndex((command) => command.kind === 'rule-set-body');
+  return [
+    ...withoutVariables.slice(0, bodyIndex + 1),
+    ...variableCreates,
+    ...withoutVariables.slice(bodyIndex + 1),
+  ];
 }
 
 function assertRenameHasCompleteVariablePlan(
@@ -1773,6 +1815,9 @@ export function renderExportedAsShell(
     (command): command is Extract<ExportedCommand, { kind: 'variable-create' }> =>
       command.kind === 'variable-create',
   );
+  const createOnlyClone = exported.commands.some(
+    (command) => command.kind === 'rule-set-body' && command.expectAbsent === true,
+  );
   for (const command of exported.commands) {
     if (command.kind === 'shell-prelude') {
       lines.push(...renderShellComment(command.comment));
@@ -1787,22 +1832,14 @@ export function renderExportedAsShell(
   if (variableCreates.length > 0) {
     lines.push(
       ...renderShellComment(
-        'Preflight the complete local-variable plan before any createVar call. Stable target conflicts therefore leave both variables and the rule body untouched; each later create repeats the compatibility check to stay safe under races.',
+        'Preflight the complete local-variable plan before any createVar call. Stable variable conflicts therefore leave both variables and the rule body untouched; each later create repeats the compatibility check to stay safe under races.',
       ),
     );
     for (const command of variableCreates) {
       lines.push(renderVariableCreateInvocation(command, true));
     }
     lines.push('');
-    for (const command of variableCreates) {
-      lines.push(
-        ...renderShellComment(
-          `Prepare rule-local variable ${command.scope}.${command.id} from the source snapshot's current value. A byte-for-value compatible target is retained; any mismatch fails and is never overwritten.`,
-        ),
-      );
-      lines.push(renderVariableCreateInvocation(command, false));
-      lines.push('');
-    }
+    if (!createOnlyClone) renderVariableCreates(lines, variableCreates);
   }
 
   for (const cmd of exported.commands) {
@@ -1823,9 +1860,14 @@ export function renderExportedAsShell(
         lines.push(cmd.bodyJson);
         lines.push(delimiter);
         lines.push(
-          '"$XGG" rule set --body "$RULE_BODY_FILE" --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"',
+          `"$XGG" rule set --body "$RULE_BODY_FILE"${cmd.expectAbsent === true ? ' --expect-absent' : ''} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
         );
         lines.push('');
+        // A create-only clone must run the guarded rule create before any
+        // variable write. The complete variable plan was already checked
+        // read-only; --expect-absent is the guard, while the empty graph is
+        // written only after that guard succeeds.
+        if (cmd.expectAbsent === true) renderVariableCreates(lines, variableCreates);
         break;
       }
       case 'node-add': {
@@ -1855,6 +1897,21 @@ export function renderExportedAsShell(
   }
 
   return `${lines.join('\n')}\n`;
+}
+
+function renderVariableCreates(
+  lines: string[],
+  commands: Array<Extract<ExportedCommand, { kind: 'variable-create' }>>,
+): void {
+  for (const command of commands) {
+    lines.push(
+      ...renderShellComment(
+        `Prepare rule-local variable ${command.scope}.${command.id} from the source snapshot's current value. A byte-for-value compatible target is retained; any mismatch fails and is never overwritten.`,
+      ),
+    );
+    lines.push(renderVariableCreateInvocation(command, false));
+    lines.push('');
+  }
 }
 
 function renderVariableCreateInvocation(
