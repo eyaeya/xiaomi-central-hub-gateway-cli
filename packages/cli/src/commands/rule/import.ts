@@ -73,6 +73,10 @@ Notes:
     remain declared external dependencies and must exist.
   - --target-id must differ from the exported rule id. Omit it for same-id
     replay or use only --target-name for an in-place rename.
+  - Exports containing opaque raw fallbacks for unknown future node types can
+    be replayed with the same id, but cannot be cloned with --target-id: xgg
+    cannot safely discover and rewrite rule-local references inside an
+    unmodeled payload.
   - Device-output / device-input nodes referenced in the export must still
     exist on the target gateway with the same DIDs; otherwise the replay
     fails at the corresponding \`rule node add\` step.`,

@@ -98,10 +98,12 @@ Limitations:
   - All modeled flow / logic / timing / variable node types (including
     eventSequence, register, modeSwitch, signalOr, logicAnd/Or/Not, condition,
     counter, onlyNTimes, loop, delay, statusLast) DO have c-shortcut
-    equivalents and round-trip as \`rule node add\` commands. Only genuinely
-    unknown / not-yet-modeled node types (e.g. nop, or a future card the
-    exporter has not learned) emit a # WARNING comment; recreate those by hand
-    with \`rule node add --cfg '<JSON>'\`.`,
+    equivalents and round-trip as \`rule node add\` commands. Genuinely
+    unknown future node types are retained as complete opaque
+    \`rule node add --cfg '<JSON>'\` fallbacks, with their edges restored after
+    every endpoint exists. Same-id replay is lossless; \`--target-id\` cloning
+    is rejected for opaque nodes because their unknown payload may contain
+    rule-local references that cannot be remapped safely.`,
     )
     .action(
       wrap('rule.export', async (id: string, opts: ExportOpts) => {
