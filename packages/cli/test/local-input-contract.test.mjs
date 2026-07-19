@@ -273,6 +273,34 @@ test('preload flag misuse fails before Agent guards, snapshots, or IPC', async (
   }
 });
 
+test('nop rejects executable-card flags before Agent guards, snapshots, or IPC', async (t) => {
+  const agent = await startFakeAgent(t);
+  const args = [
+    'rule',
+    'node',
+    'add',
+    '--rule-id',
+    'r',
+    '--type',
+    'nop',
+    '--text',
+    'canvas note',
+    '--duration',
+    '5s',
+    '--interval',
+    '1s',
+    '--inputs',
+    '3',
+  ];
+
+  const payload = assertSingleConfig(await runCli(args, agent));
+  assert.match(payload.error.message, /--type nop does not accept executable-card option/);
+  assert.match(payload.error.message, /--duration/);
+  assert.match(payload.error.message, /--interval/);
+  assert.match(payload.error.message, /--inputs/);
+  assert.deepEqual(agent.frames, []);
+});
+
 test('exprHeight position rejects unsupported card types before Agent guards or IPC', async (t) => {
   const agent = await startFakeAgent(t);
   const result = await runCli(

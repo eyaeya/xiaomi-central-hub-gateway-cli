@@ -205,10 +205,10 @@ xgg rule logs <rule-id> --tail 20
 
 - 先跑 `xgg device spec <did>`，再选择属性、动作或事件，不要凭设备名猜字段。
 - `deviceOutput --value '$scope.id'` 表示变量引用；字符串字面值若以 `$` 开头，需要把第一个 `$` 写两次，例如 `--value '$$hello'` 实际写入 `$hello`。`rule export` 会自动添加这一层转义。
-- 连线完成后跑 `xgg rule layout <rule-id>`，让网页画布中的卡片按数据流排布。
+- 连线完成后跑 `xgg rule layout <rule-id>`，让可执行卡片按数据流排布；`nop` 的自由位置会保留，避免备注离开它所说明的区域。
 - 启用前跑 `xgg rule validate --rule-id <rule-id>` 和 `xgg rule lint --rule-id <rule-id> --strict`；启用后用 `xgg rule logs` 看真实触发日志。
 - 对 Agent 自测场景，可用 `onLoad` 作为触发节点，再通过 `rule disable` + `rule enable` 重放，不需要人类物理按按钮。
-- `nop` 只给网页画布添加备注，不参与连线或执行。纯文本用 `--text`；要保留标题、粗体、列表、对齐等格式，用 `--delta '<Quill ops JSON>'`（也接受 `{"ops":[...]}`），`rule export` / `rule import` 会无损往返 Delta、背景色和尺寸。
+- `nop` 只给网页画布添加备注，不参与连线或执行。纯文本用 `--text`；要保留标题、粗体、列表、对齐等格式，用 `--delta '<Quill ops JSON>'`（也接受 `{"ops":[...]}`），`rule export` / `rule import` 会无损往返 Delta、背景色、尺寸和位置，`rule layout` 不会搬动它。
 - 严格 lint 与 enable 会按目标 pin 的必需输入语义检查动作可达性，并把状态“可用 / 可能为 true / 可能为 false”分开。独立事件源只有 `onLoad`、`alarmClock`、`deviceInput`、`deviceInputSetVar`、`varChange`；`timeRange` 只提供可真可假的条件状态，不能直接启动事件路径，但可经 `statusLast` 的“状态持续为 true 后触发”桥接成事件。`register` 初值与 `setFalse` 提供 false，只有可达的 `setTrue` 再增加 true；因此 `condition.met` 要 trigger + may-true，`condition.unmet` 要 trigger + may-false，`statusLast` 也只接受 may-true。`eventSequence` 的每个事件输入都必须可达；`logicAnd` / `logicOr` / `logicNot` 按布尔语义传播真假状态，直接传播事件时仍需更新路径，`signalOr` 则任一路事件即可。`loop.stop` 与 `onlyNTimes.zero` 是控制输入，不能单独证明下游动作可执行。
 
 ### 离线校验候选规则

@@ -10,6 +10,7 @@ import {
   lintGraph,
   modeledNodePinNames,
   nodeSchemaForType,
+  relayoutGraph,
   renderExportedAsShell,
   validateGraph,
 } from '../dist/index.js';
@@ -142,6 +143,20 @@ test('nop validation rejects non-document Delta ops and executable edges', async
     /nop node failed its strict schema/,
   );
 
+  for (const invalid of [retainNode, wiredNode]) {
+    await assert.rejects(
+      exportRuleFromView(
+        { id: 'rule1', cfg: summary(), nodes: [invalid] },
+        { baseUrl, store: {} },
+        undefined,
+        true,
+      ),
+      (error) =>
+        error instanceof ConfigError &&
+        /cannot export nop node note1: strict schema failed/.test(error.message),
+    );
+  }
+
   const compactNode = nopNode({ cfg: { ...nopNode().cfg, simplified: true } });
   assert.equal(schema.safeParse(compactNode).success, false);
   await assert.rejects(
@@ -151,7 +166,9 @@ test('nop validation rejects non-document Delta ops and executable edges', async
       undefined,
       true,
     ),
-    (error) => error instanceof ConfigError && /exporter drops.*simplified/.test(error.message),
+    (error) =>
+      error instanceof ConfigError &&
+      /cannot export nop node note1: strict schema failed at cfg/.test(error.message),
   );
 
   // Adding a modeled nop must not consume the UnknownNode escape hatch used
@@ -245,7 +262,64 @@ test('nop shortcut rejects malformed Delta before session or gateway access', as
     ),
     (error) => error instanceof ConfigError && /executable cards, not nop/.test(error.message),
   );
+  await assert.rejects(
+    addNode(
+      {
+        ruleId: 'rule1',
+        shortcut: {
+          type: 'nop',
+          noteText: 'ignored-options',
+          duration: '5s',
+          interval: '1s',
+          inputs: 3,
+        },
+      },
+      gateway.deps,
+    ),
+    (error) =>
+      error instanceof ConfigError &&
+      /does not accept executable-card option\(s\): inputs, duration, interval/.test(error.message),
+  );
   assert.deepEqual(gateway.calls, []);
+});
+
+test('flow layout moves executable cards while preserving nop annotation position', async () => {
+  const gateway = statefulGateway();
+  const note = nopNode({
+    cfg: {
+      ...nopNode().cfg,
+      pos: { x: 910, y: 730, width: 456, height: 98 },
+    },
+  });
+  gateway.state.nodes = [
+    {
+      id: 'load',
+      type: 'onLoad',
+      cfg: {
+        pos: { x: 300, y: 240, width: 200, height: 120 },
+        name: 'onLoad',
+        version: 1,
+      },
+      inputs: {},
+      outputs: { output: [] },
+      props: {},
+    },
+    note,
+  ];
+
+  const result = await relayoutGraph('rule1', gateway.deps, {
+    validate: false,
+    varCheck: false,
+  });
+  assert.equal(result.nodeCount, 2);
+  assert.equal(result.moved, 1);
+  assert.deepEqual(gateway.state.nodes[0].cfg.pos, {
+    x: 40,
+    y: 40,
+    width: 200,
+    height: 120,
+  });
+  assert.deepEqual(gateway.state.nodes[1], note);
 });
 
 test('strict export and JSON import rendering preserve nop Delta, color, and size', async () => {

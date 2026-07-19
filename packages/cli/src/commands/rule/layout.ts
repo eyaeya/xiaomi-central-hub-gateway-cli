@@ -31,7 +31,7 @@ export function attachLayout(cmd: Command): void {
   const sub = cmd
     .command('layout <id>')
     .description(
-      'Flow-aware relayout: reposition every card by its wiring (run after edges are added)',
+      'Flow-aware relayout: reposition executable cards by wiring while preserving nop notes',
     )
     .option('--no-snapshot', 'skip the pre-write dump snapshot (NOT recommended)')
     .option('--no-validate', 'skip the web-UI save-button validator (NOT recommended)')

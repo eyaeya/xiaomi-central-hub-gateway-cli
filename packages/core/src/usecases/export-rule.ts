@@ -15,6 +15,7 @@ import {
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { durationToMilliseconds, isDurationUnit } from '../schemas/nodes/duration.js';
+import { NopNode } from '../schemas/nodes/nop.js';
 import { nodeSchemaForType } from '../schemas/nodes/registry.js';
 import { isValidVariableIdentifier } from '../schemas/variable-identifier.js';
 import { isValidVariableScopeName } from '../schemas/variable.js';
@@ -973,28 +974,31 @@ function simpleNode(
   };
 }
 
-function renderNop(n: {
-  id: string;
-  cfg?: Record<string, unknown>;
-}): ExportedCommand {
-  const contents = n.cfg?.contents;
-  const background = n.cfg?.background;
-  if (!Array.isArray(contents) || typeof background !== 'string' || background.length === 0) {
+function renderNop(n: unknown): ExportedCommand {
+  const parsed = NopNode.safeParse(n);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    const path = first?.path.length ? first.path.join('.') : '<root>';
+    const nodeId =
+      n !== null && typeof n === 'object' && typeof (n as { id?: unknown }).id === 'string'
+        ? (n as { id: string }).id
+        : '<unknown>';
     throw new ConfigError(
-      `cannot export nop node ${n.id}: cfg.contents must be a Quill operations array and cfg.background must be a non-empty string`,
-      { nodeId: n.id },
+      `cannot export nop node ${nodeId}: strict schema failed at ${path}: ${first?.message ?? 'invalid nop node'}`,
+      { nodeId, path },
     );
   }
+  const node = parsed.data;
   return {
     kind: 'node-add',
-    nodeId: n.id,
+    nodeId: node.id,
     type: 'nop',
     flags: [
-      { name: '--id', value: n.id },
+      { name: '--id', value: node.id },
       { name: '--type', value: 'nop' },
-      ...cfgFlagsFromCfg(n.cfg, false, false),
-      { name: '--delta', value: JSON.stringify(contents), needsQuoting: true },
-      { name: '--background', value: background, needsQuoting: true },
+      ...cfgFlagsFromCfg(node.cfg, false, false),
+      { name: '--delta', value: JSON.stringify(node.cfg.contents), needsQuoting: true },
+      { name: '--background', value: node.cfg.background, needsQuoting: true },
     ],
     comment: 'nop canvas note (lossless Quill Delta)',
   };

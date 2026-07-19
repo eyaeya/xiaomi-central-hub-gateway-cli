@@ -933,6 +933,53 @@ function assertNopShortcutUsage(shortcut: AddNodeShortcut): void {
   if (shortcut.noteBackground !== undefined && shortcut.noteBackground.length === 0) {
     throw new ConfigError('nop shortcut --background must not be empty');
   }
+  const unsupported = Object.entries({
+    deviceDid: shortcut.deviceDid,
+    deviceSiid: shortcut.deviceSiid,
+    deviceProperty: shortcut.deviceProperty,
+    deviceAction: shortcut.deviceAction,
+    deviceEvent: shortcut.deviceEvent,
+    deviceEventArgs: shortcut.deviceEventArgs,
+    deviceEventArgVars: shortcut.deviceEventArgVars,
+    threshold: shortcut.threshold,
+    propertyValue: shortcut.propertyValue,
+    op: shortcut.op,
+    params: shortcut.params,
+    value: shortcut.value,
+    forceOutOfRange: shortcut.forceOutOfRange,
+    inputs: shortcut.inputs,
+    duration: shortcut.duration,
+    interval: shortcut.interval,
+    start: shortcut.start,
+    end: shortcut.end,
+    mingTextShow: shortcut.mingTextShow,
+    weekdayOnly: shortcut.weekdayOnly,
+    holidayOnly: shortcut.holidayOnly,
+    days: shortcut.days,
+    varScope: shortcut.varScope,
+    varId: shortcut.varId,
+    varType: shortcut.varType,
+    varValue: shortcut.varValue,
+    threshold2: shortcut.threshold2,
+    allowUnknownScope: shortcut.allowUnknownScope,
+    expr: shortcut.expr,
+    defaultExprScope: shortcut.defaultExprScope,
+    outputsCount: shortcut.outputsCount,
+    at: shortcut.at,
+    sunrise: shortcut.sunrise,
+    sunset: shortcut.sunset,
+    offsetMin: shortcut.offsetMin,
+    latitude: shortcut.latitude,
+    longitude: shortcut.longitude,
+  })
+    .filter(([, value]) => value !== undefined)
+    .map(([field]) => field);
+  if (unsupported.length > 0) {
+    throw new ConfigError(
+      `nop shortcut does not accept executable-card option(s): ${unsupported.join(', ')}`,
+      { fields: unsupported },
+    );
+  }
   if (shortcut.noteDelta !== undefined) {
     const parsed = NopContents.safeParse(shortcut.noteDelta);
     if (!parsed.success) {
@@ -3707,7 +3754,8 @@ export interface RelayoutGraphResult {
   moved: number;
 }
 
-// Flow-aware relayout (`xgg rule layout`): re-position every card by its wiring.
+// Flow-aware relayout (`xgg rule layout`): re-position every executable card
+// by its wiring while retaining free-form nop canvas-note positions.
 // The per-node auto-layout (card-geometry) runs at add-time before edges exist,
 // so it can only flow by insertion order; run this ONCE after the graph is fully
 // wired to arrange cards by data flow — triggers left, each node right of its
@@ -3733,9 +3781,14 @@ async function relayoutGraphWithinWorkflow(
   for (const raw of current.nodes) {
     const node = raw as {
       id: string;
+      type?: unknown;
       cfg?: { pos?: Record<string, unknown> };
       outputs?: Record<string, unknown>;
     };
+    // A nop note has no connector semantics and its position conveys which
+    // region of the canvas it annotates. Treating it as an isolated component
+    // would move it into an unrelated band and destroy that spatial meaning.
+    if (node.type === 'nop') continue;
     const pos = node.cfg?.pos ?? {};
     layoutNodes.push({
       id: node.id,

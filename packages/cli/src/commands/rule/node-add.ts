@@ -127,6 +127,51 @@ function assertNopOptionUsage(opts: NodeAddOpts): void {
   if (opts.background !== undefined && opts.background.length === 0) {
     throw new ConfigError('--background must not be empty');
   }
+  const unsupported = [
+    ...(opts.deviceDid !== undefined ? ['--device-did'] : []),
+    ...(opts.deviceSiid !== undefined ? ['--device-siid'] : []),
+    ...(opts.deviceProperty !== undefined ? ['--device-property'] : []),
+    ...(opts.deviceAction !== undefined ? ['--device-action'] : []),
+    ...(opts.deviceEvent !== undefined ? ['--device-event'] : []),
+    ...((opts.eventFilter?.length ?? 0) > 0 ? ['--event-filter'] : []),
+    ...((opts.eventArgVar?.length ?? 0) > 0 ? ['--event-arg-var'] : []),
+    ...(opts.threshold !== undefined ? ['--threshold'] : []),
+    ...(opts.propertyValue !== undefined ? ['--property-value'] : []),
+    ...(opts.op !== undefined ? ['--op'] : []),
+    ...(opts.params !== undefined ? ['--params'] : []),
+    ...(opts.value !== undefined ? ['--value'] : []),
+    ...(opts.forceOutOfRange === true ? ['--force-out-of-range'] : []),
+    ...(opts.allowNoPush === true ? ['--allow-no-push'] : []),
+    ...(opts.inputs !== undefined ? ['--inputs'] : []),
+    ...(opts.duration !== undefined ? ['--duration'] : []),
+    ...(opts.interval !== undefined ? ['--interval'] : []),
+    ...(opts.start !== undefined ? ['--start'] : []),
+    ...(opts.end !== undefined ? ['--end'] : []),
+    ...(opts.mingTextShow !== undefined ? ['--ming-text-show'] : []),
+    ...(opts.weekdayOnly === true ? ['--weekday-only'] : []),
+    ...(opts.holidayOnly === true ? ['--holiday-only'] : []),
+    ...(opts.days !== undefined ? ['--days'] : []),
+    ...(opts.varScope !== undefined ? ['--var-scope'] : []),
+    ...(opts.varId !== undefined ? ['--var-id'] : []),
+    ...(opts.varType !== undefined ? ['--var-type'] : []),
+    ...(opts.varValue !== undefined ? ['--var-value'] : []),
+    ...(opts.threshold2 !== undefined ? ['--threshold2'] : []),
+    ...(opts.allowUnknownScope === true ? ['--allow-unknown-scope'] : []),
+    ...(opts.at !== undefined ? ['--at'] : []),
+    ...(opts.sunrise === true ? ['--sunrise'] : []),
+    ...(opts.sunset === true ? ['--sunset'] : []),
+    ...(opts.offsetMin !== undefined ? ['--offset-min'] : []),
+    ...(opts.latitude !== undefined ? ['--latitude'] : []),
+    ...(opts.longitude !== undefined ? ['--longitude'] : []),
+    ...(opts.expr !== undefined ? ['--expr'] : []),
+    ...(opts.defaultExprScope !== undefined ? ['--default-expr-scope'] : []),
+    ...(opts.outputs !== undefined ? ['--outputs'] : []),
+  ];
+  if (unsupported.length > 0) {
+    throw new ConfigError(
+      `--type nop does not accept executable-card option(s): ${unsupported.join(', ')}`,
+    );
+  }
 }
 
 function parseFiniteDecimal(raw: string): number {
