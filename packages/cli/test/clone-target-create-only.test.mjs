@@ -56,7 +56,9 @@ async function captureStdout(fn) {
 }
 
 async function fakeAgent(t, mode) {
-  const root = await mkdtemp(join(tmpdir(), `xgg-clone-create-only-${mode}-`));
+  // Keep the Unix-domain socket below macOS's short sun_path limit even when
+  // the test mode name grows.
+  const root = await mkdtemp(join(tmpdir(), 'xgg-clone-'));
   const socketPath = join(root, 'agent.sock');
   const sessionFile = join(root, 'session.json');
   const bodyFile = join(root, 'body.json');
@@ -64,6 +66,7 @@ async function fakeAgent(t, mode) {
   const calls = [];
   let graphListReads = 0;
   const state = { cfg: summary(), nodes: [existingNode()] };
+  if (mode === 'in-place-enabled') state.cfg.enable = true;
   const server = await createIpcServer({
     path: socketPath,
     handler: async ({ method, params, kind }) => {
@@ -73,7 +76,10 @@ async function fakeAgent(t, mode) {
       if (method === '/api/getGraphList') {
         graphListReads += 1;
         const visible =
-          mode === 'existing' || mode === 'in-place' || (mode === 'late' && graphListReads > 1);
+          mode === 'existing' ||
+          mode === 'in-place' ||
+          mode === 'in-place-enabled' ||
+          (mode === 'late' && graphListReads > 1);
         return visible ? [structuredClone(state.cfg)] : [];
       }
       if (method === '/api/getGraph') {
@@ -123,7 +129,7 @@ async function fakeAgent(t, mode) {
   return { bodyFile, calls, sessionFile, snapshotsDir, state };
 }
 
-function args(agent, expectAbsent = true) {
+function args(agent, expectAbsent = true, allowCfgOverwrite = false) {
   return [
     'node',
     'xgg',
@@ -132,6 +138,7 @@ function args(agent, expectAbsent = true) {
     '--body',
     agent.bodyFile,
     ...(expectAbsent ? ['--expect-absent'] : []),
+    ...(allowCfgOverwrite ? ['--allow-cfg-overwrite'] : []),
     '--base-url',
     baseUrl,
     '--session-file',
@@ -195,4 +202,22 @@ test('rule set without --expect-absent preserves same-id in-place replay semanti
   assert.equal(payload.cfgPreserved, true);
   assert.deepEqual(agent.state.nodes, []);
   assert.equal(agent.calls.filter((call) => call.method === '/api/setGraph').length, 1);
+});
+
+test('rule set --allow-cfg-overwrite atomically stages an existing enabled target as disabled', async (t) => {
+  const agent = await fakeAgent(t, 'in-place-enabled');
+  assert.equal(agent.state.cfg.enable, true);
+
+  const stdout = await captureStdout(() => buildProgram().parseAsync(args(agent, false, true)));
+  const payload = JSON.parse(stdout);
+
+  assert.equal(payload.ok, true);
+  assert.equal(payload.id, targetId);
+  assert.equal(payload.cfgPreserved, false);
+  assert.equal(agent.state.cfg.enable, false);
+  assert.equal(agent.state.cfg.userData.name, 'clone body');
+  const writes = agent.calls.filter((call) => call.method === '/api/setGraph');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].params.cfg.enable, false);
+  assert.deepEqual(writes[0].params.nodes, []);
 });

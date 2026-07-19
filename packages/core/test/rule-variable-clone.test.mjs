@@ -658,6 +658,7 @@ if (process.env.XGG_CONFLICT === '1' && args[0] === 'variable' && args[1] === 'c
     ['check:a', 'check:z', 'create:a', 'create:z', 'rule:set'],
   );
   assert.equal(successCalls.at(-1).includes('--expect-absent'), false);
+  assert.equal(successCalls.at(-1).includes('--allow-cfg-overwrite'), true);
 });
 
 test('create-only clone guards and creates an absent rule before variable writes and stops on a late target', async (t) => {
@@ -764,6 +765,7 @@ if (process.env.XGG_LATE_TARGET === '1' && args[0] === 'rule' && args[1] === 'se
     ['check:a', 'check:z', 'rule:set', 'create:a', 'create:z'],
   );
   assert.equal(successCalls[2].includes('--expect-absent'), true);
+  assert.equal(successCalls[2].includes('--allow-cfg-overwrite'), true);
 
   const noVariables = applyRename(
     { ...source, commands: source.commands.filter((item) => item.kind !== 'variable-create') },

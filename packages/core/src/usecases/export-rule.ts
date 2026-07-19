@@ -2229,7 +2229,7 @@ export function renderExportedAsShell(
         lines.push(cmd.bodyJson);
         lines.push(delimiter);
         lines.push(
-          `"$XGG" rule set --body "$RULE_BODY_FILE"${cmd.expectAbsent === true ? ' --expect-absent' : ''} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
+          `"$XGG" rule set --body "$RULE_BODY_FILE"${cmd.expectAbsent === true ? ' --expect-absent' : ''} --allow-cfg-overwrite --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
         );
         lines.push('');
         // A create-only clone must run the guarded rule create before any

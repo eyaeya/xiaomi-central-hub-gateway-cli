@@ -80,10 +80,11 @@ appendFileSync(process.env.XGG_CAPTURE, JSON.stringify(process.argv.slice(2)) + 
   assert.equal(calls.length, 4);
 
   assert.deepEqual(calls[0].slice(0, 3), ['rule', 'set', '--body']);
-  assert.equal(calls[0][4], '--snapshots-dir');
-  assert.equal(calls[0][5], snapshotsDir);
-  assert.equal(calls[0][6], '--base-url');
-  assert.equal(calls[0][7], baseUrl);
+  assert.equal(calls[0][4], '--allow-cfg-overwrite');
+  assert.equal(calls[0][5], '--snapshots-dir');
+  assert.equal(calls[0][6], snapshotsDir);
+  assert.equal(calls[0][7], '--base-url');
+  assert.equal(calls[0][8], baseUrl);
   await assert.rejects(access(calls[0][3]), { code: 'ENOENT' });
 
   assert.deepEqual(calls[1], [
@@ -123,4 +124,49 @@ appendFileSync(process.env.XGG_CAPTURE, JSON.stringify(process.argv.slice(2)) + 
     '--base-url',
     baseUrl,
   ]);
+});
+
+test('shell replay stages disabled before graph assembly and only restores exported enabled state last', () => {
+  const body = JSON.stringify({
+    id: 'safe-replay',
+    nodes: [],
+    cfg: { id: 'safe-replay', enable: false },
+  });
+  const commands = [
+    { kind: 'rule-set-body', bodyJson: body, description: 'disabled shell' },
+    {
+      kind: 'node-add',
+      nodeId: 'source',
+      type: 'onLoad',
+      flags: [
+        { name: '--id', value: 'source' },
+        { name: '--type', value: 'onLoad' },
+      ],
+      comment: 'source',
+    },
+    { kind: 'edge-add', from: 'source:output', to: 'sink:input' },
+  ];
+
+  const disabled = renderExportedAsShell({
+    ruleId: 'safe-replay',
+    ruleName: 'disabled replay',
+    enable: false,
+    commands,
+    warnings: [],
+  });
+  const setIndex = disabled.indexOf('rule set --body');
+  const nodeIndex = disabled.indexOf('rule node add');
+  const edgeIndex = disabled.indexOf('rule edge add');
+  assert.ok(setIndex >= 0 && setIndex < nodeIndex && nodeIndex < edgeIndex);
+  assert.match(disabled, /rule set --body[^\n]* --allow-cfg-overwrite /);
+  assert.doesNotMatch(disabled, /rule enable/);
+
+  const enabled = renderExportedAsShell({
+    ruleId: 'safe-replay',
+    ruleName: 'enabled replay',
+    enable: true,
+    commands: [...commands, { kind: 'rule-enable' }],
+    warnings: [],
+  });
+  assert.ok(enabled.indexOf('rule enable') > enabled.indexOf('rule edge add'));
 });

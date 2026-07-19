@@ -51,9 +51,9 @@ export function attachExport(cmd: Command): void {
       `
 Examples:
   $ xgg rule export 1779888258312
-      # Emits a runnable bash script on stdout. The script preserves
-      # the original node ids via --id flags and re-enables the rule
-      # if the source was enabled.
+      # Emits a runnable bash script on stdout. Its first target-graph write
+      # installs an empty shell with enable=false; every node/edge is rebuilt
+      # while disabled, then source enable state is restored last.
 
   $ xgg rule export 1779888258312 --format json --pretty
       # Emits the structured ExportedRule (commands array) as JSON for
@@ -75,6 +75,14 @@ Examples:
       # Clone with an explicit name.
 
 Limitations:
+  - Same-id replay is deliberately destructive: its first guarded graph write
+    replaces the target cfg/body with the exported empty shell and enable=false.
+    Nodes and edges are then rebuilt while disabled; an enabled export appends
+    rule enable only after assembly. The script uses separate CLI transactions,
+    not one replay-wide lease: do not concurrently modify the target from the
+    web canvas, another xgg process, or an API client. A failure after the
+    staging graph write leaves a disabled partial graph; use the emitted
+    rollback snapshots to inspect or restore it.
   - --strict-roundtrip rejects modeled-node warnings that would change or omit
     graph semantics, including stale spec mappings, unsupported operands and
     unknown modeled cfg/props keys. Unmodeled future cards are preserved as
