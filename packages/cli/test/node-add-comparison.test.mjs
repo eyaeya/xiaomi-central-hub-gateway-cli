@@ -17,6 +17,29 @@ test('node-add help exposes a raw string-property comparison flag', () => {
   assert.match(help, /string-property\s+equality literal/);
 });
 
+test('node-add exposes explicit preload true/false without hiding omission', () => {
+  const omitted = nodeAddCommand(buildProgram());
+  assert.ok(omitted);
+  omitted.parseOptions([]);
+  assert.equal(omitted.opts().preload, undefined);
+
+  const enabled = nodeAddCommand(buildProgram());
+  assert.ok(enabled);
+  enabled.parseOptions(['--preload']);
+  assert.equal(enabled.opts().preload, true);
+
+  const disabled = nodeAddCommand(buildProgram());
+  assert.ok(disabled);
+  disabled.parseOptions(['--no-preload']);
+  assert.equal(disabled.opts().preload, false);
+
+  const help = disabled.helpInformation();
+  assert.match(help, /--preload/);
+  assert.match(help, /--no-preload/);
+  assert.match(help, /official new-card default/);
+  assert.match(help, /historical eager deviceInput behavior/);
+});
+
 test('numeric thresholds reject parseFloat-style trailing junk before command action', () => {
   const add = nodeAddCommand(buildProgram());
   assert.ok(add);

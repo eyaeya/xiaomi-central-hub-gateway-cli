@@ -123,6 +123,27 @@ function assertSimplifiedUsage(opts: NodeAddOpts): void {
   );
 }
 
+function assertPreloadUsage(opts: NodeAddOpts): void {
+  if (opts.preload === undefined) return;
+  if (opts.cfg !== undefined) {
+    throw new ConfigError(
+      '--preload/--no-preload is typed-shortcut-only and cannot be combined with --cfg',
+    );
+  }
+  if (opts.type === 'varChange') return;
+  if (
+    (opts.type === 'deviceInput' || opts.type === 'deviceInputSetVar') &&
+    opts.deviceDid !== undefined &&
+    opts.deviceProperty !== undefined &&
+    opts.deviceEvent === undefined
+  ) {
+    return;
+  }
+  throw new ConfigError(
+    `--preload/--no-preload only applies to deviceInput/deviceInputSetVar property-mode shortcuts and varChange (got --type ${opts.type})`,
+  );
+}
+
 interface NodeAddOpts extends RuleOpts {
   ruleId: string;
   type: string;
@@ -158,6 +179,7 @@ interface NodeAddOpts extends RuleOpts {
   value?: string;
   forceOutOfRange?: boolean;
   allowNoPush?: boolean;
+  preload?: boolean;
   pos?: { x: number; y: number; width: number; height: number; exprHeight?: number };
   simplified?: boolean;
   // M10 F17 — non-device shortcut flags
@@ -276,6 +298,14 @@ export function attachNodeAdd(cmd: Command): void {
     .option(
       '--allow-no-push',
       'silence F17 warning for deviceInput state-mode on pushAvailable=false devices',
+    )
+    .option(
+      '--preload',
+      'query once when the rule is enabled (deviceInput/deviceInputSetVar property mode, or varChange); restores the historical eager deviceInput behavior',
+    )
+    .option(
+      '--no-preload',
+      'do not query once when the rule is enabled (same supported modes; explicit form of the official new-card default)',
     )
     .option(
       '--pos <x,y,width,height[,exprHeight]>',
@@ -460,6 +490,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
         assertPropertyValueUsage(opts);
         assertPositionUsage(opts);
         assertSimplifiedUsage(opts);
+        assertPreloadUsage(opts);
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
@@ -526,6 +557,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             ...(opts.threshold !== undefined && { threshold: opts.threshold }),
             ...(opts.varValue !== undefined && { varValue: opts.varValue }),
             ...(opts.threshold2 !== undefined && { threshold2: opts.threshold2 }),
+            ...(opts.preload !== undefined && { preload: opts.preload }),
             ...(opts.allowUnknownScope === true && { allowUnknownScope: true }),
             ...(opts.at !== undefined && { at: opts.at }),
             ...(opts.sunrise === true && { sunrise: true }),
@@ -606,6 +638,7 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
             ...(parsedParams !== undefined && { params: parsedParams }),
             ...(opts.value !== undefined && { value: opts.value }),
             ...(opts.forceOutOfRange === true && { forceOutOfRange: true }),
+            ...(opts.preload !== undefined && { preload: opts.preload }),
             ...(opts.varScope !== undefined && { varScope: opts.varScope }),
             ...(opts.varId !== undefined && { varId: opts.varId }),
           };

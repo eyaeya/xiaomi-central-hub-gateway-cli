@@ -258,7 +258,7 @@ test('string property shortcut creates, validates, exports, and replays without 
     dtype: 'string',
     operator: '=',
     v1: '00123',
-    preload: true,
+    preload: false,
   });
   assert.deepEqual(props['string-get'], {
     did,
@@ -267,7 +267,6 @@ test('string property shortcut creates, validates, exports, and replays without 
     dtype: 'string',
     operator: '=',
     v1: '待机 模式',
-    preload: true,
   });
   assert.equal(nodeSchemaForType('deviceInput').safeParse(source.state.nodes[0]).success, true);
   assert.equal(nodeSchemaForType('deviceGet').safeParse(source.state.nodes[1]).success, true);
@@ -399,7 +398,6 @@ test('continuous float property shortcut keeps its numeric comparison contract',
     operator: 'between',
     v1: 19.5,
     v2: 24.75,
-    preload: true,
   });
 
   const invalid = createStatefulGateway();
