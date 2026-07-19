@@ -7,13 +7,18 @@ import {
   deleteBackup,
   downloadBackup,
   dumpBeforeWrite,
+  exportLocalBackup,
   extractBackupProgressId,
   generateBackup,
   getBackupConfig,
   getBackupProgress,
+  importLocalBackup,
   listBackups,
   loadBackup,
+  planLocalBackupImport,
+  readLocalBackup,
   setBackupConfig,
+  validateLocalBackupPayload,
   waitForBackupProgress,
 } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
@@ -26,11 +31,14 @@ import {
   runMutationWorkflow,
 } from './_mutation-guard.js';
 
-interface BackupOpts {
+interface GatewayOpts {
   baseUrl?: string;
   sessionFile?: string;
   timeout: string;
   pretty?: boolean;
+}
+
+interface BackupOpts extends GatewayOpts {
   from: string;
   // Optional poll-to-100 on create/download; load always waits, and this flag
   // controls whether terminal progress is included in its JSON output.
@@ -68,6 +76,18 @@ interface SetConfigOpts extends MutationOpts {
   autoBackupLimit?: string;
 }
 
+interface LocalExportOpts extends GatewayOpts {
+  output: string;
+  overwrite?: boolean;
+}
+
+interface LocalImportOpts extends GatewayOpts {
+  input: string;
+  dryRun?: boolean;
+  confirmReplaceAll?: boolean;
+  snapshotsDir?: string;
+}
+
 interface ParsedWaitOptions {
   enabled: boolean;
   pollIntervalMs?: number;
@@ -76,7 +96,7 @@ interface ParsedWaitOptions {
 
 type BackupWaitOperation = 'backup.create' | 'backup.download';
 
-function makeDeps(opts: BackupOpts) {
+function makeDeps(opts: GatewayOpts) {
   const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
   if (!baseUrl) throw new ConfigError('missing --base-url or XGG_BASE_URL');
   const timeoutMs = parsePositiveTimerMs(opts.timeout, '--timeout');
@@ -84,16 +104,23 @@ function makeDeps(opts: BackupOpts) {
   return { baseUrl, store, timeoutMs };
 }
 
-// F26: gateway currently exposes a single vocab ("fds"); keep --from optional
-// with that default so terminal use is one keystroke shorter. AI agents can
-// still pin the vocab explicitly to survive future expansion.
-function addCommonOptions(cmd: Command, prettyHelp = 'pretty-print JSON output'): Command {
+function addGatewayOptions(cmd: Command, prettyHelp = 'pretty-print JSON output'): Command {
   return cmd
-    .option('--from <from>', 'backup source vocabulary; current gateway builds use fds', 'fds')
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
     .option('--timeout <ms>', 'request timeout in milliseconds', '10000')
     .option('--pretty', prettyHelp);
+}
+
+// F26: gateway currently exposes a single vocab ("fds"); keep --from optional
+// with that default so terminal use is one keystroke shorter. AI agents can
+// still pin the vocab explicitly to survive future expansion.
+function addCommonOptions(cmd: Command, prettyHelp = 'pretty-print JSON output'): Command {
+  return addGatewayOptions(cmd, prettyHelp).option(
+    '--from <from>',
+    'backup source vocabulary; current gateway builds use fds',
+    'fds',
+  );
 }
 
 function addTargetOptions(cmd: Command): Command {
@@ -238,6 +265,80 @@ async function snapshotBeforeBackupWrite(
 
 export function backupCommand(): Command {
   const cmd = new Command('backup').description('Backup operations');
+
+  addGatewayOptions(
+    cmd
+      .command('local-export')
+      .description('Export all rules and variables to an official-format local .bak')
+      .requiredOption('--output <path>', 'destination .bak path')
+      .option('--overwrite', 'atomically replace an existing destination')
+      .addHelpText(
+        'after',
+        '\nExample:\n  $ xgg backup local-export --output ./gateway-rules.bak\n  # Read-only gateway operation; the destination is published atomically.',
+      ),
+  ).action(
+    wrap('backup.local-export', async (opts: LocalExportOpts) => {
+      const deps = makeDeps(opts);
+      const result = await exportLocalBackup(opts.output, deps, {
+        overwrite: opts.overwrite === true,
+      });
+      emit({ ok: true, ...result }, { pretty: opts.pretty === true });
+    }),
+  );
+
+  addGatewayOptions(
+    cmd
+      .command('local-import')
+      .description('Validate/plan or replace all rules and variables from a local .bak')
+      .requiredOption('--input <path>', 'source .bak path')
+      .option('--dry-run', 'report the complete live delete/create plan without writing')
+      .option(
+        '--confirm-replace-all',
+        'perform the destructive replace-all import after a mandatory rollback snapshot',
+      )
+      .option(
+        '--snapshots-dir <path>',
+        'directory for the mandatory pre-write snapshot (env: XGG_SNAPSHOTS_DIR)',
+      )
+      .addHelpText(
+        'after',
+        '\nExamples:\n  $ xgg backup local-import --input ./gateway-rules.bak --dry-run\n  $ xgg backup local-import --input ./gateway-rules.bak --confirm-replace-all --snapshots-dir ./snapshots/\n\nImport verifies SHA-256, bounded deflate, payload schema, variables, and every rule before session access. Applying always snapshots first, holds one mutation lease, and stops on the first failure.',
+      ),
+  ).action(
+    wrap('backup.local-import', async (opts: LocalImportOpts) => {
+      // File integrity and all deterministic payload checks deliberately run
+      // before base-url/session/snapshot handling.
+      const payload = await readLocalBackup(opts.input);
+      await validateLocalBackupPayload(payload);
+      const dryRun = opts.dryRun === true;
+      const confirmed = opts.confirmReplaceAll === true;
+      if (dryRun === confirmed) {
+        throw new ConfigError(
+          'choose exactly one of --dry-run or --confirm-replace-all for local import',
+        );
+      }
+
+      if (dryRun) {
+        const deps = makeDeps(opts);
+        const plan = await planLocalBackupImport(payload, deps);
+        emit({ ok: true, dryRun: true, plan }, { pretty: opts.pretty === true });
+        return;
+      }
+
+      const guard = assertAgentModeOrSnapshotsDir({
+        snapshot: true,
+        ...(opts.snapshotsDir !== undefined && { snapshotsDir: opts.snapshotsDir }),
+      });
+      const deps = makeDeps(opts);
+      const result = await runMutationWorkflow('backup.local-import', deps, () =>
+        importLocalBackup(payload, deps, {
+          confirmReplaceAll: true,
+          ...(guard.snapshotsDir !== undefined && { snapshotsDir: guard.snapshotsDir }),
+        }),
+      );
+      emit({ ok: true, dryRun: false, ...result }, { pretty: opts.pretty === true });
+    }),
+  );
 
   addCommonOptions(
     cmd

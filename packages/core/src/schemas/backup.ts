@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Node, RuleSummary } from './rule.js';
+import { VarEntry } from './variable.js';
 
 export const BackupListRequest = z
   .object({
@@ -150,6 +151,48 @@ export const BackupContentRule = z
   })
   .passthrough();
 export type BackupContentRule = z.infer<typeof BackupContentRule>;
+
+/**
+ * Local `.bak` payload emitted by the official web bundle's
+ * `jr.generateBackup()` path. Version 2 stores complete rule graphs and the
+ * full scope/id variable map before the binary deflate + digest envelope is
+ * applied.
+ */
+export interface LocalBackupPayload {
+  version: 2;
+  rules: BackupContentRule[];
+  variables: Record<string, Record<string, VarEntry>>;
+}
+
+export const LocalBackupPayload: z.ZodType<LocalBackupPayload> = z
+  .object({
+    version: z.literal(2),
+    rules: z.array(BackupContentRule),
+    variables: z.record(z.record(VarEntry)),
+  })
+  .passthrough()
+  .superRefine((payload, ctx) => {
+    const seen = new Set<string>();
+    for (let index = 0; index < payload.rules.length; index += 1) {
+      const rule = payload.rules[index];
+      if (rule === undefined) continue;
+      if (seen.has(rule.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['rules', index, 'id'],
+          message: `duplicate local-backup rule id: ${rule.id}`,
+        });
+      }
+      seen.add(rule.id);
+      if (rule.cfg.id !== rule.id) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['rules', index, 'cfg', 'id'],
+          message: `local-backup rule id mismatch: rule=${rule.id}, cfg=${rule.cfg.id}`,
+        });
+      }
+    }
+  });
 
 export const BackupContent = z
   .object({
