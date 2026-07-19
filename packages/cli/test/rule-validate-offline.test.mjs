@@ -39,6 +39,33 @@ function graph() {
   };
 }
 
+function variableGraph(scope) {
+  return {
+    id: '123',
+    nodes: [
+      {
+        id: 'mode-change',
+        type: 'varChange',
+        cfg: {
+          pos: { x: 0, y: 0, width: 532, height: 160 },
+          name: 'varChange',
+          version: 1,
+        },
+        inputs: {},
+        outputs: { output: [] },
+        props: {
+          scope,
+          id: 'mode',
+          varType: 'number',
+          preload: false,
+          operator: '=',
+          v1: 1,
+        },
+      },
+    ],
+  };
+}
+
 function spec() {
   return {
     type: urn,
@@ -126,6 +153,33 @@ test('--body and --stdin remain offline even when daemon env is configured', asy
   assert.equal(stdinPayload.specAware, false);
   assert.deepEqual(stdinPayload.issues, []);
   assert.equal(existsSync(paths.markerPath), false, '--stdin unexpectedly invoked fetch');
+});
+
+test('offline validation enforces current-rule scope without requiring a variable inventory', async (t) => {
+  const paths = await fixture(t, 'reject');
+
+  const foreign = runCli(
+    ['rule', 'validate', '--stdin', '--no-next-hint'],
+    paths,
+    JSON.stringify(variableGraph('R999')),
+  );
+  assert.equal(foreign.status, 2, foreign.stderr);
+  assert.equal(foreign.stderr, '');
+  const foreignPayload = JSON.parse(foreign.stdout);
+  assert.equal(foreignPayload.ok, false);
+  assert.deepEqual(foreignPayload.summary, { errors: 1, warnings: 0 });
+  assert.equal(foreignPayload.issues[0]?.path, 'nodes[0].props.scope');
+  assert.match(foreignPayload.issues[0]?.message ?? '', /R999.*"global".*"R123"/);
+
+  const local = parseSuccess(
+    runCli(
+      ['rule', 'validate', '--stdin', '--no-next-hint'],
+      paths,
+      JSON.stringify(variableGraph('R123')),
+    ),
+  );
+  assert.deepEqual(local.issues, []);
+  assert.equal(existsSync(paths.markerPath), false, 'offline scope validation invoked fetch');
 });
 
 test('--spec-aware is an explicit public-spec entry while local input stays daemon-free', async (t) => {

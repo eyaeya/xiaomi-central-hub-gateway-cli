@@ -373,6 +373,23 @@ test('clone snapshots referenced local variables, remaps every supported referen
     fake.calls.map((call) => call.method),
     ['/api/getVarList', '/api/getDevList'],
   );
+
+  const shell = renderExportedAsShell(exported);
+  const variableLines = shell
+    .split('\n')
+    .filter((line) => line.includes(' variable create --scope '));
+  const preflightLines = variableLines.filter((line) => line.includes(' --check-only'));
+  const createLines = variableLines.filter((line) => !line.includes(' --check-only'));
+  assert.ok(preflightLines.length > 0);
+  assert.ok(createLines.length > 0);
+  assert.equal(
+    preflightLines.every((line) => line.includes(' --allow-unknown-scope')),
+    true,
+  );
+  assert.equal(
+    createLines.every((line) => !line.includes(' --allow-unknown-scope')),
+    true,
+  );
 });
 
 test('applyRename remaps an already-cloned export again while name-only changes leave scopes untouched', async () => {

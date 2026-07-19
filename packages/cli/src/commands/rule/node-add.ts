@@ -4,7 +4,9 @@ import {
   dumpBeforeWrite,
   getDevice,
   nodeSchemaForType,
+  parseEventArgVarTarget,
   parseFiniteDecimalLiteral,
+  parseVarSetExpr,
 } from '@eyaeya/xgg-core';
 import type { AddNodeShortcut } from '@eyaeya/xgg-core';
 import { type Command, InvalidArgumentError } from 'commander';
@@ -18,6 +20,7 @@ import {
 } from '../../agent-hints.js';
 import { parseJsonInput } from '../../local-input.js';
 import { emit } from '../../output.js';
+import { warnIfUnknownRuleNodeScope } from '../../variable-scope-awareness.js';
 import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
@@ -26,22 +29,39 @@ import {
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
-// M10 F29 reuse: varChange shortcuts reference a variable scope; warn if
-// it's not the only web-UI-known scope (`global`). Mirrors the warning
-// emitted by `variable create` (packages/cli/src/commands/variable.ts).
-const KNOWN_UI_SCOPES = new Set(['global']);
+function collectShortcutVariableScopes(
+  opts: NodeAddOpts,
+  parsedParams: Record<string, unknown> | undefined,
+): string[] {
+  const scopes = new Set<string>();
+  if (opts.varScope !== undefined) scopes.add(opts.varScope);
 
-function warnIfGhostScope(
-  type: string,
-  scope: string | undefined,
-  allow: boolean | undefined,
-): void {
-  if (allow === true) return;
-  if (scope === undefined) return;
-  if (KNOWN_UI_SCOPES.has(scope)) return;
-  process.stderr.write(
-    `[xgg rule node add ${type}] warning: --var-scope "${scope}" is not in the web-UI-known set (${[...KNOWN_UI_SCOPES].join(', ')}); the gateway will store the reference but the variable is invisible in the 米家网关 UI and may never fire. Pass --allow-unknown-scope to silence (M10 F29).\n`,
-  );
+  for (const raw of opts.eventArgVar ?? []) {
+    scopes.add(parseEventArgVarTarget(raw).scope);
+  }
+
+  if (opts.expr !== undefined) {
+    const elements = parseVarSetExpr(opts.expr, {
+      ...(opts.defaultExprScope !== undefined && { defaultScope: opts.defaultExprScope }),
+    });
+    for (const element of elements) {
+      if (element.type === 'var') scopes.add(element.scope);
+    }
+  }
+
+  if (opts.value?.startsWith('$') === true && !opts.value.startsWith('$$')) {
+    const match = /^\$([A-Za-z0-9]+)\.[A-Za-z0-9]+$/.exec(opts.value);
+    if (match?.[1] !== undefined) scopes.add(match[1]);
+  }
+
+  for (const raw of Object.values(parsedParams ?? {})) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const marker = (raw as Record<string, unknown>).$var;
+    if (typeof marker !== 'string') continue;
+    const match = /^\$?([A-Za-z0-9]+)\.[A-Za-z0-9]+$/.exec(marker);
+    if (match?.[1] !== undefined) scopes.add(match[1]);
+  }
+  return [...scopes];
 }
 
 async function warnIfDeviceInputNoPush(
@@ -365,7 +385,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--var-scope <S>',
-      'variable scope for varChange/device*SetVar (non-empty [A-Za-z0-9]+)',
+      "variable scope for variable cards: global or this rule's R<rule-id> (non-empty [A-Za-z0-9]+)",
     )
     .option(
       '--var-id <I>',
@@ -382,7 +402,7 @@ export function attachNodeAdd(cmd: Command): void {
     .option('--threshold2 <N>', 'optional second threshold for --op between', parseFiniteDecimal)
     .option(
       '--allow-unknown-scope',
-      'silence F29 warning when --var-scope is not in KNOWN_UI_SCOPES',
+      "silence the warning for a scope other than global or this rule's R<rule-id> (raw experiments only)",
     )
     .option('--at <HH:MM[:SS]>', 'alarmClock periodicAlarm time-of-day')
     .option('--sunrise', 'alarmClock sunrise trigger')
@@ -466,6 +486,8 @@ Examples (M10 F17 non-device shortcut path):
   $ xgg rule node add --rule-id r1 --type timeRange --start 08:00 --end 22:30 --weekday-only
   $ xgg rule node add --rule-id r1 --type varChange \\
       --var-scope global --var-id mode --var-type number --op eq --threshold 1
+  $ xgg rule node add --rule-id 123 --type varChange \\
+      --var-scope R123 --var-id localMode --var-type number --op eq --threshold 1
   $ xgg rule node add --rule-id r1 --type alarmClock --at 07:30 --days 1,2,3,4,5
   $ xgg rule node add --rule-id r1 --type alarmClock --sunset \\
       --latitude 30.46 --longitude 114.41 --offset-min -15
@@ -495,6 +517,15 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
 
+        for (const scope of collectShortcutVariableScopes(opts, parsedParams)) {
+          warnIfUnknownRuleNodeScope({
+            commandType: opts.type,
+            scope,
+            ruleId: opts.ruleId,
+            allowUnknownScope: opts.allowUnknownScope,
+          });
+        }
+
         let addNodeInput: Parameters<typeof addNode>[0];
         const NON_DEVICE_TYPES = new Set([
           'onLoad',
@@ -521,9 +552,6 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
         if (NON_DEVICE_TYPES.has(opts.type)) {
           // M10 F17 — non-device shortcut: build from CLI flags only, no
           // gateway device/spec lookup
-          if (opts.type === 'varChange' || opts.type === 'varGet') {
-            warnIfGhostScope(opts.type, opts.varScope, opts.allowUnknownScope);
-          }
           const shortcut: AddNodeShortcut = {
             type: opts.type as AddNodeShortcut['type'],
             ...(opts.id !== undefined && { id: opts.id }),
@@ -579,9 +607,6 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
           };
         } else if (opts.deviceDid) {
           // Device shortcut path — synthesizes 4-piece node from device spec
-          if (opts.type === 'deviceInputSetVar' || opts.type === 'deviceGetSetVar') {
-            warnIfGhostScope(opts.type, opts.varScope, opts.allowUnknownScope);
-          }
           // B9 / F63d (2026-05-30) — --event-filter is event-mode-only; reject
           // when the user didn't pass --device-event so the synth doesn't
           // silently drop the flag.

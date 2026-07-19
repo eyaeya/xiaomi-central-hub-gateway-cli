@@ -2008,7 +2008,7 @@ function renderVariableCreateInvocation(
   command: Extract<ExportedCommand, { kind: 'variable-create' }>,
   checkOnly: boolean,
 ): string {
-  return `"$XGG" variable create --scope ${shellQuote(command.scope)} --id ${shellQuote(command.id)} --type ${shellQuote(command.type)} --value ${shellQuote(String(command.value))} --name ${shellQuote(command.userData.name)} --if-compatible${checkOnly ? ' --check-only' : ''} --allow-unknown-scope --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`;
+  return `"$XGG" variable create --scope ${shellQuote(command.scope)} --id ${shellQuote(command.id)} --type ${shellQuote(command.type)} --value ${shellQuote(String(command.value))} --name ${shellQuote(command.userData.name)} --if-compatible${checkOnly ? ' --check-only --allow-unknown-scope' : ''} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`;
 }
 
 function renderFlagsForShell(flags: ExportFlag[]): string {
