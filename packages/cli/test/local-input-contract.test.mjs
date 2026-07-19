@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -260,6 +260,56 @@ test('property comparison flag misuse fails before Agent guards, snapshots, or I
     agent.frames.length = 0;
     assertSingleConfig(await runCli(args, agent));
     assert.deepEqual(agent.frames, []);
+  }
+});
+
+test('between shortcuts reject either omitted bound before snapshots or IPC', async (t) => {
+  const agent = await startFakeAgent(t);
+  const snapshotsDir = join(agent.root, 'between-must-not-snapshot');
+  const families = [
+    ['--type', 'deviceInput', '--device-did', 'd', '--device-property', 'temperature'],
+    ['--type', 'deviceGet', '--device-did', 'd', '--device-property', 'temperature'],
+    [
+      '--type',
+      'varChange',
+      '--var-scope',
+      'global',
+      '--var-id',
+      'temperature',
+      '--var-type',
+      'number',
+    ],
+    [
+      '--type',
+      'varGet',
+      '--var-scope',
+      'global',
+      '--var-id',
+      'temperature',
+      '--var-type',
+      'number',
+    ],
+  ];
+
+  for (const family of families) {
+    for (const supplied of [
+      ['--threshold2', '1'],
+      ['--threshold', '0'],
+    ]) {
+      agent.frames.length = 0;
+      const result = await runCli(
+        ['rule', 'node', 'add', '--rule-id', 'r', ...family, '--op', 'between', ...supplied],
+        agent,
+        { XGG_SNAPSHOTS_DIR: snapshotsDir },
+      );
+      const payload = assertSingleConfig(result);
+      assert.match(
+        payload.error.message,
+        /--op between requires explicit --threshold \(v1\) and --threshold2 \(v2\)/,
+      );
+      assert.deepEqual(agent.frames, []);
+      await assert.rejects(access(snapshotsDir), (error) => error?.code === 'ENOENT');
+    }
   }
 });
 

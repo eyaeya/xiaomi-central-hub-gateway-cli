@@ -504,6 +504,75 @@ test('deterministic invalid typed input still fails before session access', asyn
   assert.equal(reads, 0);
 });
 
+test('between shortcuts require both explicit bounds before session, spec, lease, or graph access', async () => {
+  const effects = { session: 0, spec: 0, ipcClient: 0 };
+  const deps = {
+    baseUrl,
+    store: {
+      async read() {
+        effects.session += 1;
+        throw new Error('session access must not happen');
+      },
+    },
+    ipcClient: () => {
+      effects.ipcClient += 1;
+      throw new Error('lease or graph access must not happen');
+    },
+  };
+  const getDeviceSpec = async () => {
+    effects.spec += 1;
+    throw new Error('spec access must not happen');
+  };
+  const families = [
+    {
+      type: 'deviceInput',
+      deviceDid: 'device1',
+      deviceProperty: 'temperature',
+    },
+    {
+      type: 'deviceGet',
+      deviceDid: 'device1',
+      deviceProperty: 'temperature',
+    },
+    {
+      type: 'varChange',
+      varScope: 'global',
+      varId: 'temperature',
+      varType: 'number',
+    },
+    {
+      type: 'varGet',
+      varScope: 'global',
+      varId: 'temperature',
+      varType: 'number',
+    },
+  ];
+
+  for (const family of families) {
+    for (const supplied of [{ threshold2: 1 }, { threshold: 0 }]) {
+      await assert.rejects(
+        addNode(
+          {
+            ruleId,
+            shortcut: { ...family, op: 'between', ...supplied },
+            getDeviceSpec,
+            varCheck: false,
+          },
+          deps,
+        ),
+        (error) =>
+          error instanceof ConfigError &&
+          /--op between requires explicit --threshold \(v1\) and --threshold2 \(v2\)/.test(
+            error.message,
+          ),
+        `${family.type}: ${JSON.stringify(supplied)}`,
+      );
+    }
+  }
+
+  assert.deepEqual(effects, { session: 0, spec: 0, ipcClient: 0 });
+});
+
 test('standalone raw writes auto-lease, while an outer workflow remains the sole owner', async () => {
   for (const method of ['/api/setVarValue', '/custom/write']) {
     const fixture = workflowFixture();

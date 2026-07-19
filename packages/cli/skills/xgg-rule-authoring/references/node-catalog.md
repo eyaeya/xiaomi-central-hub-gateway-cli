@@ -85,7 +85,7 @@ pin 颜色有 event、state、event|state。只有源输出可以是 event|state
 | `bool` | `eq --threshold 0|1` | `operator:"=", v1:boolean` |
 | `string` | `eq --property-value <S>` | `operator:"=", v1:string` |
 
-属性范围使用 `--op between --threshold <lower> --threshold2 <upper>`。事件参数：
+属性与 number 变量范围使用 `--op between --threshold <lower> --threshold2 <upper>`；`deviceInput` / `deviceGet` / `varChange` / `varGet` 的两个边界都必须显式给出，省略任一边界会在任何 session/spec/快照/写图前失败。显式下界 `0` 合法，非-between 标量比较仍保留历史默认 `0`。事件参数：
 
 ```bash
 --event-filter '1=1'

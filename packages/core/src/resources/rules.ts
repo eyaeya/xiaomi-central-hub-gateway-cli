@@ -1582,6 +1582,36 @@ function assertShortcutComparisonUsage(shortcut: AddNodeShortcut): void {
   if (shortcut.threshold2Literal !== undefined && shortcut.threshold2 === undefined) {
     throw new ConfigError('threshold2Literal requires threshold2');
   }
+  assertExplicitBetweenBounds(shortcut);
+}
+
+const EXPLICIT_BETWEEN_BOUND_TYPES = new Set(['deviceInput', 'deviceGet', 'varChange', 'varGet']);
+
+/**
+ * `between` is the only shortcut comparison whose historical scalar default
+ * would fabricate a caller-omitted operand. Keep that default for every
+ * non-between operator, but require both range endpoints before any session,
+ * spec, mutation lease, or graph access.
+ *
+ * Exported so CLI adapters can enforce the same Core contract before their
+ * own snapshot workflow begins.
+ */
+export function assertExplicitBetweenBounds(shortcut: {
+  type: string;
+  op?: string;
+  threshold?: number;
+  threshold2?: number;
+}): void {
+  if (!EXPLICIT_BETWEEN_BOUND_TYPES.has(shortcut.type) || shortcut.op !== 'between') return;
+  if (shortcut.threshold !== undefined && shortcut.threshold2 !== undefined) return;
+  throw new ConfigError(
+    `${shortcut.type} --op between requires explicit --threshold (v1) and --threshold2 (v2); omitted bounds are never defaulted.`,
+    {
+      type: shortcut.type,
+      thresholdPresent: shortcut.threshold !== undefined,
+      threshold2Present: shortcut.threshold2 !== undefined,
+    },
+  );
 }
 
 function preflightAddNode(input: AddNodeInput): void {
@@ -2802,9 +2832,9 @@ function synthesizePropertyComparison(
   }
 
   const isBetween = operator === 'between';
-  if (isBetween && shortcut.threshold2 === undefined) {
+  if (isBetween && (shortcut.threshold === undefined || shortcut.threshold2 === undefined)) {
     throw new ConfigError(
-      `--op between on property "${propertyName}" requires both --threshold (v1) and --threshold2 (v2). Real-gateway setGraph rejects between without v2 as "Invalid v2".`,
+      `--op between on property "${propertyName}" requires explicit --threshold (v1) and --threshold2 (v2); omitted bounds are never defaulted.`,
       { op: rawOp, operator, property: propertyName },
     );
   }
@@ -3644,9 +3674,12 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
       // F49 (2026-05-30) — `between` on number varType requires both
       // --threshold (v1) and --threshold2 (v2). Fail fast so the agent
       // sees the missing flag, not a gateway "Invalid v2" round-trip.
-      if (BETWEEN_OPS.has(operator) && shortcut.threshold2 === undefined) {
+      if (
+        BETWEEN_OPS.has(operator) &&
+        (shortcut.threshold === undefined || shortcut.threshold2 === undefined)
+      ) {
         throw new ConfigError(
-          `varChange --op between requires both --threshold (v1) and --threshold2 (v2). Real-gateway setGraph rejects between without v2 as "Invalid v2".`,
+          'varChange --op between requires explicit --threshold (v1) and --threshold2 (v2); omitted bounds are never defaulted.',
           { op: rawOp, varType: shortcut.varType, varId: shortcut.varId },
         );
       }
@@ -3790,9 +3823,12 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
       }
       const operator = varChangeOpSymbol(rawVarGetOp);
       // F49 (2026-05-30) — same `between` v1+v2 requirement as varChange.
-      if (BETWEEN_OPS.has(operator) && shortcut.threshold2 === undefined) {
+      if (
+        BETWEEN_OPS.has(operator) &&
+        (shortcut.threshold === undefined || shortcut.threshold2 === undefined)
+      ) {
         throw new ConfigError(
-          `varGet --op between requires both --threshold (v1) and --threshold2 (v2). Real-gateway setGraph rejects between without v2 as "Invalid v2".`,
+          'varGet --op between requires explicit --threshold (v1) and --threshold2 (v2); omitted bounds are never defaulted.',
           { op: rawVarGetOp, varType: shortcut.varType, varId: shortcut.varId },
         );
       }

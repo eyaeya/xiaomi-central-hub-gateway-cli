@@ -1,6 +1,7 @@
 import {
   ConfigError,
   addNode,
+  assertExplicitBetweenBounds,
   dumpBeforeWrite,
   getDevice,
   nodeSchemaForType,
@@ -494,7 +495,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--threshold <N>',
-      'numeric comparison threshold (deviceInput/deviceGet/varChange/varGet) or count threshold (counter/onlyNTimes)',
+      'first numeric comparison operand for deviceInput/deviceGet/varChange/varGet (explicitly required with --op between), or count threshold (counter/onlyNTimes)',
       parseFiniteDecimal,
     )
     .option(
@@ -508,7 +509,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--op <OP>',
-      'comparison operator: gt|lt|eq|ne|gte|lte|between. F49 — `between` requires --threshold (v1) + --threshold2 (v2); int/float deviceInput/deviceGet + number varType varChange/varGet only.',
+      'comparison operator: gt|lt|eq|ne|gte|lte|between. `between` requires explicit --threshold (v1) + --threshold2 (v2); omitted bounds are rejected. Applies to int/float deviceInput/deviceGet and number varChange/varGet.',
     )
     .option(
       '--params <JSON>',
@@ -615,7 +616,11 @@ export function attachNodeAdd(cmd: Command): void {
       '--var-value <S>',
       'varChange/varGet string-varType comparison literal (required for --var-type string; mutually exclusive with --threshold — F41)',
     )
-    .option('--threshold2 <N>', 'optional second threshold for --op between', parseFiniteDecimal)
+    .option(
+      '--threshold2 <N>',
+      'second range bound; required together with explicit --threshold for --op between',
+      parseFiniteDecimal,
+    )
     .option(
       '--allow-unknown-scope',
       "silence the warning for a scope other than global or this rule's R<rule-id> (raw experiments only)",
@@ -738,6 +743,12 @@ Raw/opaque fallback:
         assertSimplifiedUsage(opts);
         assertPreloadUsage(opts);
         assertNopOptionUsage(opts);
+        assertExplicitBetweenBounds({
+          type: opts.type,
+          ...(opts.op !== undefined && { op: opts.op }),
+          ...(opts.threshold !== undefined && { threshold: opts.threshold.value }),
+          ...(opts.threshold2 !== undefined && { threshold2: opts.threshold2.value }),
+        });
         const parsedDelta = opts.delta !== undefined ? parseNopDeltaJson(opts.delta) : undefined;
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;

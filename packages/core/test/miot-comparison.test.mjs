@@ -331,6 +331,96 @@ test('shared MIoT projector and contract distinguish enum floats from continuous
   assert.equal(parseFiniteDecimalLiteral('1oops'), null);
 });
 
+test('between accepts explicit zero bounds while non-between comparisons keep the zero default', async () => {
+  const between = createStatefulGateway();
+  for (const shortcut of [
+    {
+      type: 'deviceInput',
+      id: 'device-input-between-zero',
+      deviceDid: did,
+      deviceProperty: 'count',
+      op: 'between',
+      threshold: 0,
+      threshold2: 2,
+    },
+    {
+      type: 'deviceGet',
+      id: 'device-get-between-zero',
+      deviceDid: did,
+      deviceProperty: 'count',
+      op: 'between',
+      threshold: 0,
+      threshold2: 2,
+    },
+    {
+      type: 'varChange',
+      id: 'var-change-between-zero',
+      varScope: 'global',
+      varId: 'count',
+      varType: 'number',
+      op: 'between',
+      threshold: 0,
+      threshold2: 2,
+    },
+    {
+      type: 'varGet',
+      id: 'var-get-between-zero',
+      varScope: 'global',
+      varId: 'count',
+      varType: 'number',
+      op: 'between',
+      threshold: 0,
+      threshold2: 2,
+    },
+  ]) {
+    await addShortcut(between, shortcut);
+  }
+  for (const node of between.state.nodes) {
+    assert.equal(node.props.v1, 0, node.id);
+    assert.equal(node.props.v2, 2, node.id);
+  }
+
+  const scalar = createStatefulGateway();
+  for (const shortcut of [
+    {
+      type: 'deviceInput',
+      id: 'device-input-default-zero',
+      deviceDid: did,
+      deviceProperty: 'count',
+      op: 'gt',
+    },
+    {
+      type: 'deviceGet',
+      id: 'device-get-default-zero',
+      deviceDid: did,
+      deviceProperty: 'count',
+      op: 'gt',
+    },
+    {
+      type: 'varChange',
+      id: 'var-change-default-zero',
+      varScope: 'global',
+      varId: 'count',
+      varType: 'number',
+      op: 'eq',
+    },
+    {
+      type: 'varGet',
+      id: 'var-get-default-zero',
+      varScope: 'global',
+      varId: 'count',
+      varType: 'number',
+      op: 'eq',
+    },
+  ]) {
+    await addShortcut(scalar, shortcut);
+  }
+  for (const node of scalar.state.nodes) {
+    assert.equal(node.props.v1, 0, node.id);
+    assert.equal('v2' in node.props, false, node.id);
+  }
+});
+
 test('safe-integer decimal parsing is mathematical rather than IEEE-rounded', () => {
   for (const [literal, expected] of [
     ['0', 0],
