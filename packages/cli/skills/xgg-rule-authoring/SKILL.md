@@ -303,6 +303,7 @@ xgg variable watch --pretty                       # 实时观察变量变化
   - 其他任意串：**ghost data**——网关存，但网页任何地方都不显示、规则也可能永不触发。不要用。
 - **关于 ghost 警告：** CLI 对「非 `global`」的 scope 一律打印一条 `not in the web-UI-known set {global}` 的警告——**这条警告对合法的 `R<规则id>` 也会打，是已知的过宽警告**，R-scope 本身合法。确实要用非 global scope 时加 `--allow-unknown-scope` 静音。
 - **`set-value` 改值会核对类型：** `--type` 与变量已存类型不符直接退出 `5`(要改类型加 `--force-type`;不给 `--type` 则自动用已存类型)。删除用 `variable delete --scope <s> --id <id>`(或 `--all` 删整个 scope);`variable watch --follow --max-events <N>` 跟 N 条变化后退出。
+- **变量 `--value` 不是统一 JSON 解析：** `number` 使用数值转换；`string` 原样保存 argv 文本。`--value Seed` 保存 `Seed`，`--value '"Seed"'` 会把双引号也保存为数据。只有确实需要引号字符时才在字符串参数中写 JSON 风格引号。
 - 若用户明确说「不要用变量」，就别 `variable create`、别 `varChange/varGet/varSet*`。优先用 `deviceGet` 读真实设备状态；设备无可读状态时再问是否允许用 `register` 这种图内状态卡片。
 
 ### 避坑：网页端变量缓存（CLI 写不广播 configChanged）
