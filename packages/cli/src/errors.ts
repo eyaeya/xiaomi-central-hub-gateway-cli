@@ -42,6 +42,12 @@ const HINTS: HintRule[] = [
   {
     code: 'SCHEMA',
     command: '*',
+    messageMatches: 'Session file at ',
+    hint: 'Preserve the local session file named in error.message before changing it. Inspect or repair that file, or move the corrupt copy aside and log in again with a fresh code; do not overwrite it blindly.',
+  },
+  {
+    code: 'SCHEMA',
+    command: '*',
     messageMatches: 'MIoT spec registry',
     hint: 'The MIoT spec registry returned malformed content. Check error.details.url/status, verify the configured registry, and retry.',
   },
@@ -54,12 +60,26 @@ const HINTS: HintRule[] = [
   {
     code: 'SCHEMA',
     command: 'rule.node.add',
-    hint: 'cfg failed client-side schema parse. Run `xgg rule lint --explain --type <T>` to see the expected schema.',
+    messageEquals: 'AddNodeInput.node parse failed',
+    hint: 'The node input did not match the expected schema. Run `xgg rule node add --help` to verify the supported shortcut flags and full node JSON shape; error.details identifies the invalid fields.',
   },
   {
     code: 'SCHEMA',
     command: 'rule.node.update',
-    hint: 'patch failed client-side schema parse. Run `xgg rule lint --explain --type <T>` to see the expected cfg schema.',
+    messageEquals: 'updateNode.merged parse failed',
+    hint: 'The merged node did not match the expected schema. Inspect the current node with `xgg rule view <id>`, then run `xgg rule node update --help` for the accepted patch syntax; error.details identifies the invalid fields.',
+  },
+  {
+    code: 'SCHEMA',
+    command: '*',
+    messageEquals: 'RuleListResponse parse failed',
+    hint: 'The live rule-list response did not match the expected schema. Retry the read-only `xgg rule list`; if it succeeds, inspect the target with `xgg rule view <id>`. error.details identifies the invalid response fields.',
+  },
+  {
+    code: 'SCHEMA',
+    command: '*',
+    messageEquals: 'RuleGetResponse parse failed',
+    hint: 'The live rule graph response did not match the expected schema. Use read-only `xgg rule list` to confirm the summary, then retry `xgg rule view <id>`. error.details identifies the invalid response fields.',
   },
   {
     code: 'SCHEMA',
