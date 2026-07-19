@@ -6,6 +6,10 @@ import {
   SchemaError,
   XggError,
 } from '@eyaeya/xgg-core';
+import {
+  AGENT_MODE_NO_SNAPSHOT_FORBIDDEN_MESSAGE,
+  AGENT_MODE_SNAPSHOTS_DIR_REQUIRED_MESSAGE,
+} from './mutation-guard-messages.js';
 
 export interface ExitMapping {
   code: number;
@@ -29,6 +33,8 @@ interface HintRule {
   // class (e.g. "Invalid id format" vs "already exist") so the hint
   // matches the actual failure instead of being a generic catch-all.
   messageMatches?: string;
+  /** Exact message match for errors whose wording is a stable local contract. */
+  messageEquals?: string;
 }
 
 const HINTS: HintRule[] = [
@@ -150,10 +156,39 @@ const HINTS: HintRule[] = [
   },
 
   // CONFIG — card-validation gate (rule set / rule enable / node add / validate).
-  // messageMatches wins over the command-specific snapshots-dir hints below, so
-  // a 卡片… validation failure gets an actionable fix instead of a misleading
-  // env-var / agent-mode hint. error.details.issues carries EVERY offending
-  // card (the message only names the first).
+  // Snapshot setup is a global mutation contract, not a command family. Match
+  // the two guard messages exactly so unrelated ConfigErrors cannot inherit a
+  // snapshots-dir remedy merely because they came from a mutation command.
+  {
+    code: 'CONFIG',
+    command: '*',
+    messageEquals: AGENT_MODE_SNAPSHOTS_DIR_REQUIRED_MESSAGE,
+    hint: 'When XGG_AGENT_MODE=1 every mutation must be checkpointed: pass --snapshots-dir <dir> (or set XGG_SNAPSHOTS_DIR). For terminal use, unset XGG_AGENT_MODE.',
+  },
+  {
+    code: 'CONFIG',
+    command: '*',
+    messageEquals: AGENT_MODE_NO_SNAPSHOT_FORBIDDEN_MESSAGE,
+    hint: 'Remove --no-snapshot. XGG_AGENT_MODE=1 requires a pre-write rollback checkpoint for every mutation.',
+  },
+  // Shared command setup failures must also outrank command-family fallbacks.
+  // Otherwise a missing connection target or malformed timeout on e.g.
+  // rule.edge.add gets mislabeled as a graph-authoring failure.
+  {
+    code: 'CONFIG',
+    command: '*',
+    messageEquals: 'missing --base-url or XGG_BASE_URL',
+    hint: 'Pass --base-url <url> or set XGG_BASE_URL.',
+  },
+  {
+    code: 'CONFIG',
+    command: '*',
+    messageMatches: '--timeout must be a positive decimal integer no greater than',
+    hint: 'Pass --timeout <ms> as a positive decimal integer within the limit shown in error.message.',
+  },
+  // These card-specific matches explain the validation failure itself.
+  // error.details.issues carries EVERY offending card (the message only names
+  // the first).
   {
     code: 'CONFIG',
     command: '*',
@@ -172,48 +207,67 @@ const HINTS: HintRule[] = [
     messageMatches: '卡片配置有误',
     hint: 'A card failed the save-button validator (field/pin/schema). Fix the field at the path in error.message; every issue is in error.details.issues. Dry-run with `xgg rule validate --rule-id <id>`.',
   },
+  // A malformed --from/--to now raises ConfigError (exit 5) instead of
+  // GatewayError (exit 1). messageMatches keeps the NID:pin guidance attached to
+  // that specific failure. The GATEWAY-class rule.edge.add/remove hints still
+  // cover real gateway-side failures (e.g. "outputs[pin] already exists").
+  {
+    code: 'CONFIG',
+    command: 'rule.edge.add',
+    messageMatches: 'NID:pin format',
+    hint: '--from/--to must be NID:pin (e.g. n1:output). Both halves are required and non-empty.',
+  },
+  {
+    code: 'CONFIG',
+    command: 'rule.edge.remove',
+    messageMatches: 'NID:pin format',
+    hint: '--from/--to must be NID:pin (e.g. n1:output). Both halves are required and non-empty.',
+  },
+  {
+    code: 'CONFIG',
+    command: 'rule.edge.add',
+    messageMatches: 'fan-in cap:',
+    hint: 'Each input pin accepts one incoming edge. Merge event sources with `signalOr`, or state sources with `logicOr`/`logicAnd`, then connect the merged output to the target pin.',
+  },
+  {
+    code: 'CONFIG',
+    command: 'rule.edge.add',
+    messageMatches: 'cross-color edge:',
+    hint: 'Reconnect compatible pin colors: event outputs target event inputs; state inputs require a state-capable (`event|state`) output. Run `xgg rule lint --rule-id <id> --strict` to inspect all color violations.',
+  },
+  {
+    code: 'CONFIG',
+    command: 'rule.edge.add',
+    messageMatches: 'self-loop:',
+    hint: 'A node cannot connect to itself. Route through a distinct node or remove the feedback edge; inspect the graph with `xgg rule view <id>`.',
+  },
+  {
+    code: 'CONFIG',
+    command: 'rule.edge.add',
+    messageMatches: 'target pin "',
+    hint: 'Use one of the target node inputs listed in error.details.availablePins (and error.details.suggestion when present). Action cards commonly use `trigger` rather than `input`.',
+  },
+  {
+    code: 'CONFIG',
+    command: 'rule.edge.add',
+    messageMatches: 'trigger-only node (no input pins)',
+    hint: 'The selected target has no input pins and cannot accept an edge. Choose a downstream card with an event/state input.',
+  },
+  {
+    code: 'CONFIG',
+    command: 'rule.edge.add',
+    messageMatches: 'edge already exists:',
+    hint: 'The exact edge is already present. Do not retry it; inspect the graph with `xgg rule view <id>`, or remove the old edge before replacing it.',
+  },
   {
     code: 'CONFIG',
     command: 'rule.node.add',
-    hint: 'When XGG_AGENT_MODE=1 every mutation must be checkpointed: pass --snapshots-dir <dir> (or set XGG_SNAPSHOTS_DIR). For terminal use, unset XGG_AGENT_MODE.',
+    hint: 'Fix the node shortcut flag or JSON field named in error.message; `xgg rule node add --help` documents the valid shape.',
   },
   {
     code: 'CONFIG',
     command: 'rule.node.update',
-    hint: 'When XGG_AGENT_MODE=1 every mutation must be checkpointed: pass --snapshots-dir <dir> (or set XGG_SNAPSHOTS_DIR).',
-  },
-  {
-    code: 'CONFIG',
-    command: 'rule.node.remove',
-    hint: 'When XGG_AGENT_MODE=1 every mutation must be checkpointed: pass --snapshots-dir <dir> (or set XGG_SNAPSHOTS_DIR).',
-  },
-  // A malformed --from/--to now raises ConfigError (exit 5) instead of
-  // GatewayError (exit 1). messageMatches keeps the NID:pin guidance attached to
-  // that specific failure so it wins over the generic XGG_AGENT_MODE snapshot
-  // hint below (which is irrelevant to a format typo). The GATEWAY-class
-  // rule.edge.add/remove hints still cover real gateway-side failures (e.g.
-  // "outputs[pin] already exists").
-  {
-    code: 'CONFIG',
-    command: 'rule.edge.add',
-    messageMatches: 'NID:pin format',
-    hint: '--from/--to must be NID:pin (e.g. n1:output). Both halves are required and non-empty.',
-  },
-  {
-    code: 'CONFIG',
-    command: 'rule.edge.remove',
-    messageMatches: 'NID:pin format',
-    hint: '--from/--to must be NID:pin (e.g. n1:output). Both halves are required and non-empty.',
-  },
-  {
-    code: 'CONFIG',
-    command: 'rule.edge.add',
-    hint: 'When XGG_AGENT_MODE=1 every mutation must be checkpointed: pass --snapshots-dir <dir> (or set XGG_SNAPSHOTS_DIR).',
-  },
-  {
-    code: 'CONFIG',
-    command: 'rule.edge.remove',
-    hint: 'When XGG_AGENT_MODE=1 every mutation must be checkpointed: pass --snapshots-dir <dir> (or set XGG_SNAPSHOTS_DIR).',
+    hint: 'Fix the node patch field named in error.message, then inspect the result with `xgg rule view <id>`.',
   },
   {
     code: 'CONFIG',
@@ -259,10 +313,10 @@ const HINTS: HintRule[] = [
 ];
 
 function specificity(r: HintRule): number {
-  // M11 F24: a message-match is the most specific signal — it fires only
-  // for one particular gateway error class. Code+command pair comes
-  // next, then code-only, then catch-all.
+  // M11 F24: an exact message is the strongest signal, followed by a message
+  // substring. Code+command comes next, then code-only, then catch-all.
   return (
+    (r.messageEquals !== undefined ? 8 : 0) +
     (r.messageMatches !== undefined ? 4 : 0) +
     (r.code !== '*' ? 2 : 0) +
     (r.command !== '*' ? 1 : 0)
@@ -273,6 +327,9 @@ export function lookupHint(code: string, command: string, message?: string): str
   const matches = HINTS.filter((r) => {
     if (r.code !== code && r.code !== '*') return false;
     if (r.command !== command && r.command !== '*') return false;
+    if (r.messageEquals !== undefined) {
+      if (message === undefined || message !== r.messageEquals) return false;
+    }
     if (r.messageMatches !== undefined) {
       if (message === undefined) return false;
       return message.includes(r.messageMatches);

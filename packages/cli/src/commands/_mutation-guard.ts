@@ -1,5 +1,9 @@
 import { ConfigError } from '@eyaeya/xgg-core';
 import { type Command, Option } from 'commander';
+import {
+  AGENT_MODE_NO_SNAPSHOT_FORBIDDEN_MESSAGE,
+  AGENT_MODE_SNAPSHOTS_DIR_REQUIRED_MESSAGE,
+} from '../mutation-guard-messages.js';
 import { ttyBoldYellow } from '../tty.js';
 
 export interface MutationGuardOpts {
@@ -43,14 +47,10 @@ export function assertAgentModeOrSnapshotsDir(opts: MutationGuardOpts): Resolved
   const snapshotEnabled = opts.snapshot !== false;
   if (agentMode) {
     if (!snapshotsDir) {
-      throw new ConfigError(
-        'XGG_AGENT_MODE=1 requires --snapshots-dir <dir> (or XGG_SNAPSHOTS_DIR=<dir>) so every mutation is checkpointed into the agent workspace',
-      );
+      throw new ConfigError(AGENT_MODE_SNAPSHOTS_DIR_REQUIRED_MESSAGE);
     }
     if (!snapshotEnabled) {
-      throw new ConfigError(
-        'XGG_AGENT_MODE=1 forbids --no-snapshot: the pre-write checkpoint is the agent-mode audit trail',
-      );
+      throw new ConfigError(AGENT_MODE_NO_SNAPSHOT_FORBIDDEN_MESSAGE);
     }
   }
   return { snapshotsDir, snapshotEnabled };

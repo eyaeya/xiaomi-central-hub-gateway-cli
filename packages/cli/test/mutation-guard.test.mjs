@@ -7,8 +7,13 @@ import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { GatewayError, createIpcServer } from '@eyaeya/xgg-core';
+import { ConfigError, GatewayError, createIpcServer } from '@eyaeya/xgg-core';
 import ts from 'typescript';
+import { formatErrorJson } from '../dist/errors.js';
+import {
+  AGENT_MODE_NO_SNAPSHOT_FORBIDDEN_MESSAGE,
+  AGENT_MODE_SNAPSHOTS_DIR_REQUIRED_MESSAGE,
+} from '../dist/mutation-guard-messages.js';
 import { buildProgram } from '../dist/program.js';
 
 const cliPath = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -65,6 +70,177 @@ const expectedTypedMutationSurfaces = [
   'variable set-value',
 ];
 
+const typedMutationCases = [
+  {
+    command: 'backup config set',
+    args: () => ['backup', 'config', 'set', '--auto-backup', 'true'],
+  },
+  { command: 'backup create', args: () => ['backup', 'create', '--file-name', 'probe'] },
+  {
+    command: 'backup delete',
+    args: () => ['backup', 'delete', '--did', 'did-1', '--ts', 'ts-1', '--file-name', 'one.bak'],
+  },
+  {
+    command: 'backup download',
+    args: () => ['backup', 'download', '--did', 'did-1', '--ts', 'ts-1', '--file-name', 'one.bak'],
+  },
+  {
+    command: 'backup load',
+    args: () => ['backup', 'load', '--did', 'did-1', '--ts', 'ts-1', '--file-name', 'one.bak'],
+  },
+  { command: 'rule delete', args: () => ['rule', 'delete', 'rule1'] },
+  { command: 'rule disable', args: () => ['rule', 'disable', 'rule1'] },
+  {
+    command: 'rule edge add',
+    args: () => [
+      'rule',
+      'edge',
+      'add',
+      '--rule-id',
+      'rule1',
+      '--from',
+      'source:output',
+      '--to',
+      'target:input',
+    ],
+  },
+  {
+    command: 'rule edge remove',
+    args: () => [
+      'rule',
+      'edge',
+      'remove',
+      '--rule-id',
+      'rule1',
+      '--from',
+      'source:output',
+      '--to',
+      'target:input',
+    ],
+  },
+  { command: 'rule enable', args: () => ['rule', 'enable', 'rule1'] },
+  { command: 'rule layout', args: () => ['rule', 'layout', 'rule1'] },
+  { command: 'rule new', args: () => ['rule', 'new', '--name', 'Guard probe'] },
+  {
+    command: 'rule node add',
+    args: () => ['rule', 'node', 'add', '--rule-id', 'rule1', '--type', 'onLoad'],
+  },
+  {
+    command: 'rule node remove',
+    args: () => ['rule', 'node', 'remove', '--rule-id', 'rule1', '--node-id', 'node1'],
+  },
+  {
+    command: 'rule node update',
+    args: () => [
+      'rule',
+      'node',
+      'update',
+      '--rule-id',
+      'rule1',
+      '--node-id',
+      'node1',
+      '--patch',
+      '{}',
+    ],
+  },
+  { command: 'rule rename', args: () => ['rule', 'rename', 'rule1', '--name', 'Renamed'] },
+  {
+    command: 'rule set',
+    args: (ruleBodyPath) => ['rule', 'set', '--body', ruleBodyPath],
+  },
+  {
+    command: 'rule set-tags',
+    args: () => ['rule', 'set-tags', 'rule1', '--tags', 'guard'],
+  },
+  {
+    command: 'variable create',
+    args: () => [
+      'variable',
+      'create',
+      '--scope',
+      'global',
+      '--id',
+      'marker',
+      '--type',
+      'number',
+      '--value',
+      '0',
+      '--name',
+      'Marker',
+    ],
+  },
+  {
+    command: 'variable delete',
+    args: () => ['variable', 'delete', '--scope', 'global', '--id', 'marker'],
+  },
+  {
+    command: 'variable set-config',
+    args: () => [
+      'variable',
+      'set-config',
+      '--scope',
+      'global',
+      '--id',
+      'marker',
+      '--name',
+      'Marker',
+    ],
+  },
+  {
+    command: 'variable set-value',
+    args: () => ['variable', 'set-value', '--scope', 'global', '--id', 'marker', '--value', '1'],
+  },
+];
+
+const position = (width = 200, height = 120) => ({ x: 0, y: 0, width, height });
+
+function onLoad(id, targets = []) {
+  return {
+    id,
+    type: 'onLoad',
+    cfg: { pos: position(), name: 'onLoad', version: 1 },
+    inputs: {},
+    outputs: { output: targets },
+    props: {},
+  };
+}
+
+function delay(id, targets = []) {
+  return {
+    id,
+    type: 'delay',
+    cfg: { pos: position(320), name: 'delay', version: 1, unit: 's', value: 1 },
+    inputs: { input: null },
+    outputs: { output: targets },
+    props: { timeout: 1_000 },
+  };
+}
+
+function condition(id) {
+  return {
+    id,
+    type: 'condition',
+    cfg: { pos: position(320), name: 'condition', version: 1 },
+    inputs: { trigger: null, condition: null },
+    outputs: { met: [], unmet: [] },
+    props: {},
+  };
+}
+
+function ruleSummary(id = 'rule1') {
+  return {
+    id,
+    enable: false,
+    uiType: 'rule',
+    userData: {
+      name: 'guard test',
+      transform: { x: 0, y: 0, scale: 1, rotate: 0 },
+      lastUpdateTime: 0,
+      version: 0,
+    },
+  };
+}
+
 function endpointPath(root) {
   if (process.platform === 'win32') {
     return `\\\\.\\pipe\\xgg-mutation-${process.pid}-${randomUUID()}`;
@@ -81,6 +257,7 @@ async function startFakeAgent(t) {
   const writes = [];
   const control = {
     failSnapshot: false,
+    rule: undefined,
     snapshotsDir: undefined,
   };
 
@@ -99,7 +276,12 @@ async function startFakeAgent(t) {
         case '/api/getDevList':
           return { devList: {} };
         case '/api/getGraphList':
-          return [];
+          return control.rule === undefined ? [] : [control.rule.cfg];
+        case '/api/getGraph':
+          if (control.rule !== undefined && request.params?.id === control.rule.cfg.id) {
+            return { id: control.rule.cfg.id, nodes: control.rule.nodes };
+          }
+          throw new Error(`unexpected graph request: ${JSON.stringify(request.params)}`);
         case '/api/getVarScopeList':
           return { scopes: [] };
         case '/api/getBackupList':
@@ -236,6 +418,227 @@ test('affected mutations reject Agent --no-snapshot before any IPC', async (t) =
     assert.deepEqual(agent.frames, [], `${mutation.command} reached IPC`);
     await assertMissing(snapshotsDir);
   }
+});
+
+test('every typed mutation command label receives the exact missing-snapshot guard hint', async (t) => {
+  const agent = await startFakeAgent(t);
+  const ruleBodyPath = join(agent.root, 'guard-rule.json');
+  await writeFile(ruleBodyPath, JSON.stringify({ id: 'rule1' }));
+  assert.deepEqual(
+    typedMutationCases.map(({ command }) => command).sort(),
+    expectedTypedMutationSurfaces,
+  );
+
+  for (const mutation of typedMutationCases) {
+    agent.frames.length = 0;
+    const result = await runCli(mutation.args(ruleBodyPath), agent);
+    const payload = assertSingleJsonFailure(result, 'CONFIG', 5);
+    assert.equal(
+      payload.error.message,
+      AGENT_MODE_SNAPSHOTS_DIR_REQUIRED_MESSAGE,
+      mutation.command,
+    );
+    assert.match(payload.error.hint, /pass --snapshots-dir <dir>/, mutation.command);
+    assert.deepEqual(agent.frames, [], `${mutation.command} reached IPC`);
+  }
+});
+
+test('every typed mutation command label receives the exact no-snapshot guard hint', async (t) => {
+  const agent = await startFakeAgent(t);
+  const ruleBodyPath = join(agent.root, 'guard-rule.json');
+  await writeFile(ruleBodyPath, JSON.stringify({ id: 'rule1' }));
+
+  for (const mutation of typedMutationCases) {
+    agent.frames.length = 0;
+    const snapshotsDir = join(agent.root, `forbidden-${mutation.command.replaceAll(' ', '-')}`);
+    const result = await runCli(
+      [...mutation.args(ruleBodyPath), '--snapshots-dir', snapshotsDir, '--no-snapshot'],
+      agent,
+    );
+    const payload = assertSingleJsonFailure(result, 'CONFIG', 5);
+    assert.equal(payload.error.message, AGENT_MODE_NO_SNAPSHOT_FORBIDDEN_MESSAGE, mutation.command);
+    assert.match(payload.error.hint, /Remove --no-snapshot/, mutation.command);
+    assert.deepEqual(agent.frames, [], `${mutation.command} reached IPC`);
+    await assertMissing(snapshotsDir);
+  }
+});
+
+test('snapshot hints require an exact guard message for every typed mutation label', () => {
+  const nearMisses = [
+    `${AGENT_MODE_SNAPSHOTS_DIR_REQUIRED_MESSAGE} (extra context)`,
+    `${AGENT_MODE_NO_SNAPSHOT_FORBIDDEN_MESSAGE} (extra context)`,
+  ];
+
+  for (const command of expectedTypedMutationSurfaces) {
+    for (const message of nearMisses) {
+      const error = new ConfigError(message);
+      error.__xggCmd = command.replaceAll(' ', '.');
+      const payload = formatErrorJson(error);
+      assert.doesNotMatch(payload.error.hint, /snapshots-dir|no-snapshot|checkpointed/i, command);
+    }
+  }
+});
+
+test('shared CONFIG failures do not inherit graph or node-authoring causes', async (t) => {
+  const agent = await startFakeAgent(t);
+  const mutations = typedMutationCases.filter(({ command }) =>
+    [
+      'rule edge add',
+      'rule edge remove',
+      'rule node add',
+      'rule node remove',
+      'rule node update',
+    ].includes(command),
+  );
+  const cases = [
+    {
+      name: 'missing base URL',
+      args: [],
+      env: { XGG_AGENT_MODE: '0', XGG_BASE_URL: '' },
+      message: 'missing --base-url or XGG_BASE_URL',
+      hint: 'Pass --base-url <url> or set XGG_BASE_URL.',
+    },
+    {
+      name: 'invalid timeout',
+      args: ['--timeout', 'not-a-timeout'],
+      env: { XGG_AGENT_MODE: '0' },
+      message: '--timeout must be a positive decimal integer no greater than 2147483647',
+      hint: 'Pass --timeout <ms> as a positive decimal integer within the limit shown in error.message.',
+    },
+  ];
+
+  assert.equal(mutations.length, 5);
+  for (const mutation of mutations) {
+    for (const scenario of cases) {
+      agent.frames.length = 0;
+      const result = await runCli([...mutation.args(), ...scenario.args], agent, scenario.env);
+      const payload = assertSingleJsonFailure(result, 'CONFIG', 5);
+      assert.equal(
+        payload.error.message,
+        scenario.message,
+        `${mutation.command}: ${scenario.name}`,
+      );
+      assert.equal(payload.error.hint, scenario.hint, `${mutation.command}: ${scenario.name}`);
+      assert.doesNotMatch(
+        payload.error.hint,
+        /graph invariant|wiring|endpoint|node id|dependent edge|node shortcut|JSON field/i,
+        `${mutation.command}: ${scenario.name}`,
+      );
+      assert.deepEqual(agent.frames, [], `${mutation.command}: ${scenario.name} reached IPC`);
+    }
+  }
+});
+
+test('valid snapshots keep graph guard hints actionable and prevent setGraph', async (t) => {
+  const agent = await startFakeAgent(t);
+  const cases = [
+    {
+      name: 'self-loop',
+      nodes: [delay('wait')],
+      from: 'wait:output',
+      to: 'wait:input',
+      message: /self-loop:/,
+      hint: /cannot connect to itself/i,
+    },
+    {
+      name: 'invalid-target-pin',
+      nodes: [onLoad('start'), delay('wait')],
+      from: 'start:output',
+      to: 'wait:imput',
+      message: /target pin "imput"/,
+      hint: /availablePins/,
+    },
+    {
+      name: 'cross-color',
+      nodes: [onLoad('start'), condition('gate')],
+      from: 'start:output',
+      to: 'gate:condition',
+      message: /cross-color edge:/,
+      hint: /compatible pin colors/i,
+    },
+    {
+      name: 'fan-in',
+      nodes: [onLoad('first', ['wait.input']), onLoad('second'), delay('wait')],
+      from: 'second:output',
+      to: 'wait:input',
+      message: /fan-in cap:/,
+      hint: /signalOr.*logicOr.*logicAnd/,
+    },
+  ];
+
+  for (const scenario of cases) {
+    const snapshotsDir = join(agent.root, `graph-${scenario.name}`);
+    agent.control.rule = { cfg: ruleSummary(), nodes: scenario.nodes };
+    agent.frames.length = 0;
+    agent.gatewayCalls.length = 0;
+    const result = await runCli(
+      [
+        'rule',
+        'edge',
+        'add',
+        '--rule-id',
+        'rule1',
+        '--from',
+        scenario.from,
+        '--to',
+        scenario.to,
+        '--snapshots-dir',
+        snapshotsDir,
+        '--no-var-check',
+      ],
+      agent,
+    );
+    const payload = assertSingleJsonFailure(result, 'CONFIG', 5);
+    assert.match(payload.error.message, scenario.message, scenario.name);
+    assert.match(payload.error.hint, scenario.hint, scenario.name);
+    assert.doesNotMatch(payload.error.hint, /snapshot|XGG_AGENT_MODE/i, scenario.name);
+    assert.equal(
+      agent.gatewayCalls.some(({ method, kind }) => method === '/api/setGraph' || kind === 'write'),
+      false,
+      `${scenario.name} sent a write RPC`,
+    );
+    const artifact = await readPublishedArtifact(snapshotsDir);
+    assert.equal(artifact.error, undefined, scenario.name);
+    assert.equal(artifact.snapshot.rules.length, 1, scenario.name);
+    assert.deepEqual(artifact.files, ['dump.json'], scenario.name);
+  }
+});
+
+test('valid snapshots no longer turn a node validation error into snapshot advice', async (t) => {
+  const agent = await startFakeAgent(t);
+  const snapshotsDir = join(agent.root, 'node-invariant');
+  agent.control.rule = { cfg: ruleSummary(), nodes: [onLoad('start')] };
+  agent.gatewayCalls.length = 0;
+
+  const result = await runCli(
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'rule1',
+      '--type',
+      'counter',
+      '--threshold',
+      '0',
+      '--snapshots-dir',
+      snapshotsDir,
+    ],
+    agent,
+  );
+  const payload = assertSingleJsonFailure(result, 'CONFIG', 5);
+  assert.match(
+    payload.error.message,
+    /counter shortcut requires --threshold <N> as an integer >= 1/,
+  );
+  assert.match(payload.error.hint, /node shortcut flag or JSON field/);
+  assert.doesNotMatch(payload.error.hint, /snapshot|XGG_AGENT_MODE/i);
+  assert.equal(
+    agent.gatewayCalls.some(({ method, kind }) => method === '/api/setGraph' || kind === 'write'),
+    false,
+  );
+  const artifact = await readPublishedArtifact(snapshotsDir);
+  assert.equal(artifact.error, undefined);
 });
 
 test('snapshot collection failures prevent every affected write RPC and artifact', async (t) => {
