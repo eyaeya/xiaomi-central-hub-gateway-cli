@@ -15,6 +15,62 @@ test('node-add help exposes a raw string-property comparison flag', () => {
   const help = add.helpInformation();
   assert.match(help, /--property-value <S>/);
   assert.match(help, /string-property\s+equality literal/);
+  assert.match(help, /--property-include <N,N,...>/);
+  assert.match(help, /--event-filter-include <piid=values>/);
+  assert.match(help, /--event-filter-between <piid=lower,upper>/);
+});
+
+test('complete comparison flags parse without scalar/list ambiguity', () => {
+  const add = nodeAddCommand(buildProgram());
+  assert.ok(add);
+  add.parseOptions([
+    '--property-include',
+    '1,2,3',
+    '--event-filter-include',
+    '2=1,2',
+    '--event-filter-include',
+    '5=4,6',
+    '--event-filter-between',
+    '3=1.5,2.5',
+  ]);
+  assert.deepEqual(add.opts().propertyInclude, [1, 2, 3]);
+  assert.deepEqual(add.opts().eventFilterInclude, ['2=1,2', '5=4,6']);
+  assert.deepEqual(add.opts().eventFilterBetween, ['3=1.5,2.5']);
+});
+
+test('property include preserves safe-integer boundaries and rejects lossy numeric input locally', () => {
+  const boundary = nodeAddCommand(buildProgram());
+  assert.ok(boundary);
+  boundary.parseOptions([
+    '--property-include',
+    `${Number.MAX_SAFE_INTEGER},${Number.MIN_SAFE_INTEGER}`,
+  ]);
+  assert.deepEqual(boundary.opts().propertyInclude, [
+    Number.MAX_SAFE_INTEGER,
+    Number.MIN_SAFE_INTEGER,
+  ]);
+
+  for (const raw of [
+    '',
+    '1,,2',
+    '1.5,2',
+    '1,2oops',
+    '9007199254740992',
+    '9007199254740993',
+    '-9007199254740992',
+  ]) {
+    const add = nodeAddCommand(buildProgram());
+    assert.ok(add);
+    add.exitOverride();
+    add.configureOutput({ writeErr: () => {} });
+    assert.throws(
+      () => add.parseOptions(['--property-include', raw]),
+      (error) =>
+        error?.code === 'commander.invalidArgument' &&
+        /comma-separated finite integers/.test(error.message),
+      raw,
+    );
+  }
 });
 
 test('node-add exposes explicit preload true/false without hiding omission', () => {

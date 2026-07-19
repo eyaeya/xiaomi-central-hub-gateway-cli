@@ -28,6 +28,7 @@ export {
   hasMiotValueList,
   isMiotEventWireOperator,
   isMiotWireOperator,
+  miotNumericOperandDomainError,
   miotShortcutOperatorToWire,
   parseFiniteDecimalLiteral,
   projectMiotComparisonDtype,

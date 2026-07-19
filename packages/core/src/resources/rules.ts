@@ -10,7 +10,9 @@ import type {
 import { Device as DeviceSchema } from '../schemas/device.js';
 import {
   MIOT_COMPARISON_CONTRACT,
+  type MiotComparisonWireOperator,
   isMiotEventWireOperator,
+  miotNumericOperandDomainError,
   miotShortcutOperatorToWire,
   parseFiniteDecimalLiteral,
   projectMiotComparisonDtype,
@@ -1200,12 +1202,19 @@ export interface AddNodeShortcut {
   // with `cfg.version: 0`.
   deviceEvent?: string;
   // B9 / F63d (2026-05-30): per-piid filter expressions for deviceInput
-  // event-mode. Each entry is `<piid><op><v1>` where op ∈ {=, !=, >, <, >=,
-  // <=}. The synth looks up the dtype via service.properties[piid].format,
+  // event-mode scalar comparisons. Each entry is `<piid><op><v1>` where op ∈
+  // {=, !=, >, <, >=, <=}. The synth looks up the dtype via
+  // service.properties[piid].format,
   // validates piid ∈ event.arguments, and emits the right F59
   // DeviceInputEventArgument union arm in props.arguments. Omitting this
   // field preserves today's F11 behavior (arguments: []).
   deviceEventArgs?: string[];
+  // Complete gateway-native event comparison operands. include entries are
+  // `<piid>=<v1>,<v2>[,...]`; between entries are exactly
+  // `<piid>=<lower>,<upper>`. They stay separate from the scalar grammar so a
+  // string equality containing commas can never be reinterpreted as a list.
+  deviceEventIncludes?: string[];
+  deviceEventBetweens?: string[];
   // B4 / F65a (2026-05-30): per-piid variable routing for deviceInputSetVar
   // event-mode. Each entry is `<piid>=<scope>.<id>` (e.g. `1=global.lockOpId`).
   // Symmetric to deviceEventArgs but for SET-VAR side: each captured event
@@ -1219,6 +1228,10 @@ export interface AddNodeShortcut {
   // separate from numeric `threshold` so CLI values never pass through
   // Number.parseFloat and silently become NaN.
   propertyValue?: string;
+  // Gateway-native int membership comparison for deviceInput/deviceGet.
+  // This flag is the complete v1 array, including singleton arrays; keeping
+  // it separate from threshold preserves the exact include wire shape.
+  propertyInclude?: number[];
   // F49 (2026-05-30) — `between` joins the comparator vocab for the int
   // dtype (deviceInput/deviceGet) and number varType (varChange/varGet).
   // Requires --threshold + --threshold2 (or threshold + threshold2 fields
@@ -1430,9 +1443,12 @@ function assertNopShortcutUsage(shortcut: AddNodeShortcut): void {
     deviceAction: shortcut.deviceAction,
     deviceEvent: shortcut.deviceEvent,
     deviceEventArgs: shortcut.deviceEventArgs,
+    deviceEventIncludes: shortcut.deviceEventIncludes,
+    deviceEventBetweens: shortcut.deviceEventBetweens,
     deviceEventArgVars: shortcut.deviceEventArgVars,
     threshold: shortcut.threshold,
     propertyValue: shortcut.propertyValue,
+    propertyInclude: shortcut.propertyInclude,
     op: shortcut.op,
     params: shortcut.params,
     value: shortcut.value,
@@ -1483,6 +1499,57 @@ function assertNopShortcutUsage(shortcut: AddNodeShortcut): void {
   }
 }
 
+function assertShortcutComparisonUsage(shortcut: AddNodeShortcut): void {
+  const propertyMode =
+    (shortcut.type === 'deviceInput' || shortcut.type === 'deviceGet') &&
+    shortcut.deviceProperty !== undefined &&
+    shortcut.deviceEvent === undefined;
+  if (shortcut.propertyValue !== undefined && !propertyMode) {
+    throw new ConfigError(
+      '--property-value only applies to deviceInput/deviceGet property-mode shortcuts',
+      { type: shortcut.type },
+    );
+  }
+  if (shortcut.propertyInclude !== undefined) {
+    if (!propertyMode) {
+      throw new ConfigError(
+        '--property-include only applies to deviceInput/deviceGet property-mode shortcuts',
+        { type: shortcut.type },
+      );
+    }
+    if (!Array.isArray(shortcut.propertyInclude) || shortcut.propertyInclude.length === 0) {
+      throw new ConfigError('--property-include requires one or more finite integer values');
+    }
+    if (shortcut.propertyInclude.some((value) => !Number.isSafeInteger(value))) {
+      throw new ConfigError(
+        "--property-include values must all be finite integers within JavaScript's safe range",
+      );
+    }
+    if (
+      shortcut.op !== undefined ||
+      shortcut.threshold !== undefined ||
+      shortcut.threshold2 !== undefined ||
+      shortcut.propertyValue !== undefined
+    ) {
+      throw new ConfigError(
+        '--property-include is mutually exclusive with --op/--threshold/--threshold2/--property-value',
+      );
+    }
+  }
+
+  const eventFilters = [
+    ...(shortcut.deviceEventArgs ?? []),
+    ...(shortcut.deviceEventIncludes ?? []),
+    ...(shortcut.deviceEventBetweens ?? []),
+  ];
+  if (eventFilters.length > 0 && !(shortcut.type === 'deviceInput' && shortcut.deviceEvent)) {
+    throw new ConfigError(
+      '--event-filter/--event-filter-include/--event-filter-between only apply to deviceInput event-mode shortcuts',
+      { type: shortcut.type },
+    );
+  }
+}
+
 function preflightAddNode(input: AddNodeInput): void {
   let localNode: unknown;
   if (input.shortcut !== undefined) {
@@ -1491,19 +1558,7 @@ function preflightAddNode(input: AddNodeInput): void {
     assertShortcutSimplified(input.shortcut);
     assertShortcutPreloadUsage(input.shortcut);
     assertNopShortcutUsage(input.shortcut);
-    if (
-      input.shortcut.propertyValue !== undefined &&
-      !(
-        (input.shortcut.type === 'deviceInput' || input.shortcut.type === 'deviceGet') &&
-        input.shortcut.deviceProperty !== undefined &&
-        input.shortcut.deviceEvent === undefined
-      )
-    ) {
-      throw new ConfigError(
-        '--property-value only applies to deviceInput/deviceGet property-mode shortcuts',
-        { type: input.shortcut.type },
-      );
-    }
+    assertShortcutComparisonUsage(input.shortcut);
     if (isNonDeviceShortcut(input.shortcut)) {
       localNode = synthesizeNonDeviceShortcut(input.shortcut);
     } else if (!input.shortcut.deviceDid) {
@@ -1612,19 +1667,7 @@ async function addNodeWithinWorkflow(
     assertShortcutSimplified(input.shortcut);
     assertShortcutPreloadUsage(input.shortcut);
     assertNopShortcutUsage(input.shortcut);
-    if (
-      input.shortcut.propertyValue !== undefined &&
-      !(
-        (input.shortcut.type === 'deviceInput' || input.shortcut.type === 'deviceGet') &&
-        input.shortcut.deviceProperty !== undefined &&
-        input.shortcut.deviceEvent === undefined
-      )
-    ) {
-      throw new ConfigError(
-        '--property-value only applies to deviceInput/deviceGet property-mode shortcuts',
-        { type: input.shortcut.type },
-      );
-    }
+    assertShortcutComparisonUsage(input.shortcut);
     if (isNonDeviceShortcut(input.shortcut)) {
       // M10 F17: non-device shortcuts (onLoad / condition / logic gates /
       // timeRange / varChange / alarmClock) build a node entirely from
@@ -1831,22 +1874,26 @@ export async function addNode(
 // round-trip for the trivially-omitted --threshold2 case).
 const BETWEEN_OPS = new Set(['between']);
 
-// B9 / F63d (2026-05-30) — parse a single `--event-filter <piid><op><v1>`
-// expression into one F59 DeviceInputEventArgument union element. The
-// shortcut surface is MVP (scalar ops only — between/include are reachable
-// via raw setGraph or a future shortcut extension). Operator vocab matches
-// the F40 per-dtype matrix:
+// B9 / F63d / Issue #101 — parse one typed deviceInput event filter into an
+// F59 DeviceInputEventArgument union element. Scalar syntax remains
+// `<piid><op><v1>`; complete operands use their own unambiguous forms:
+// include `<piid>=<v1>,<v2>[,...]`, between `<piid>=<lower>,<upper>`.
+// Operator vocab matches the F40 per-dtype matrix:
 //   bool/string: op '=' only, v1 typeof matches dtype
-//   int:         op ∈ {=, !=, >, <, >=, <=}, v1 int
-//   float:       op ∈ {>, <}, v1 number  (=, !=, >=, <= rejected per F40)
+//   int:         scalar ops + include(int[]) + between(int,int)
+//   float:       > / < + between(number,number)
 // Operator lexer uses longest-match first (>= before >, etc.).
 const EVENT_FILTER_REGEX = /^(\d+)(>=|<=|!=|=|>|<)(.+)$/;
+const EVENT_FILTER_COMPLETE_REGEX = /^(\d+)=(.+)$/;
+
+type EventFilterKind = 'scalar' | 'include' | 'between';
 
 interface ParsedEventArg {
   piid: number;
   dtype: 'int' | 'float' | 'boolean' | 'string';
-  operator: '=' | '!=' | '>' | '<' | '>=' | '<=';
-  v1: boolean | string | number;
+  operator: MiotComparisonWireOperator;
+  v1: boolean | string | number | number[];
+  v2?: number;
 }
 
 function parseDeviceEventArg(
@@ -1854,17 +1901,28 @@ function parseDeviceEventArg(
   event: MiotEvent,
   service: MiotService,
   specType: string,
+  kind: EventFilterKind = 'scalar',
 ): ParsedEventArg {
-  const m = EVENT_FILTER_REGEX.exec(raw);
+  const m =
+    kind === 'scalar' ? EVENT_FILTER_REGEX.exec(raw) : EVENT_FILTER_COMPLETE_REGEX.exec(raw);
   if (!m) {
+    const shape =
+      kind === 'scalar'
+        ? '<piid><op><v1> where op ∈ =, !=, >, <, >=, <='
+        : kind === 'include'
+          ? '<piid>=<v1>,<v2>[,...]'
+          : '<piid>=<lower>,<upper>';
     throw new ConfigError(
-      `--event-filter "${raw}" must be <piid><op><v1> where op ∈ =, !=, >, <, >=, <=`,
-      { raw },
+      `--event-filter${kind === 'scalar' ? '' : `-${kind}`} "${raw}" must be ${shape}`,
+      { raw, kind },
     );
   }
   const piid = Number.parseInt(m[1] as string, 10);
-  const operator = m[2] as '=' | '!=' | '>' | '<' | '>=' | '<=';
-  const rest = m[3] as string;
+  const operator =
+    kind === 'scalar'
+      ? (m[2] as '=' | '!=' | '>' | '<' | '>=' | '<=')
+      : (kind as 'include' | 'between');
+  const rest = (kind === 'scalar' ? m[3] : m[2]) as string;
 
   const eventArgs = event.arguments ?? [];
   if (!eventArgs.includes(piid)) {
@@ -1884,8 +1942,86 @@ function parseDeviceEventArg(
     );
   }
   const dtype = projectMiotComparisonDtype(prop);
+
+  if (kind === 'include') {
+    if (dtype !== 'int') {
+      throw new ConfigError(
+        `${dtype} event arg piid=${piid} does not support include; only int (including non-empty value-list enums) supports --event-filter-include`,
+        { piid, dtype },
+      );
+    }
+    const tokens = rest.split(',');
+    if (tokens.length === 0 || tokens.some((token) => token.trim().length === 0)) {
+      throw new ConfigError(
+        `--event-filter-include "${raw}" requires one or more comma-separated integer values`,
+        { raw, piid },
+      );
+    }
+    const values = tokens.map((token) => parseFiniteDecimalLiteral(token));
+    if (values.some((value) => value === null || !Number.isSafeInteger(value))) {
+      throw new ConfigError(
+        `--event-filter-include piid=${piid} values must all be finite integers within JavaScript's safe range (got "${rest}")`,
+        { raw, piid },
+      );
+    }
+    const v1 = values as number[];
+    for (const value of v1) {
+      const domainError = miotNumericOperandDomainError(prop, value);
+      if (domainError !== null) {
+        throw new ConfigError(
+          `--event-filter-include piid=${piid}: ${domainError} for ${prop.type}`,
+          { raw, piid, value },
+        );
+      }
+    }
+    return { piid, dtype, operator, v1 };
+  }
+
+  if (kind === 'between') {
+    if (dtype !== 'int' && dtype !== 'float') {
+      throw new ConfigError(
+        `${dtype} event arg piid=${piid} does not support between; only int/float supports --event-filter-between`,
+        { piid, dtype },
+      );
+    }
+    const tokens = rest.split(',');
+    if (tokens.length !== 2 || tokens.some((token) => token.trim().length === 0)) {
+      throw new ConfigError(
+        `--event-filter-between "${raw}" requires exactly two comma-separated bounds`,
+        { raw, piid },
+      );
+    }
+    const parsed = tokens.map((token) => parseFiniteDecimalLiteral(token));
+    const valid = parsed.every(
+      (value) => value !== null && (dtype === 'float' || Number.isSafeInteger(value)),
+    );
+    if (!valid) {
+      throw new ConfigError(
+        `--event-filter-between piid=${piid} bounds must be ${dtype === 'int' ? "finite integers within JavaScript's safe range" : 'finite numbers'} (got "${rest}")`,
+        { raw, piid, dtype },
+      );
+    }
+    const [v1, v2] = parsed as [number, number];
+    if (v1 > v2) {
+      throw new ConfigError(
+        `--event-filter-between piid=${piid} lower bound ${v1} must be <= upper bound ${v2}`,
+        { raw, piid, v1, v2 },
+      );
+    }
+    for (const value of [v1, v2]) {
+      const domainError = miotNumericOperandDomainError(prop, value);
+      if (domainError !== null) {
+        throw new ConfigError(
+          `--event-filter-between piid=${piid}: ${domainError} for ${prop.type}`,
+          { raw, piid, value },
+        );
+      }
+    }
+    return { piid, dtype, operator, v1, v2 };
+  }
+
   if (!isMiotEventWireOperator(dtype, operator)) {
-    const allowed = MIOT_COMPARISON_CONTRACT[dtype].eventWireOperators.join(', ');
+    const allowed = MIOT_COMPARISON_CONTRACT[dtype].scalarWireOperators.join(', ');
     throw new ConfigError(
       `${dtype} event arg piid=${piid} only supports ${allowed} (got ${operator})`,
       { piid, operator, dtype, allowed },
@@ -1912,12 +2048,31 @@ function parseDeviceEventArg(
     if (v1 === null) {
       throw new ConfigError(`float v1 must be numeric, got "${rest}"`, { raw });
     }
+    const domainError = miotNumericOperandDomainError(prop, v1);
+    if (domainError !== null) {
+      throw new ConfigError(`--event-filter piid=${piid}: ${domainError} for ${prop.type}`, {
+        raw,
+        piid,
+        value: v1,
+      });
+    }
     return { piid, dtype, operator, v1 };
   }
   // int — all 6 scalar operators legal per F40.
   const v1 = parseFiniteDecimalLiteral(rest);
-  if (v1 === null || !Number.isInteger(v1)) {
-    throw new ConfigError(`int v1 must be an integer, got "${rest}"`, { raw });
+  if (v1 === null || !Number.isSafeInteger(v1)) {
+    throw new ConfigError(
+      `int v1 must be an integer within JavaScript's safe range, got "${rest}"`,
+      { raw },
+    );
+  }
+  const domainError = miotNumericOperandDomainError(prop, v1);
+  if (domainError !== null) {
+    throw new ConfigError(`--event-filter piid=${piid}: ${domainError} for ${prop.type}`, {
+      raw,
+      piid,
+      value: v1,
+    });
   }
   return { piid, dtype, operator, v1 };
 }
@@ -2441,6 +2596,54 @@ function synthesizePropertyComparison(
   specType: string,
 ): Record<string, unknown> {
   const dtype = projectMiotComparisonDtype(property);
+
+  if (shortcut.propertyInclude !== undefined) {
+    if (dtype !== 'int') {
+      throw new ConfigError(
+        `${dtype} property "${propertyName}" does not support --property-include; only int (including non-empty value-list enums) supports membership arrays`,
+        { dtype, property: propertyName },
+      );
+    }
+    if (
+      shortcut.op !== undefined ||
+      shortcut.threshold !== undefined ||
+      shortcut.threshold2 !== undefined ||
+      shortcut.propertyValue !== undefined
+    ) {
+      throw new ConfigError(
+        '--property-include is mutually exclusive with --op/--threshold/--threshold2/--property-value',
+        { property: propertyName },
+      );
+    }
+    if (shortcut.propertyInclude.length === 0) {
+      throw new ConfigError('--property-include requires one or more integer values', {
+        property: propertyName,
+      });
+    }
+    for (const value of shortcut.propertyInclude) {
+      if (!Number.isSafeInteger(value)) {
+        throw new ConfigError(
+          `--property-include values for "${propertyName}" must all be finite integers within JavaScript's safe range (got ${String(value)})`,
+          { property: propertyName, value },
+        );
+      }
+      const domainError = miotNumericOperandDomainError(property, value, {
+        skipRange: shortcut.forceOutOfRange === true,
+      });
+      if (domainError !== null) {
+        throw new ConfigError(
+          `--property-include for "${propertyName}": ${domainError} on urn ${specType}`,
+          { property: propertyName, value },
+        );
+      }
+    }
+    return {
+      dtype,
+      operator: 'include',
+      v1: [...shortcut.propertyInclude],
+    };
+  }
+
   const rawOp = shortcut.op ?? (dtype === 'boolean' || dtype === 'string' ? 'eq' : 'gt');
   const operator = miotShortcutOperatorToWire(dtype, rawOp);
   if (operator === null) {
@@ -2493,7 +2696,7 @@ function synthesizePropertyComparison(
 
   const thresholdValue = shortcut.threshold ?? 0;
   const validThreshold =
-    dtype === 'int' ? Number.isInteger(thresholdValue) : Number.isFinite(thresholdValue);
+    dtype === 'int' ? Number.isSafeInteger(thresholdValue) : Number.isFinite(thresholdValue);
   if (!validThreshold) {
     throw new ConfigError(
       `${dtype} property "${propertyName}" requires a ${dtype === 'int' ? 'finite integer' : 'finite number'} --threshold (got ${String(thresholdValue)})`,
@@ -2501,15 +2704,14 @@ function synthesizePropertyComparison(
     );
   }
 
-  const range = property['value-range'];
-  if (range !== undefined && shortcut.forceOutOfRange !== true) {
-    const [lo, hi] = range;
-    if (thresholdValue < lo || thresholdValue > hi) {
-      throw new ConfigError(
-        `--threshold ${thresholdValue} out of value-range [${lo}, ${hi}] for property "${propertyName}" on urn ${specType}. Pass --force-out-of-range to override.`,
-        { threshold: thresholdValue, range, property: propertyName },
-      );
-    }
+  const thresholdDomainError = miotNumericOperandDomainError(property, thresholdValue, {
+    skipRange: shortcut.forceOutOfRange === true,
+  });
+  if (thresholdDomainError !== null) {
+    throw new ConfigError(
+      `--threshold for property "${propertyName}": ${thresholdDomainError} on urn ${specType}${thresholdDomainError.includes('value-range') ? '. Pass --force-out-of-range to override the range check.' : ''}`,
+      { threshold: thresholdValue, property: propertyName },
+    );
   }
 
   const isBetween = operator === 'between';
@@ -2528,11 +2730,26 @@ function synthesizePropertyComparison(
   if (isBetween) {
     const threshold2 = shortcut.threshold2 as number;
     const validThreshold2 =
-      dtype === 'int' ? Number.isInteger(threshold2) : Number.isFinite(threshold2);
+      dtype === 'int' ? Number.isSafeInteger(threshold2) : Number.isFinite(threshold2);
     if (!validThreshold2) {
       throw new ConfigError(
         `${dtype} property "${propertyName}" requires a ${dtype === 'int' ? 'finite integer' : 'finite number'} --threshold2 (got ${String(threshold2)})`,
         { dtype, threshold2, property: propertyName },
+      );
+    }
+    if (thresholdValue > threshold2) {
+      throw new ConfigError(
+        `--op between on property "${propertyName}" requires --threshold ${thresholdValue} <= --threshold2 ${threshold2}`,
+        { property: propertyName, threshold: thresholdValue, threshold2 },
+      );
+    }
+    const threshold2DomainError = miotNumericOperandDomainError(property, threshold2, {
+      skipRange: shortcut.forceOutOfRange === true,
+    });
+    if (threshold2DomainError !== null) {
+      throw new ConfigError(
+        `--threshold2 for property "${propertyName}": ${threshold2DomainError} on urn ${specType}${threshold2DomainError.includes('value-range') ? '. Pass --force-out-of-range to override the range check.' : ''}`,
+        { threshold2, property: propertyName },
       );
     }
   }
@@ -2579,15 +2796,20 @@ function synthesizeNodeFromShortcut(
       );
       // B9 / F63d (2026-05-30) — translate --event-filter expressions into
       // typed arguments[] elements. Empty list preserves F11 behavior.
-      const rawArgs = shortcut.deviceEventArgs ?? [];
+      const rawArgs: Array<{ raw: string; kind: EventFilterKind }> = [
+        ...(shortcut.deviceEventArgs ?? []).map((raw) => ({ raw, kind: 'scalar' as const })),
+        ...(shortcut.deviceEventIncludes ?? []).map((raw) => ({ raw, kind: 'include' as const })),
+        ...(shortcut.deviceEventBetweens ?? []).map((raw) => ({ raw, kind: 'between' as const })),
+      ];
       const args: ParsedEventArg[] = [];
       const seen = new Set<number>();
-      for (const raw of rawArgs) {
-        const parsed = parseDeviceEventArg(raw, event, service, spec.type);
+      for (const { raw, kind } of rawArgs) {
+        const parsed = parseDeviceEventArg(raw, event, service, spec.type, kind);
         if (seen.has(parsed.piid)) {
-          throw new ConfigError(`--event-filter piid=${parsed.piid} specified more than once`, {
-            piid: parsed.piid,
-          });
+          throw new ConfigError(
+            `event filter piid=${parsed.piid} specified more than once across --event-filter/--event-filter-include/--event-filter-between`,
+            { piid: parsed.piid },
+          );
         }
         seen.add(parsed.piid);
         args.push(parsed);

@@ -5,6 +5,7 @@ import {
   type MiotComparisonDtype,
   hasMiotValueList,
   isMiotWireOperator,
+  miotNumericOperandDomainError,
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
@@ -147,14 +148,16 @@ function checkComparisonWire(
       issues.push(issue(`${path}.operator`, '卡片配置有误: Invalid operator'));
     }
     if (operator === 'include') {
-      if (!Array.isArray(v1) || v1.some((v) => !Number.isInteger(v))) {
+      if (!Array.isArray(v1) || v1.some((v) => !Number.isSafeInteger(v))) {
         issues.push(issue(`${path}.v1`, '卡片配置有误: Invalid v1'));
       }
-    } else if (!Number.isInteger(v1)) {
+    } else if (!Number.isSafeInteger(v1)) {
       issues.push(issue(`${path}.v1`, '卡片配置有误: Invalid v1'));
     }
-    if (operator === 'between' && !Number.isInteger(v2)) {
+    if (operator === 'between' && !Number.isSafeInteger(v2)) {
       issues.push(issue(`${path}.v2`, '卡片配置有误: Invalid v2'));
+    } else if (operator === 'between' && Number(v1) > Number(v2)) {
+      issues.push(issue(`${path}.v2`, '卡片配置有误: between requires v1 <= v2'));
     }
   } else if (dtype === 'float') {
     if (typeof operator !== 'string' || !isMiotWireOperator(dtype, operator)) {
@@ -165,6 +168,8 @@ function checkComparisonWire(
     }
     if (operator === 'between' && (typeof v2 !== 'number' || Number.isNaN(v2))) {
       issues.push(issue(`${path}.v2`, '卡片配置有误: Invalid v2'));
+    } else if (operator === 'between' && Number(v1) > Number(v2)) {
+      issues.push(issue(`${path}.v2`, '卡片配置有误: between requires v1 <= v2'));
     }
   } else if (dtype === 'boolean') {
     if (operator !== MIOT_COMPARISON_CONTRACT.boolean.equalityWireOperator) {
@@ -194,6 +199,48 @@ function checkComparisonWire(
     }
   }
 
+  return issues;
+}
+
+function checkNumericComparisonDomain(
+  props: Record<string, unknown>,
+  property: MiotProperty,
+  path: string,
+  checkOrder = false,
+): LintIssue[] {
+  if (props.dtype !== 'int' && props.dtype !== 'float') return [];
+  const issues: LintIssue[] = [];
+  if (
+    checkOrder &&
+    props.operator === 'between' &&
+    typeof props.v1 === 'number' &&
+    typeof props.v2 === 'number' &&
+    props.v1 > props.v2
+  ) {
+    issues.push(issue(`${path}.v2`, '卡片配置有误: between requires v1 <= v2'));
+  }
+  const operands: Array<{ path: string; value: number }> = [];
+  if (props.operator === 'include') {
+    if (Array.isArray(props.v1)) {
+      for (let i = 0; i < props.v1.length; i += 1) {
+        const value = props.v1[i];
+        if (typeof value === 'number') operands.push({ path: `${path}.v1[${i}]`, value });
+      }
+    }
+  } else if (typeof props.v1 === 'number') {
+    operands.push({ path: `${path}.v1`, value: props.v1 });
+  }
+  if (props.operator === 'between' && typeof props.v2 === 'number') {
+    operands.push({ path: `${path}.v2`, value: props.v2 });
+  }
+  issues.push(
+    ...operands.flatMap(({ path: operandPath, value }) => {
+      const domainError = miotNumericOperandDomainError(property, value);
+      return domainError === null
+        ? []
+        : [issue(operandPath, `卡片配置有误: ${domainError} for MIoT property ${property.type}`)];
+    }),
+  );
   return issues;
 }
 
@@ -725,6 +772,8 @@ async function checkAgainstSpec(
         ),
       );
     }
+  } else if (node.type === 'deviceInput' || node.type === 'deviceGet') {
+    issues.push(...checkNumericComparisonDomain(props, property, base));
   }
 
   return issues;
@@ -776,6 +825,9 @@ function checkEventArgsAgainstSpec(
           `卡片配置有误: 变量类型不匹配: MIoT property piid=${a.piid} uses ${source}, so web UI expects dtype "${expected}" (got "${String(a.dtype)}")`,
         ),
       );
+    }
+    if (node.type === 'deviceInput') {
+      issues.push(...checkNumericComparisonDomain(a, property, argPath, true));
     }
   }
   return issues;

@@ -27,14 +27,14 @@ export const MIOT_COMPARISON_CONTRACT = {
     shortcutOperators: ['gt', 'lt', 'eq', 'ne', 'gte', 'lte', 'between'],
     wireOperators: ['>', '<', '=', '!=', '>=', '<=', 'between', 'include'],
     scalarWireOperators: ['>=', '<=', '=', '!=', '>', '<'],
-    eventWireOperators: ['=', '!=', '>', '<', '>=', '<='],
+    eventWireOperators: ['=', '!=', '>', '<', '>=', '<=', 'between', 'include'],
     equalityWireOperator: 'include',
   },
   float: {
     shortcutOperators: ['gt', 'lt', 'between'],
     wireOperators: ['>', '<', 'between'],
     scalarWireOperators: ['>', '<'],
-    eventWireOperators: ['>', '<'],
+    eventWireOperators: ['>', '<', 'between'],
     equalityWireOperator: null,
   },
   boolean: {
@@ -111,6 +111,47 @@ export function isMiotWireOperator(
   operator: string,
 ): operator is MiotComparisonWireOperator {
   return (MIOT_COMPARISON_CONTRACT[dtype].wireOperators as readonly string[]).includes(operator);
+}
+
+/**
+ * Validate one numeric comparison operand against the domain advertised by
+ * the MIoT property. A non-empty value-list is a closed enum. value-range is
+ * treated as `[min, max, step]`; the step check uses a scale-aware tolerance
+ * so decimal ranges such as `[0, 1, 0.1]` do not fail on IEEE-754 noise.
+ *
+ * `skipRange` backs the existing `--force-out-of-range` escape hatch. It does
+ * not bypass a closed value-list: choosing a value the device does not expose
+ * is a dtype/domain error, not merely an out-of-range probe.
+ */
+export function miotNumericOperandDomainError(
+  property: Pick<MiotProperty, 'value-list' | 'value-range'>,
+  value: number,
+  options: { skipRange?: boolean } = {},
+): string | null {
+  const valueList = property['value-list'];
+  if (Array.isArray(valueList) && valueList.length > 0) {
+    const allowed = valueList.map((entry) => entry.value);
+    if (!allowed.includes(value)) {
+      return `value ${String(value)} is not in MIoT value-list [${allowed.join(', ')}]`;
+    }
+  }
+
+  if (options.skipRange === true) return null;
+  const range = property['value-range'];
+  if (range === undefined) return null;
+  const [min, max, step] = range;
+  if (value < min || value > max) {
+    return `value ${String(value)} is outside MIoT value-range [${min}, ${max}]`;
+  }
+  if (step > 0) {
+    const units = (value - min) / step;
+    const nearest = Math.round(units);
+    const tolerance = Number.EPSILON * 32 * Math.max(1, Math.abs(units));
+    if (Math.abs(units - nearest) > tolerance) {
+      return `value ${String(value)} is not aligned to MIoT value-range step ${step} from ${min}`;
+    }
+  }
+  return null;
 }
 
 /**

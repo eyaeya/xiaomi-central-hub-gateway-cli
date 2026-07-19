@@ -12,6 +12,7 @@ import { isMissingScopeError, listVariables } from '../resources/variables.js';
 import type { DeviceSpec, MiotAction, MiotProperty, MiotService } from '../schemas/device-spec.js';
 import {
   type MiotComparisonDtype,
+  miotNumericOperandDomainError,
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import { durationToMilliseconds, isDurationUnit } from '../schemas/nodes/duration.js';
@@ -98,14 +99,13 @@ export interface ExportRuleInputs extends ExportRuleDeps {
    */
   rename?: RenameOptions;
   /**
-   * F54 (2026-05-30) — when true, the exporter throws ConfigError if any
-   * node carries a `cfg` key that the renderer would silently drop on
-   * round-trip (e.g. an unrecognized future UI field). Default false; the
-   * exporter then emits a `kind: 'warning'` command per dropped key so
-   * the user can still re-import the script but is told what was lost.
+   * F54 / Issue #101 — when true, the exporter throws ConfigError for any
+   * node warning that represents semantic round-trip loss: unknown cfg/type,
+   * stale spec mapping, or an operand the typed shortcut cannot reproduce.
+   * Default false; permissive export emits warning commands instead.
    *
-   * Turn this on in CI / agent-funnel paths where byte-identical
-   * round-trip matters more than partial-export convenience.
+   * Turn this on in CI / agent-funnel paths where semantic fidelity matters
+   * more than partial-export convenience.
    */
   strictRoundtrip?: boolean;
 }
@@ -189,8 +189,28 @@ export async function exportRuleFromView(
   //    only fetches once.
   const specCache = new Map<string, DeviceSpec>();
   for (const node of view.nodes) {
+    const warningCountBefore = nodeWarnings.length;
     const result = await renderNode(node, deps, specCache, nodeWarnings);
     if (result) commands.push(result);
+    // An opaque-raw command is deliberately lossless for same-id replay: its
+    // warning is informational (the target gateway must understand the future
+    // card), not evidence that this exporter dropped semantics. All modeled
+    // node warnings still describe omitted or mutated typed data.
+    const semanticWarnings =
+      result?.kind === 'node-add' && result.opaqueRaw === true
+        ? []
+        : nodeWarnings.slice(warningCountBefore);
+    if (strictRoundtrip && semanticWarnings.length > 0) {
+      const n = node as { id?: unknown; type?: unknown };
+      throw new ConfigError(
+        `strict round-trip cannot preserve node ${String(n.id)} (${String(n.type)}): ${semanticWarnings[0]}`,
+        {
+          nodeId: n.id,
+          nodeType: n.type,
+          warnings: semanticWarnings,
+        },
+      );
+    }
     // F54 (2026-05-30) — diff the node's cfg against the renderer's
     // known keys. Anything else (e.g. cfg.urn on a non-device card or an
     // unrecognized future UI field) would silently drop on the script-replay
@@ -519,9 +539,8 @@ function clearOpaqueOutputTargets(
   );
 }
 
-// Operators the CLI's `--event-filter <piid><op><v1>` parser accepts.
-// between/include event-arg filters fall outside this set and are surfaced as a
-// warning rather than silently dropped.
+// Scalar operators retained by the backwards-compatible --event-filter flag.
+// Complete operands use --event-filter-include / --event-filter-between.
 const EVENT_FILTER_OPS = new Set(['=', '!=', '>', '<', '>=', '<=']);
 
 function asMiotComparisonDtype(value: unknown): MiotComparisonDtype | null {
@@ -550,6 +569,7 @@ function appendPropertyComparisonFlags(
   flags: ExportFlag[],
   props: Record<string, unknown>,
   projectedDtype: MiotComparisonDtype,
+  property: MiotProperty | null,
   nodeType: 'deviceInput' | 'deviceGet',
   nodeId: string,
   warnings: string[],
@@ -560,10 +580,14 @@ function appendPropertyComparisonFlags(
     );
   }
 
-  const reverseOp = reverseOpSymbol(String(props.operator));
-  if (reverseOp !== null) flags.push({ name: '--op', value: reverseOp });
-
   if (projectedDtype === 'string') {
+    const reverseOp = reverseOpSymbol(String(props.operator));
+    if (reverseOp !== null) flags.push({ name: '--op', value: reverseOp });
+    else {
+      warnings.push(
+        `${nodeType} node ${nodeId}: operator "${String(props.operator)}" has no typed shortcut`,
+      );
+    }
     if (typeof props.v1 === 'string' && props.v1.length > 0) {
       flags.push({ name: '--property-value', value: props.v1 });
     } else {
@@ -575,19 +599,94 @@ function appendPropertyComparisonFlags(
   }
 
   const v1 = props.v1;
-  const threshold = Array.isArray(v1) ? v1[0] : v1;
-  if (Array.isArray(v1) && v1.length > 1) {
+  if (props.operator === 'include') {
+    if (
+      projectedDtype === 'int' &&
+      Array.isArray(v1) &&
+      v1.length > 0 &&
+      v1.every((value) => Number.isSafeInteger(value))
+    ) {
+      flags.push({ name: '--property-include', value: v1.join(',') });
+      if (property !== null) {
+        for (const value of v1) {
+          const domainError = miotNumericOperandDomainError(property, value);
+          if (domainError !== null) {
+            warnings.push(`${nodeType} node ${nodeId}: ${domainError}; typed replay will reject`);
+          }
+        }
+      }
+    } else {
+      warnings.push(
+        `${nodeType} node ${nodeId}: include comparison requires projected dtype int and a non-empty safe-integer v1 array; comparison flags were omitted`,
+      );
+    }
+    return;
+  }
+
+  const reverseOp = reverseOpSymbol(String(props.operator));
+  if (reverseOp !== null) flags.push({ name: '--op', value: reverseOp });
+  else {
     warnings.push(
-      `${nodeType} node ${nodeId}: include() v1 has ${v1.length} values [${v1.join(',')}]; --threshold round-trips only the first (${String(v1[0])}). Re-author the rule to preserve the full membership set.`,
+      `${nodeType} node ${nodeId}: operator "${String(props.operator)}" has no typed shortcut; comparison flags were omitted`,
+    );
+  }
+  const threshold = v1;
+  if (
+    projectedDtype === 'int' &&
+    typeof threshold === 'number' &&
+    !Number.isSafeInteger(threshold)
+  ) {
+    warnings.push(
+      `${nodeType} node ${nodeId}: int v1 ${String(threshold)} is outside JavaScript's safe integer range; comparison flags were omitted`,
+    );
+    return;
+  }
+  if (projectedDtype === 'int' && props.operator === '=') {
+    warnings.push(
+      `${nodeType} node ${nodeId}: scalar int operator "=" cannot round-trip exactly because --op eq synthesizes gateway operator "include"; use an include array or raw graph round-trip`,
     );
   }
   if (typeof threshold === 'number') {
     flags.push({ name: '--threshold', value: String(threshold) });
+    if (property !== null) {
+      const domainError = miotNumericOperandDomainError(property, threshold);
+      if (domainError !== null) {
+        warnings.push(`${nodeType} node ${nodeId}: ${domainError}; typed replay will reject`);
+      }
+    }
   } else if (typeof threshold === 'boolean') {
     flags.push({ name: '--threshold', value: threshold ? '1' : '0' });
+  } else {
+    warnings.push(
+      `${nodeType} node ${nodeId}: comparison v1 is not a scalar number/boolean; --threshold was omitted`,
+    );
   }
-  if (props.operator === 'between' && typeof props.v2 === 'number') {
+  if (
+    props.operator === 'between' &&
+    projectedDtype === 'int' &&
+    typeof props.v2 === 'number' &&
+    !Number.isSafeInteger(props.v2)
+  ) {
+    warnings.push(
+      `${nodeType} node ${nodeId}: int v2 ${String(props.v2)} is outside JavaScript's safe integer range; --threshold2 was omitted`,
+    );
+  } else if (props.operator === 'between' && typeof props.v2 === 'number') {
     flags.push({ name: '--threshold2', value: String(props.v2) });
+    if (property !== null) {
+      const domainError = miotNumericOperandDomainError(property, props.v2);
+      if (domainError !== null) {
+        warnings.push(`${nodeType} node ${nodeId}: ${domainError}; typed replay will reject`);
+      }
+    }
+    if (typeof threshold === 'number' && threshold > props.v2) {
+      warnings.push(
+        `${nodeType} node ${nodeId}: between has v1 ${threshold} > v2 ${props.v2}; typed replay will reject`,
+      );
+    }
+  } else if (props.operator === 'between') {
+    warnings.push(
+      `${nodeType} node ${nodeId}: between comparison has no numeric v2; --threshold2 was omitted`,
+    );
   }
 }
 
@@ -632,15 +731,95 @@ async function renderDeviceInput(
     if (Array.isArray(eventArgs)) {
       for (const arg of eventArgs) {
         if (!isRecord(arg) || typeof arg.piid !== 'number' || !('operator' in arg)) continue;
+        const argProperty = findPropertyDetails(spec, Number(props.siid), arg.piid)?.property;
+        if (argProperty === undefined) {
+          warnings.push(
+            `deviceInput node ${n.id}: event arg piid=${arg.piid} is absent from service siid=${String(props.siid)}; typed replay cannot validate it`,
+          );
+        } else {
+          const expectedDtype = projectMiotComparisonDtype(argProperty);
+          if (arg.dtype !== expectedDtype) {
+            warnings.push(
+              `deviceInput node ${n.id}: event arg piid=${arg.piid} dtype "${String(arg.dtype)}" differs from current spec projection "${expectedDtype}"; typed replay will reject`,
+            );
+          }
+        }
+        const warnDomain = (value: number): void => {
+          if (argProperty === undefined) return;
+          const domainError = miotNumericOperandDomainError(argProperty, value);
+          if (domainError !== null) {
+            warnings.push(
+              `deviceInput node ${n.id}: event arg piid=${arg.piid} ${domainError}; typed replay will reject`,
+            );
+          }
+        };
         const op = String(arg.operator);
+        if (op === 'include') {
+          if (
+            arg.dtype === 'int' &&
+            Array.isArray(arg.v1) &&
+            arg.v1.length > 0 &&
+            arg.v1.every((value) => Number.isSafeInteger(value))
+          ) {
+            flags.push({
+              name: '--event-filter-include',
+              value: `${arg.piid}=${arg.v1.join(',')}`,
+            });
+            for (const value of arg.v1) warnDomain(value);
+          } else {
+            warnings.push(
+              `deviceInput node ${n.id}: event arg piid=${arg.piid} include requires dtype int and a non-empty safe-integer v1 array; the filter was dropped on export`,
+            );
+          }
+          continue;
+        }
+        if (op === 'between') {
+          if (
+            (arg.dtype === 'int' || arg.dtype === 'float') &&
+            typeof arg.v1 === 'number' &&
+            typeof arg.v2 === 'number' &&
+            (arg.dtype === 'float'
+              ? Number.isFinite(arg.v1) && Number.isFinite(arg.v2)
+              : Number.isSafeInteger(arg.v1) && Number.isSafeInteger(arg.v2))
+          ) {
+            flags.push({
+              name: '--event-filter-between',
+              value: `${arg.piid}=${arg.v1},${arg.v2}`,
+            });
+            warnDomain(arg.v1);
+            warnDomain(arg.v2);
+            if (arg.v1 > arg.v2) {
+              warnings.push(
+                `deviceInput node ${n.id}: event arg piid=${arg.piid} between has v1 ${arg.v1} > v2 ${arg.v2}; typed replay will reject`,
+              );
+            }
+          } else {
+            warnings.push(
+              `deviceInput node ${n.id}: event arg piid=${arg.piid} between requires safe-int/finite-float dtype plus numeric v1/v2; the filter was dropped on export`,
+            );
+          }
+          continue;
+        }
         if (!EVENT_FILTER_OPS.has(op)) {
           warnings.push(
-            `deviceInput node ${n.id}: event arg piid=${arg.piid} uses operator "${op}" which --event-filter cannot express (only =, !=, >, <, >=, <=); the filter was dropped on export`,
+            `deviceInput node ${n.id}: event arg piid=${arg.piid} uses unsupported operator "${op}"; the filter was dropped on export`,
           );
           continue;
         }
         const v1 = arg.v1;
+        const validScalar =
+          (arg.dtype === 'int' && Number.isSafeInteger(v1)) ||
+          (arg.dtype === 'float' && typeof v1 === 'number' && Number.isFinite(v1)) ||
+          (arg.dtype === 'boolean' && typeof v1 === 'boolean') ||
+          (arg.dtype === 'string' && typeof v1 === 'string' && v1.length > 0);
+        if (!validScalar) {
+          warnings.push(
+            `deviceInput node ${n.id}: event arg piid=${arg.piid} scalar v1 does not match dtype "${String(arg.dtype)}"; the filter was dropped on export`,
+          );
+          continue;
+        }
         const val = typeof v1 === 'boolean' ? (v1 ? '1' : '0') : String(v1);
+        if (typeof v1 === 'number') warnDomain(v1);
         flags.push({ name: '--event-filter', value: `${arg.piid}${op}${val}` });
       }
     }
@@ -668,7 +847,15 @@ async function renderDeviceInput(
         `deviceInput node ${n.id}: comparison dtype "${String(props.dtype)}" is unknown; comparison flags were omitted`,
       );
     } else {
-      appendPropertyComparisonFlags(flags, props, projectedDtype, 'deviceInput', n.id, warnings);
+      appendPropertyComparisonFlags(
+        flags,
+        props,
+        projectedDtype,
+        propertyDetails?.property ?? null,
+        'deviceInput',
+        n.id,
+        warnings,
+      );
     }
     appendPreloadFlag(flags, props.preload);
   } else {
@@ -730,7 +917,15 @@ async function renderDeviceGet(
       `deviceGet node ${n.id}: comparison dtype "${String(props.dtype)}" is unknown; comparison flags were omitted`,
     );
   } else {
-    appendPropertyComparisonFlags(flags, props, projectedDtype, 'deviceGet', n.id, warnings);
+    appendPropertyComparisonFlags(
+      flags,
+      props,
+      projectedDtype,
+      propertyDetails?.property ?? null,
+      'deviceGet',
+      n.id,
+      warnings,
+    );
   }
 
   return {

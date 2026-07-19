@@ -16,8 +16,8 @@ interface ExportOpts extends RuleOpts {
   targetId?: string;
   targetName?: string;
   // F54 (2026-05-30) — turn unknown-cfg-key warnings into hard errors.
-  // Use in CI / agent-funnel paths where the script must round-trip
-  // byte-identically (no silent UI-only fields dropped).
+  // Use in CI / agent-funnel paths where the script must not carry any
+  // warning that signals a semantic round-trip loss.
   strictRoundtrip?: boolean;
   nextHint?: boolean;
 }
@@ -43,7 +43,7 @@ export function attachExport(cmd: Command): void {
     .option('--pretty', 'pretty-print JSON output (only with --format json)')
     .option(
       '--strict-roundtrip',
-      'fail (instead of warn) if any node carries a cfg key the exporter would drop on round-trip (F54). Use in CI / agent-funnel paths.',
+      'fail instead of emitting any node warning that signals semantic round-trip loss (unknown cfg/type/spec mapping/operand)',
     );
   addNextHintFlag(sub)
     .addHelpText(
@@ -75,6 +75,9 @@ Examples:
       # Clone with an explicit name.
 
 Limitations:
+  - --strict-roundtrip rejects every node warning that would change or omit
+    graph semantics, including unknown cards/spec mappings/operands and cfg
+    keys. Permissive export still surfaces those warnings on stderr/JSON.
   - varSetNumber / varSetString elements must be losslessly expressible in
     the current --expr DSL. Export fails before returning a script when a
     variable/constant boundary would be absorbed or rejected; add an explicit
