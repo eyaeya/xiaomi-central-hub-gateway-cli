@@ -764,10 +764,11 @@ function assertVariableReplayCompatible(
 // ergonomic for AI agents that need a current-state snapshot (for picking
 // thresholds) or a streaming diff (for observing an automation).
 //
-// IMPORTANT: the gateway has no read-device-property RPC (docs/api/devices.md
-// "Property / action endpoints — DEFERRED"). To observe a device's live
-// properties via this command, first route them into a variable using a rule
-// with deviceInput / deviceGet → varSet, then watch the variable.
+// The audited client/bundle surface and current xgg model do not expose a
+// generic arbitrary live-property read. For a modeled observation path, route
+// the property into a variable with deviceInputSetVar (notify) or
+// deviceGetSetVar (event-driven pull), then watch the variable. This is not a
+// firmware-global impossibility claim.
 
 interface WatchOpts extends VariableOpts {
   scope?: string;
@@ -820,9 +821,10 @@ Examples:
   $ xgg variable watch --follow --max-events 5  # stream then exit
   $ xgg variable watch --follow --interval-ms 1500
 
-Note: the gateway has no read-device-property RPC. To observe a device's
-live properties, route them into a variable via a rule (deviceInput or
-deviceGet → varSet) and watch the variable.`,
+Note: the audited client/bundle surface and current xgg model do not expose a
+generic arbitrary live-property read. Route a modeled property into a variable
+with deviceInputSetVar (on change) or deviceGetSetVar (on demand), then use
+variable watch --follow. This does not rule out firmware-private APIs.`,
     )
     .action(
       wrap('variable.watch', async (opts: WatchOpts) => {

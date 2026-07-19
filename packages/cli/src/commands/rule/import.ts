@@ -49,12 +49,12 @@ Examples:
   $ xgg rule import --from-file rule.json > replay.sh
       # Render for review. Its first target-graph write stages enable=false.
 
-  $ xgg rule import --from-file rule.json --target-id 9999999999999 | bash
-      # Clone the saved rule into a new rule id; name becomes "[Cloned] <orig>".
+  $ xgg rule import --from-file rule.json --target-id 9999999999999 > clone.sh
+      # Render a clone script; name becomes "[Cloned] <orig>".
 
   $ xgg rule import --from-file rule.json \\
-        --target-id 9999999999999 --target-name "按钮播报-备份" | bash
-      # Clone with an explicit new name.
+        --target-id 9999999999999 --target-name "按钮播报-备份" > clone.sh
+      # Render a clone with an explicit new name, then review before execution.
 
 Notes:
   - The JSON file must be the output of \`xgg rule export <id> --format json\`.
@@ -62,16 +62,20 @@ Notes:
     to *render* the script. The replay (\`| bash\`) still talks to the
     gateway and requires \`xgg login\`.
   - Import deliberately emits no live next-step hint: rendering stdout does
-    not prove that the script was executed. After a successful replay, run
-    \`xgg rule validate --rule-id <id>\`, then strict lint before enabling.
+    not prove that the script was executed. After replay, run validate, strict
+    lint and graph/enable readback. For an enabled source these checks happen
+    after the script has restored enable as its final command.
   - Replay preflights captured local variables. Its first target-graph write is
-    the exported empty shell with cfg overwrite and enable=false; same-id and
-    create-only clone guards determine when compatible variables are prepared.
-    It rebuilds nodes/edges while disabled and appends a final
-    rule enable only when the export was enabled. Same-id replay is destructive
-    and each command is a separate transaction: review the script, keep every
-    web/xgg/API writer away from the target, and restore from rollback snapshots
-    if a post-staging failure leaves the expected disabled partial graph.
+    the exported empty shell with cfg overwrite and enable=false. When captured
+    local variables exist, same-id prepares them with compatibility guards
+    before that graph write; a clone keeps its expect-absent guard and prepares
+    remapped local variables only after the disabled empty target exists.
+    It rebuilds nodes/edges while disabled and appends a final rule enable only
+    when the export was enabled; a disabled export stays disabled. Same-id
+    replay is destructive and each command is a separate transaction: review
+    the script, keep every web/xgg/API writer away from the target, and restore
+    from rollback snapshots if a post-staging failure leaves the expected
+    disabled partial graph.
   - Cloning rewrites only R<source-id> to R<target-id>. Captured local
     variables are fully preflighted before any write. The empty target is then
     created with expect-absent semantics before local variables are prepared,
@@ -79,15 +83,17 @@ Notes:
     never overwritten. Concurrent variable changes can still stop replay
     because the gateway has no cross-variable transaction. global variables
     remain declared external dependencies and must exist.
-  - --target-id must differ from the exported rule id. Omit it for same-id
-    replay or use only --target-name for an in-place rename.
+  - --target-id must differ from the exported rule id. Omit it for same-ID
+    replay. --target-name is applied to both a clone and an existing same-ID
+    target by the staged cfg overwrite.
   - Exports containing opaque raw fallbacks for unknown future node types can
     be replayed with the same id, but cannot be cloned with --target-id: xgg
     cannot safely discover and rewrite rule-local references inside an
     unmodeled payload.
-  - Device-output / device-input nodes referenced in the export must still
-    exist on the target gateway with the same DIDs; otherwise the replay
-    fails at the corresponding \`rule node add\` step.`,
+  - All five modeled device-backed node families (deviceInput, deviceGet,
+    deviceOutput, deviceInputSetVar, deviceGetSetVar) require their referenced
+    DIDs and specs on the target gateway; otherwise replay fails at the
+    corresponding \`rule node add\` step.`,
     )
     .action(
       wrap('rule.import', async (opts: ImportOpts) => {

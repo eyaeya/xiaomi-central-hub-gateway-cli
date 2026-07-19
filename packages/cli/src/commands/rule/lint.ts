@@ -58,7 +58,10 @@ export function attachLint(cmd: Command): void {
     .description('Lint a rule graph (or all rules) — reports schema, edge, and reference issues')
     .option('--rule-id <id>', 'lint a single rule by id')
     .option('--all', 'lint every rule on the gateway')
-    .option('--strict', 'also run the web-UI save-button validator rules')
+    .option(
+      '--strict',
+      'also run modeled card/variable validation, promote missing required inputs, and check directed sink reachability',
+    )
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
     .option('--timeout <ms>', 'request timeout in milliseconds', '10000')
