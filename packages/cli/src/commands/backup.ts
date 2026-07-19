@@ -1,6 +1,7 @@
 import {
   type BackupItem,
   ConfigError,
+  NotConfirmedError,
   createBackup,
   createStore,
   deleteBackup,
@@ -19,7 +20,11 @@ import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
 import { parsePositiveTimerMs } from '../local-input.js';
 import { type TableColumn, emit, emitList } from '../output.js';
-import { type ResolvedMutationGuard, assertAgentModeOrSnapshotsDir } from './_mutation-guard.js';
+import {
+  type ResolvedMutationGuard,
+  assertAgentModeOrSnapshotsDir,
+  runMutationWorkflow,
+} from './_mutation-guard.js';
 
 interface BackupOpts {
   baseUrl?: string;
@@ -115,17 +120,33 @@ async function maybeWaitForProgress(
   waitOpts: ParsedWaitOptions,
   result: unknown,
   deps: ReturnType<typeof makeDeps>,
+  force = false,
 ): Promise<{ progress: number } | undefined> {
-  if (!waitOpts.enabled) return undefined;
+  if (!waitOpts.enabled && !force) return undefined;
   const progressId = extractBackupProgressId(result);
-  // Nothing pollable (e.g. loadBackup returned {} / true) — surface as-is.
-  if (progressId === null) return undefined;
-  return waitForBackupProgress({ from, progressId, operation }, deps, {
+  // For restore, an acknowledgement without a progress handle proves only
+  // that the background load was accepted, not that it is finished. Fence the
+  // workflow rather than allowing later writes to race the unknown completion.
+  if (progressId === null) {
+    if (force) {
+      throw new NotConfirmedError(
+        'backup load was accepted without a progress_id; restore completion is not confirmed',
+        {
+          operation,
+          from,
+          hint: 'run xgg logout, log in again, inspect live state, then retry any later mutation',
+        },
+      );
+    }
+    return undefined;
+  }
+  const progress = await waitForBackupProgress({ from, progressId, operation }, deps, {
     ...(waitOpts.pollIntervalMs !== undefined && {
       pollIntervalMs: waitOpts.pollIntervalMs,
     }),
     ...(waitOpts.pollTimeoutMs !== undefined && { pollTimeoutMs: waitOpts.pollTimeoutMs }),
   });
+  return waitOpts.enabled ? progress : undefined;
 }
 
 function addSnapshotOptions(cmd: Command): Command {
@@ -249,14 +270,21 @@ export function backupCommand(): Command {
       const waitOpts = parseWaitOptions(opts);
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps);
-      const result = await createBackup({ from: opts.from, fileName: opts.fileName }, deps);
-      const progress = await maybeWaitForProgress(
-        opts.from,
+      const { snapshot, result, progress } = await runMutationWorkflow(
         'backup.create',
-        waitOpts,
-        result,
         deps,
+        async () => {
+          const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps);
+          const result = await createBackup({ from: opts.from, fileName: opts.fileName }, deps);
+          const progress = await maybeWaitForProgress(
+            opts.from,
+            'backup.create',
+            waitOpts,
+            result,
+            deps,
+          );
+          return { snapshot, result, progress };
+        },
       );
       emit(
         { ok: true, snapshot, result, ...(progress && { progress }) },
@@ -298,14 +326,21 @@ export function backupCommand(): Command {
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const target = backupRef(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
-      const result = await downloadBackup({ from: opts.from, backup: target }, deps);
-      const progress = await maybeWaitForProgress(
-        opts.from,
+      const { snapshot, result, progress } = await runMutationWorkflow(
         'backup.download',
-        waitOpts,
-        result,
         deps,
+        async () => {
+          const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
+          const result = await downloadBackup({ from: opts.from, backup: target }, deps);
+          const progress = await maybeWaitForProgress(
+            opts.from,
+            'backup.download',
+            waitOpts,
+            result,
+            deps,
+          );
+          return { snapshot, result, progress };
+        },
       );
       emit(
         { ok: true, snapshot, result, ...(progress && { progress }) },
@@ -348,9 +383,23 @@ export function backupCommand(): Command {
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const target = backupRef(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
-      const result = await loadBackup({ from: opts.from, backup: target }, deps);
-      const progress = await maybeWaitForProgress(opts.from, 'backup.load', waitOpts, result, deps);
+      const { snapshot, result, progress } = await runMutationWorkflow(
+        'backup.load',
+        deps,
+        async () => {
+          const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
+          const result = await loadBackup({ from: opts.from, backup: target }, deps);
+          const progress = await maybeWaitForProgress(
+            opts.from,
+            'backup.load',
+            waitOpts,
+            result,
+            deps,
+            true,
+          );
+          return { snapshot, result, progress };
+        },
+      );
       emit(
         { ok: true, snapshot, result, ...(progress && { progress }) },
         { pretty: opts.pretty === true },
@@ -373,8 +422,11 @@ export function backupCommand(): Command {
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const target = backupRef(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
-      const result = await deleteBackup({ from: opts.from, backup: target }, deps);
+      const { snapshot, result } = await runMutationWorkflow('backup.delete', deps, async () => {
+        const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
+        const result = await deleteBackup({ from: opts.from, backup: target }, deps);
+        return { snapshot, result };
+      });
       emit({ ok: true, snapshot, result }, { pretty: opts.pretty === true });
     }),
   );
@@ -412,14 +464,21 @@ export function backupCommand(): Command {
       const autoBackupLimit = parseOptionalNumber(opts.autoBackupLimit, '--auto-backup-limit');
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const deps = makeDeps(opts);
-      const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps);
-      const result = await setBackupConfig(
-        {
-          from: opts.from,
-          autoBackup,
-          ...(autoBackupLimit !== undefined && { autoBackupLimit }),
-        },
+      const { snapshot, result } = await runMutationWorkflow(
+        'backup.config.set',
         deps,
+        async () => {
+          const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps);
+          const result = await setBackupConfig(
+            {
+              from: opts.from,
+              autoBackup,
+              ...(autoBackupLimit !== undefined && { autoBackupLimit }),
+            },
+            deps,
+          );
+          return { snapshot, result };
+        },
       );
       emit({ ok: true, snapshot, result }, { pretty: opts.pretty === true });
     }),

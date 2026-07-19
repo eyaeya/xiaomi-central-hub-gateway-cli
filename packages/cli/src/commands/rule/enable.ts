@@ -13,6 +13,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -55,15 +56,22 @@ automation can't be silently activated dead. Use --no-validate for a raw probe.`
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
-        const snapshotPath = !guard.snapshotEnabled
-          ? null
-          : await dumpBeforeWrite({
-              baseUrl: deps.baseUrl,
-              store: deps.store,
-              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-              ...(snapshotsDir !== undefined && { snapshotsDir }),
-            });
-        const result = await enableRule(id, deps, { validate: opts.validate !== false });
+        const { snapshotPath, result } = await runMutationWorkflow(
+          'rule.enable',
+          deps,
+          async () => {
+            const snapshotPath = !guard.snapshotEnabled
+              ? null
+              : await dumpBeforeWrite({
+                  baseUrl: deps.baseUrl,
+                  store: deps.store,
+                  ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+                  ...(snapshotsDir !== undefined && { snapshotsDir }),
+                });
+            const result = await enableRule(id, deps, { validate: opts.validate !== false });
+            return { snapshotPath, result };
+          },
+        );
         const payloadBase = {
           ok: true,
           ...result,

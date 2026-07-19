@@ -6,6 +6,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 import { parseEdgeRef } from './_helpers.js';
@@ -53,18 +54,24 @@ export function attachEdgeRemove(cmd: Command): void {
         const from = parseEdgeRef(opts.from, '--from');
         const to = parseEdgeRef(opts.to, '--to');
 
-        const snapshotPath = !guard.snapshotEnabled
-          ? null
-          : await dumpBeforeWrite({
-              baseUrl: deps.baseUrl,
-              store: deps.store,
-              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-              ...(snapshotsDir !== undefined && { snapshotsDir }),
-            });
-
-        const result = await removeEdge(
-          { ruleId: opts.ruleId, from, to, varCheck: opts.varCheck !== false },
+        const { snapshotPath, result } = await runMutationWorkflow(
+          'rule.edge.remove',
           deps,
+          async () => {
+            const snapshotPath = !guard.snapshotEnabled
+              ? null
+              : await dumpBeforeWrite({
+                  baseUrl: deps.baseUrl,
+                  store: deps.store,
+                  ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+                  ...(snapshotsDir !== undefined && { snapshotsDir }),
+                });
+            const result = await removeEdge(
+              { ruleId: opts.ruleId, from, to, varCheck: opts.varCheck !== false },
+              deps,
+            );
+            return { snapshotPath, result };
+          },
         );
         emit(
           { ok: true, edgeString: result.edgeString, snapshot: snapshotPath },

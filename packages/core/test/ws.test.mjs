@@ -24,7 +24,7 @@ async function openLoopback(t, limits = {}) {
   const close = async () => {
     if (closed) return;
     closed = true;
-    transport.close();
+    await transport.close();
     const clients = [...wss.clients];
     const clientClosed = clients.map((client) =>
       client.readyState === WebSocket.CLOSED ? Promise.resolve() : once(client, 'close'),
@@ -160,4 +160,18 @@ test('connectWs discards queued messages when the peer closes', async (t) => {
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   await assert.rejects(transport.receive(), expectNetworkError(/ws closed by peer/));
+});
+
+test('connectWs close waits for physical termination and rejects new sends immediately', async (t) => {
+  const { peer, transport } = await openLoopback(t);
+  let settled = false;
+  const closePending = transport.close().then(() => {
+    settled = true;
+  });
+
+  assert.equal(settled, false, 'close must not settle synchronously before the ws close event');
+  assert.throws(() => transport.send(Buffer.from([1])), /ws not open/);
+  await closePending;
+  await waitForClose(peer);
+  assert.equal(settled, true);
 });

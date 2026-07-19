@@ -7,6 +7,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -53,23 +54,29 @@ export function attachNodeUpdate(cmd: Command): void {
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
 
-        const snapshotPath = !guard.snapshotEnabled
-          ? null
-          : await dumpBeforeWrite({
-              baseUrl: deps.baseUrl,
-              store: deps.store,
-              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-              ...(snapshotsDir !== undefined && { snapshotsDir }),
-            });
-
-        const result = await updateNode(
-          {
-            ruleId: opts.ruleId,
-            nodeId: opts.nodeId,
-            patch,
-            varCheck: opts.varCheck !== false,
-          },
+        const { snapshotPath, result } = await runMutationWorkflow(
+          'rule.node.update',
           deps,
+          async () => {
+            const snapshotPath = !guard.snapshotEnabled
+              ? null
+              : await dumpBeforeWrite({
+                  baseUrl: deps.baseUrl,
+                  store: deps.store,
+                  ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+                  ...(snapshotsDir !== undefined && { snapshotsDir }),
+                });
+            const result = await updateNode(
+              {
+                ruleId: opts.ruleId,
+                nodeId: opts.nodeId,
+                patch,
+                varCheck: opts.varCheck !== false,
+              },
+              deps,
+            );
+            return { snapshotPath, result };
+          },
         );
         emit(
           { ok: true, nodeId: result.nodeId, snapshot: snapshotPath },

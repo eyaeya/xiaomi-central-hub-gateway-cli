@@ -13,10 +13,14 @@ export interface IpcCallOptions {
   timeoutMs?: number;
   /** Whether the call mutates gateway state — drives the daemon's timeout error class. */
   kind?: 'read' | 'write';
+  /** Connection-bound mutation workflow lease. Set by withMutationWorkflow(). */
+  leaseId?: string;
 }
 
 export interface IpcClient {
   request: (method: string, params: unknown, opts?: IpcCallOptions) => Promise<unknown>;
+  /** Resolve when the current daemon-side socket has actually closed. */
+  waitForClose?: () => Promise<void>;
   close: () => void;
 }
 
@@ -41,6 +45,7 @@ interface ResponseFrame {
 export function createIpcClient(opts: IpcClientOptions): IpcClient {
   let socket: Socket | null = null;
   let connecting: Promise<Socket> | null = null;
+  let socketClosed: Promise<void> | null = null;
   let closed = false;
   let nextId = 1;
   const pending = new Map<number, Pending>();
@@ -55,6 +60,9 @@ export function createIpcClient(opts: IpcClientOptions): IpcClient {
     if (connecting) return connecting;
     connecting = new Promise<Socket>((resolve, reject) => {
       const s = createConnection(opts.path);
+      socketClosed = new Promise<void>((resolveClosed) => {
+        s.once('close', resolveClosed);
+      });
       const onErr = (e: Error): void => {
         s.off('connect', onOk);
         reject(new NetworkError(`agent IPC connect failed: ${e.message}`));
@@ -105,6 +113,7 @@ export function createIpcClient(opts: IpcClientOptions): IpcClient {
       const frame: Record<string, unknown> = { id, method, params };
       if (opts?.timeoutMs !== undefined) frame.timeoutMs = opts.timeoutMs;
       if (opts?.kind !== undefined) frame.kind = opts.kind;
+      if (opts?.leaseId !== undefined) frame.leaseId = opts.leaseId;
       return new Promise<unknown>((resolve, reject) => {
         pending.set(id, { resolve, reject });
         s.write(`${JSON.stringify(frame)}\n`, (e) => {
@@ -115,6 +124,7 @@ export function createIpcClient(opts: IpcClientOptions): IpcClient {
         });
       });
     },
+    waitForClose: () => socketClosed ?? Promise.resolve(),
     close: () => {
       closed = true;
       if (socket) {

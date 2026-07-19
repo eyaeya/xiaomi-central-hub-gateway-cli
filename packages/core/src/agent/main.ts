@@ -84,7 +84,7 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
     });
   } catch (originalError) {
     try {
-      transport.close();
+      await transport.close();
     } catch {
       // Preserve the handshake failure even if transport rollback also fails.
     }
@@ -97,6 +97,7 @@ export async function runAgentMain(opts: RunAgentMainOptions): Promise<RunAgentM
     transport,
     handshake,
     socketPath: endpoint.path,
+    mutationLockDir: socketBaseDir,
     idleMs: opts.idleMs ?? 60 * 60 * 1000,
     meta: { agentStartedAt, agentVersion: opts.agentVersion },
   });

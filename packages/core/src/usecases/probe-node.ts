@@ -14,7 +14,7 @@
 
 import type { ResourceDeps } from '../resources/index.js';
 import { AuthExpiredError, NetworkError } from '../transport/errors.js';
-import { agentCall } from './agent-call.js';
+import { agentCall, withMutationWorkflow } from './agent-call.js';
 
 export interface ProbeNodeInput {
   ruleId: string;
@@ -48,41 +48,57 @@ export async function probeNode(
     ...(opts.timeoutMs !== undefined && { timeoutMs: opts.timeoutMs }),
   };
 
-  const before = await api.agentCall({
-    ...baseArgs,
-    method: '/api/getGraph',
-    params: { id: input.ruleId },
-  });
-
-  try {
-    await api.agentCall({
+  const run = async (): Promise<ProbeNodeOutput> => {
+    const before = await api.agentCall({
       ...baseArgs,
-      method: '/api/setGraph',
-      params: input.payload,
-      kind: 'write',
+      method: '/api/getGraph',
+      params: { id: input.ruleId },
     });
-  } catch (err) {
-    if (err instanceof AuthExpiredError || err instanceof NetworkError) throw err;
+
+    try {
+      await api.agentCall({
+        ...baseArgs,
+        method: '/api/setGraph',
+        params: input.payload,
+        kind: 'write',
+      });
+    } catch (err) {
+      if (err instanceof AuthExpiredError || err instanceof NetworkError) throw err;
+      return {
+        scenario: input.scenario,
+        result: 'rejected',
+        error: err instanceof Error ? err.message : String(err),
+        before,
+        after: before,
+      };
+    }
+
+    const after = await api.agentCall({
+      ...baseArgs,
+      method: '/api/getGraph',
+      params: { id: input.ruleId },
+    });
+
+    const matches = JSON.stringify(after) === JSON.stringify(input.payload);
     return {
       scenario: input.scenario,
-      result: 'rejected',
-      error: err instanceof Error ? err.message : String(err),
+      result: matches ? 'accepted' : 'accepted-with-normalization',
       before,
-      after: before,
+      after,
     };
-  }
-
-  const after = await api.agentCall({
-    ...baseArgs,
-    method: '/api/getGraph',
-    params: { id: input.ruleId },
-  });
-
-  const matches = JSON.stringify(after) === JSON.stringify(input.payload);
-  return {
-    scenario: input.scenario,
-    result: matches ? 'accepted' : 'accepted-with-normalization',
-    before,
-    after,
   };
+
+  // Injected APIs are pure unit-test seams. Real probes pin the same daemon
+  // across before/write/after and serialize with every other xgg mutation.
+  if (opts._injected) return run();
+  return withMutationWorkflow(
+    {
+      baseUrl: opts.baseUrl,
+      store: opts.store,
+      operation: `probe-node:${input.scenario}`,
+      ...(opts.ipcClient !== undefined && { ipcClient: opts.ipcClient }),
+      ...(opts.timeoutMs !== undefined && { timeoutMs: opts.timeoutMs }),
+    },
+    run,
+  );
 }

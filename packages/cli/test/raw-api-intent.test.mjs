@@ -53,6 +53,8 @@ async function startFakeAgent(t) {
           return { list: [] };
         case '/api/getBackupConfig':
           return { autoBackup: false };
+        case '/api/getBackupProgress':
+          return { progress: 100 };
         default:
           break;
       }
@@ -71,7 +73,7 @@ async function startFakeAgent(t) {
       if (control.behavior === 'local-timeout') {
         return await new Promise(() => {});
       }
-      return { accepted: true };
+      return request.method === '/api/loadBackup' ? { progress_id: 7 } : { accepted: true };
     },
   });
 
@@ -270,13 +272,21 @@ test('known and future raw writes publish a complete artifact before a write fra
     assert.equal(payload.kind, 'write');
     assert.equal(payload.snapshot, observed.artifact.path);
     assert.equal((await stat(observed.artifact.path)).isFile(), true);
-    assert.equal(agent.gatewayCalls.at(-1)?.method, mutation.method);
+    assert.ok(agent.gatewayCalls.some(({ method }) => method === mutation.method));
   }
 });
 
 test('non-Agent --no-snapshot preserves future raw backup request shapes', async (t) => {
   const agent = await startFakeAgent(t);
-  const params = { futureShape: { generation: 2 } };
+  const params = {
+    from: 'fds',
+    params: {
+      did: 'did-1',
+      ts: 'ts-1',
+      fileName: 'one.bak',
+      futureShape: { generation: 2 },
+    },
+  };
   const result = await runCli(
     [
       'api',
@@ -296,7 +306,7 @@ test('non-Agent --no-snapshot preserves future raw backup request shapes', async
   assert.equal(payload.snapshot, null);
   assert.deepEqual(
     agent.gatewayCalls.map(({ method }) => method),
-    ['/api/loadBackup'],
+    ['/api/loadBackup', '/api/getBackupProgress'],
   );
   assert.equal(agent.attempts.length, 1);
   assert.deepEqual(agent.attempts[0].request.params, params);
@@ -343,7 +353,6 @@ test('unknown raw methods support default or explicit read without the mutation 
 });
 
 test('raw timeout classification follows the declared intent across IPC', async (t) => {
-  const agent = await startFakeAgent(t);
   const cases = [
     {
       behavior: 'local-timeout',
@@ -369,6 +378,9 @@ test('raw timeout classification follows the declared intent across IPC', async 
   ];
 
   for (const scenario of cases) {
+    // An unconfirmed write intentionally fences its daemon until logout, so
+    // each timeout scenario needs a fresh daemon/session.
+    const agent = await startFakeAgent(t);
     agent.attempts.length = 0;
     agent.control.behavior = scenario.behavior;
     const snapshotsDir = join(agent.root, `timeout-${scenario.kind}-${scenario.behavior}`);

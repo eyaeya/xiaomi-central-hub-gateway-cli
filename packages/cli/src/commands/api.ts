@@ -2,16 +2,19 @@ import {
   type AgentCallKind,
   type BackupItem,
   ConfigError,
+  NotConfirmedError,
   agentCall,
   createStore,
   dumpBeforeWrite,
+  extractBackupProgressId,
   resolveAgentCallKind,
+  waitForBackupProgress,
 } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { wrap } from '../action-wrap.js';
 import { parseJsonInput, parsePositiveTimerMs, readJsonInput } from '../local-input.js';
 import { emit } from '../output.js';
-import { assertAgentModeOrSnapshotsDir } from './_mutation-guard.js';
+import { assertAgentModeOrSnapshotsDir, runMutationWorkflow } from './_mutation-guard.js';
 
 const RAW_BACKUP_WRITE_METHODS = new Set([
   '/api/createBackup',
@@ -122,31 +125,57 @@ export function apiCommand(): Command {
         const timeoutMs = parsePositiveTimerMs(opts.timeout, '--timeout');
         const kind = resolveAgentCallKind(method, parseKind(opts.kind));
         const guard = kind === 'write' ? assertAgentModeOrSnapshotsDir(opts) : undefined;
-        const backup =
-          kind === 'write' && guard?.snapshotEnabled === true
-            ? backupContextForRawWrite(method, params)
-            : undefined;
+        // Resolve backup identity even with --no-snapshot: load progress must
+        // remain fenced until terminal state, independently of snapshot policy.
+        const backup = kind === 'write' ? backupContextForRawWrite(method, params) : undefined;
         const baseUrl = opts.baseUrl ?? process.env.XGG_BASE_URL;
         if (!baseUrl) throw new ConfigError('missing --base-url or XGG_BASE_URL');
         const store = createStore(opts.sessionFile ? { sessionFile: opts.sessionFile } : {});
-        const snapshot =
-          kind === 'write' && guard?.snapshotEnabled === true
-            ? await dumpBeforeWrite({
-                baseUrl,
-                store,
-                timeoutMs,
-                ...(guard.snapshotsDir !== undefined && { snapshotsDir: guard.snapshotsDir }),
-                ...(backup !== undefined && { backup }),
-              })
-            : null;
-        const result = await agentCall({
-          baseUrl,
-          method,
-          params,
-          store,
-          timeoutMs,
-          kind,
-        });
+        const call = async () => {
+          const snapshot =
+            kind === 'write' && guard?.snapshotEnabled === true
+              ? await dumpBeforeWrite({
+                  baseUrl,
+                  store,
+                  timeoutMs,
+                  ...(guard.snapshotsDir !== undefined && { snapshotsDir: guard.snapshotsDir }),
+                  ...(backup !== undefined && { backup }),
+                })
+              : null;
+          const result = await agentCall({
+            baseUrl,
+            method,
+            params,
+            store,
+            timeoutMs,
+            kind,
+          });
+          // A restore can acknowledge only that it started. Keep the mutation
+          // lease until progress is terminal so later graph/variable writes
+          // cannot be overwritten by the still-running load.
+          if (kind === 'write' && method === '/api/loadBackup' && backup) {
+            const progressId = extractBackupProgressId(result);
+            if (progressId === null) {
+              throw new NotConfirmedError(
+                'raw backup load was accepted without a progress_id; restore completion is not confirmed',
+                {
+                  operation: 'backup.load',
+                  from: backup.from,
+                  hint: 'run xgg logout, log in again, inspect live state, then retry any later mutation',
+                },
+              );
+            }
+            await waitForBackupProgress(
+              { from: backup.from, progressId, operation: 'backup.load' },
+              { baseUrl, store, timeoutMs },
+            );
+          }
+          return { snapshot, result };
+        };
+        const { snapshot, result } =
+          kind === 'write'
+            ? await runMutationWorkflow(`api:${method}`, { baseUrl, store, timeoutMs }, call)
+            : await call();
         emit(
           { ok: true, method, kind, ...(kind === 'write' && { snapshot }), result },
           { pretty: opts.pretty === true },

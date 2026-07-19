@@ -13,6 +13,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -40,15 +41,22 @@ export function attachDisable(cmd: Command): void {
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
-        const snapshotPath = !guard.snapshotEnabled
-          ? null
-          : await dumpBeforeWrite({
-              baseUrl: deps.baseUrl,
-              store: deps.store,
-              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-              ...(snapshotsDir !== undefined && { snapshotsDir }),
-            });
-        const result = await disableRule(id, deps);
+        const { snapshotPath, result } = await runMutationWorkflow(
+          'rule.disable',
+          deps,
+          async () => {
+            const snapshotPath = !guard.snapshotEnabled
+              ? null
+              : await dumpBeforeWrite({
+                  baseUrl: deps.baseUrl,
+                  store: deps.store,
+                  ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+                  ...(snapshotsDir !== undefined && { snapshotsDir }),
+                });
+            const result = await disableRule(id, deps);
+            return { snapshotPath, result };
+          },
+        );
         const payloadBase = {
           ok: true,
           ...result,

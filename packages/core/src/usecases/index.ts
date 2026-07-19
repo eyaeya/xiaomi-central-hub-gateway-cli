@@ -3,8 +3,14 @@ export {
   agentCall,
   isKnownGatewayWriteMethod,
   resolveAgentCallKind,
+  withMutationWorkflow,
 } from './agent-call.js';
-export type { AgentCallInputs, AgentCallKind, IpcClientFactory } from './agent-call.js';
+export type {
+  AgentCallInputs,
+  AgentCallKind,
+  IpcClientFactory,
+  MutationWorkflowInputs,
+} from './agent-call.js';
 export { dumpAll } from './dump-all.js';
 export type { DumpAllResult } from './dump-all.js';
 export { dumpBeforeWrite } from './dump-before-write.js';

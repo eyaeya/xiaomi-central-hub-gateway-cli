@@ -22,6 +22,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -518,13 +519,6 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
           };
         } else if (opts.deviceDid) {
           // Device shortcut path — synthesizes 4-piece node from device spec
-          if (
-            opts.type === 'deviceInput' &&
-            opts.deviceProperty !== undefined &&
-            opts.deviceEvent === undefined
-          ) {
-            await warnIfDeviceInputNoPush(opts.deviceDid, deps, opts.allowNoPush);
-          }
           if (opts.type === 'deviceInputSetVar' || opts.type === 'deviceGetSetVar') {
             warnIfGhostScope(opts.type, opts.varScope, opts.allowUnknownScope);
           }
@@ -661,16 +655,30 @@ Examples (legacy --cfg path — full 4-tuple for node types without a c-shortcut
           };
         }
 
-        const snapshotPath = !guard.snapshotEnabled
-          ? null
-          : await dumpBeforeWrite({
-              baseUrl: deps.baseUrl,
-              store: deps.store,
-              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-              ...(snapshotsDir !== undefined && { snapshotsDir }),
-            });
-
-        const result = await addNode(addNodeInput, deps);
+        const { snapshotPath, result } = await runMutationWorkflow(
+          'rule.node.add',
+          deps,
+          async () => {
+            if (
+              opts.deviceDid !== undefined &&
+              opts.type === 'deviceInput' &&
+              opts.deviceProperty !== undefined &&
+              opts.deviceEvent === undefined
+            ) {
+              await warnIfDeviceInputNoPush(opts.deviceDid, deps, opts.allowNoPush);
+            }
+            const snapshotPath = !guard.snapshotEnabled
+              ? null
+              : await dumpBeforeWrite({
+                  baseUrl: deps.baseUrl,
+                  store: deps.store,
+                  ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+                  ...(snapshotsDir !== undefined && { snapshotsDir }),
+                });
+            const result = await addNode(addNodeInput, deps);
+            return { snapshotPath, result };
+          },
+        );
         const payloadBase = {
           ok: true,
           nodeId: result.nodeId,

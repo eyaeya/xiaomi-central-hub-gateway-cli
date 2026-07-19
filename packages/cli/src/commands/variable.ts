@@ -38,6 +38,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from './_mutation-guard.js';
 
 interface VariableOpts {
@@ -311,10 +312,82 @@ export function variableCommand(): Command {
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const deps = makeDeps(opts);
         warnIfGhostScope(opts.scope, opts.allowUnknownScope);
-        if (opts.ifCompatible === true) {
+        // --check-only is intentionally read-only. Every path that may create
+        // is moved below into the mutation lease before its compatibility read.
+        if (opts.checkOnly === true) {
           const existing = await readExistingVariableForReplay(opts.scope, opts.id, deps);
           if (existing !== undefined) {
             assertVariableReplayCompatible(existing, {
+              scope: opts.scope,
+              id: opts.id,
+              type: opts.type,
+              value,
+              name: opts.name,
+            });
+          }
+          const payload = {
+            ok: true,
+            scope: opts.scope,
+            id: opts.id,
+            type: opts.type,
+            value,
+            created: false,
+            existing: existing !== undefined,
+            ...(existing === undefined && { missing: true }),
+            checkOnly: true,
+            snapshot: null,
+          } as Record<string, unknown>;
+          const hints = buildNextSteps('variable.create', payload, opts);
+          emit(nextHintOptedOut(opts) ? payload : withNextSteps(payload, hints), {
+            pretty: opts.pretty === true,
+          });
+          printNextStepHintLine(hints, opts, {
+            contextLabel: `variable ${opts.scope}/${opts.id} (preflight: ${existing ? 'compatible' : 'missing'})`,
+          });
+          return;
+        }
+        await runMutationWorkflow('variable.create', deps, async () => {
+          if (opts.ifCompatible === true) {
+            const existing = await readExistingVariableForReplay(opts.scope, opts.id, deps);
+            if (existing !== undefined) {
+              assertVariableReplayCompatible(existing, {
+                scope: opts.scope,
+                id: opts.id,
+                type: opts.type,
+                value,
+                name: opts.name,
+              });
+              const payload = {
+                ok: true,
+                scope: opts.scope,
+                id: opts.id,
+                type: opts.type,
+                value,
+                created: false,
+                existing: true,
+                snapshot: null,
+              } as Record<string, unknown>;
+              const hints = buildNextSteps('variable.create', payload, opts);
+              emit(nextHintOptedOut(opts) ? payload : withNextSteps(payload, hints), {
+                pretty: opts.pretty === true,
+              });
+              printNextStepHintLine(hints, opts, {
+                contextLabel: `variable ${opts.scope}/${opts.id} (already compatible)`,
+              });
+              return;
+            }
+          }
+          const { snapshotPath } = await maybeSnapshot(guard, deps);
+          try {
+            await createVariable(createInput, deps);
+          } catch (error) {
+            // A variable can appear after the read-only replay preflight but
+            // before createVar. Re-read only the known duplicate race: retain an
+            // exact compatible winner, reject a mismatch, and never overwrite.
+            if (opts.ifCompatible !== true || !isVariableAlreadyExistsError(error)) throw error;
+            const raced = await readExistingVariableForReplay(opts.scope, opts.id, deps);
+            if (raced === undefined) throw error;
+            assertVariableReplayCompatible(raced, {
               scope: opts.scope,
               id: opts.id,
               type: opts.type,
@@ -329,97 +402,38 @@ export function variableCommand(): Command {
               value,
               created: false,
               existing: true,
-              ...(opts.checkOnly === true && { checkOnly: true }),
-              snapshot: null,
+              raced: true,
+              snapshot: snapshotPath,
             } as Record<string, unknown>;
             const hints = buildNextSteps('variable.create', payload, opts);
             emit(nextHintOptedOut(opts) ? payload : withNextSteps(payload, hints), {
               pretty: opts.pretty === true,
             });
             printNextStepHintLine(hints, opts, {
-              contextLabel: `variable ${opts.scope}/${opts.id} (already compatible)`,
+              contextLabel: `variable ${opts.scope}/${opts.id} (concurrent compatible create)`,
             });
             return;
           }
-          if (opts.checkOnly === true) {
-            const payload = {
-              ok: true,
-              scope: opts.scope,
-              id: opts.id,
-              type: opts.type,
-              value,
-              created: false,
-              existing: false,
-              missing: true,
-              checkOnly: true,
-              snapshot: null,
-            } as Record<string, unknown>;
-            const hints = buildNextSteps('variable.create', payload, opts);
-            emit(nextHintOptedOut(opts) ? payload : withNextSteps(payload, hints), {
-              pretty: opts.pretty === true,
-            });
-            printNextStepHintLine(hints, opts, {
-              contextLabel: `variable ${opts.scope}/${opts.id} (preflight: missing)`,
-            });
-            return;
-          }
-        }
-        const { snapshotPath } = await maybeSnapshot(guard, deps);
-        try {
-          await createVariable(createInput, deps);
-        } catch (error) {
-          // A variable can appear after the read-only replay preflight but
-          // before createVar. Re-read only the known duplicate race: retain an
-          // exact compatible winner, reject a mismatch, and never overwrite.
-          if (opts.ifCompatible !== true || !isVariableAlreadyExistsError(error)) throw error;
-          const raced = await readExistingVariableForReplay(opts.scope, opts.id, deps);
-          if (raced === undefined) throw error;
-          assertVariableReplayCompatible(raced, {
-            scope: opts.scope,
-            id: opts.id,
-            type: opts.type,
-            value,
-            name: opts.name,
-          });
           const payload = {
             ok: true,
             scope: opts.scope,
             id: opts.id,
             type: opts.type,
             value,
-            created: false,
-            existing: true,
-            raced: true,
+            ...(opts.ifCompatible === true && { created: true }),
             snapshot: snapshotPath,
           } as Record<string, unknown>;
           const hints = buildNextSteps('variable.create', payload, opts);
           emit(nextHintOptedOut(opts) ? payload : withNextSteps(payload, hints), {
             pretty: opts.pretty === true,
           });
-          printNextStepHintLine(hints, opts, {
-            contextLabel: `variable ${opts.scope}/${opts.id} (concurrent compatible create)`,
+          printRefreshHint(opts, {
+            baseUrl: deps.baseUrl,
+            context: `variable ${opts.scope}/${opts.id}`,
           });
-          return;
-        }
-        const payload = {
-          ok: true,
-          scope: opts.scope,
-          id: opts.id,
-          type: opts.type,
-          value,
-          ...(opts.ifCompatible === true && { created: true }),
-          snapshot: snapshotPath,
-        } as Record<string, unknown>;
-        const hints = buildNextSteps('variable.create', payload, opts);
-        emit(nextHintOptedOut(opts) ? payload : withNextSteps(payload, hints), {
-          pretty: opts.pretty === true,
-        });
-        printRefreshHint(opts, {
-          baseUrl: deps.baseUrl,
-          context: `variable ${opts.scope}/${opts.id}`,
-        });
-        printNextStepHintLine(hints, opts, {
-          contextLabel: `variable ${opts.scope}/${opts.id}`,
+          printNextStepHintLine(hints, opts, {
+            contextLabel: `variable ${opts.scope}/${opts.id}`,
+          });
         });
       }),
     );
@@ -457,9 +471,16 @@ export function variableCommand(): Command {
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const deps = makeDeps(opts);
         warnIfGhostScope(opts.scope, opts.allowUnknownScope);
-        const { snapshotPath } = await maybeSnapshot(guard, deps);
+        const { snapshotPath } = await runMutationWorkflow('variable.delete', deps, async () => {
+          const snapshot = await maybeSnapshot(guard, deps);
+          if (opts.all) {
+            await deleteVariable({ scope: opts.scope, all: true }, deps);
+          } else if (opts.id) {
+            await deleteVariable({ scope: opts.scope, id: opts.id }, deps);
+          }
+          return snapshot;
+        });
         if (opts.all) {
-          await deleteVariable({ scope: opts.scope, all: true }, deps);
           const payload = {
             ok: true,
             scope: opts.scope,
@@ -478,7 +499,6 @@ export function variableCommand(): Command {
             contextLabel: `variable ${opts.scope}/* (all deleted)`,
           });
         } else if (opts.id) {
-          await deleteVariable({ scope: opts.scope, id: opts.id }, deps);
           const payload = {
             ok: true,
             scope: opts.scope,
@@ -564,41 +584,40 @@ to intentionally re-type a variable in place.`,
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const deps = makeDeps(opts);
         warnIfGhostScope(opts.scope, opts.allowUnknownScope);
-        // F66d: fetch the stored type FIRST so we can reject a --type
-        // mismatch or auto-coerce when --type is omitted. Any error
-        // (NotFoundError, AuthExpiredError, …) bubbles unchanged — we do
-        // NOT fall back to the legacy `--type string` default, because
-        // that's exactly the silent-failure path we're closing.
-        const stored = await getVariableConfig(opts.scope, opts.id, deps);
-        const storedType = stored.type;
-        let effectiveType: 'number' | 'string';
-        if (opts.type !== undefined) {
-          if (opts.type !== storedType && opts.forceType !== true) {
-            throw new ConfigError(
-              `--type "${opts.type}" does not match the stored variable type "${storedType}" for ${opts.scope}/${opts.id}. The Mi-Home UI's Da.updateVar (ai-config-v5.28b650.js) silently no-ops on typeof mismatch — your update would be accepted by the gateway but ignored by the UI. Either drop --type (xgg will use the stored type) or pass --force-type to deliberately re-type the variable.`,
-            );
-          }
-          if (opts.type !== storedType && opts.forceType === true) {
-            process.stderr.write(
-              `[xgg variable] warning: --force-type override — pushing "${opts.type}" value into ${opts.scope}/${opts.id} (stored type was "${storedType}"). The UI will silently drop this update unless the stored type is also flipped to "${opts.type}" (F66d).\n`,
-            );
-          }
-          effectiveType = opts.type;
-        } else {
-          effectiveType = storedType;
-          // Pre-F66d --type defaulted to 'string'; warn whenever the auto-fetched
-          // stored type differs so operators relying on the old default see the
-          // coerce in their logs. Skip the warning when stored type IS string
-          // (the no-change-of-behavior case) to keep happy-path output quiet.
-          if (storedType !== 'string') {
-            process.stderr.write(
-              `[xgg variable] note: --type omitted, using stored type "${storedType}" for ${opts.scope}/${opts.id} (F66d auto-fetch). Pre-F66d this would have defaulted to "string" and silently no-op'd on the UI.\n`,
-            );
-          }
-        }
-        const value = explicitlyTypedValue ?? parseScalar(effectiveType, opts.value);
-        const { snapshotPath } = await maybeSnapshot(guard, deps);
-        await setVariableValue({ scope: opts.scope, id: opts.id, value }, deps);
+        const { effectiveType, value, snapshotPath } = await runMutationWorkflow(
+          'variable.set-value',
+          deps,
+          async () => {
+            // Fetch and validate the stored type under the same lease as the write.
+            const stored = await getVariableConfig(opts.scope, opts.id, deps);
+            const storedType = stored.type;
+            let effectiveType: 'number' | 'string';
+            if (opts.type !== undefined) {
+              if (opts.type !== storedType && opts.forceType !== true) {
+                throw new ConfigError(
+                  `--type "${opts.type}" does not match the stored variable type "${storedType}" for ${opts.scope}/${opts.id}. The Mi-Home UI's Da.updateVar (ai-config-v5.28b650.js) silently no-ops on typeof mismatch — your update would be accepted by the gateway but ignored by the UI. Either drop --type (xgg will use the stored type) or pass --force-type to deliberately re-type the variable.`,
+                );
+              }
+              if (opts.type !== storedType && opts.forceType === true) {
+                process.stderr.write(
+                  `[xgg variable] warning: --force-type override — pushing "${opts.type}" value into ${opts.scope}/${opts.id} (stored type was "${storedType}"). The UI will silently drop this update unless the stored type is also flipped to "${opts.type}" (F66d).\n`,
+                );
+              }
+              effectiveType = opts.type;
+            } else {
+              effectiveType = storedType;
+              if (storedType !== 'string') {
+                process.stderr.write(
+                  `[xgg variable] note: --type omitted, using stored type "${storedType}" for ${opts.scope}/${opts.id} (F66d auto-fetch). Pre-F66d this would have defaulted to "string" and silently no-op'd on the UI.\n`,
+                );
+              }
+            }
+            const value = explicitlyTypedValue ?? parseScalar(effectiveType, opts.value);
+            const { snapshotPath } = await maybeSnapshot(guard, deps);
+            await setVariableValue({ scope: opts.scope, id: opts.id, value }, deps);
+            return { effectiveType, value, snapshotPath };
+          },
+        );
         const payload = {
           ok: true,
           scope: opts.scope,
@@ -648,18 +667,22 @@ to intentionally re-type a variable in place.`,
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const deps = makeDeps(opts);
         warnIfGhostScope(opts.scope, opts.allowUnknownScope);
-        const { snapshotPath } = await maybeSnapshot(guard, deps);
-        await setVariableConfig(
-          {
-            scope: opts.scope,
-            id: opts.id,
-            // F66-VarUserData-relax (2026-05-31): UI Da.setVarConfig only
-            // sends `{name: a.trim()}` (ai-config-v5.28b650.js); gateway-side
-            // qr.setVarConfig requires `userData !== undefined` and nothing
-            // more. lastUpdateTime/version were xgg-synthesized ghost data.
-            userData: { name: opts.name },
-          },
+        const { snapshotPath } = await runMutationWorkflow(
+          'variable.set-config',
           deps,
+          async () => {
+            const snapshot = await maybeSnapshot(guard, deps);
+            await setVariableConfig(
+              {
+                scope: opts.scope,
+                id: opts.id,
+                // UI sends only userData.name; preserve that wire shape.
+                userData: { name: opts.name },
+              },
+              deps,
+            );
+            return snapshot;
+          },
         );
         emit(
           { ok: true, scope: opts.scope, id: opts.id, name: opts.name, snapshot: snapshotPath },

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   NotConfirmedError,
+  createInMemoryMutationLeaseCoordinator,
   createIpcServer,
   waitForBackupProgress,
 } from '../../core/dist/index.js';
@@ -25,18 +26,24 @@ function endpointPath(dir) {
   return join(dir, 'agent.sock');
 }
 
-async function startFakeAgent(t) {
+async function startFakeAgent(t, responses = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'xgg-backup-lifecycle-'));
   const socketPath = endpointPath(dir);
   const sessionFile = join(dir, 'session.json');
   const snapshotsDir = join(dir, 'snapshots');
   const calls = [];
+  const mutationLeases = createInMemoryMutationLeaseCoordinator();
   await mkdir(snapshotsDir);
 
   const server = await createIpcServer({
     path: socketPath,
+    mutationLeases,
     handler: async (request) => {
       calls.push(request);
+      if (Object.hasOwn(responses, request.method)) {
+        const response = responses[request.method];
+        return typeof response === 'function' ? response(request) : response;
+      }
       switch (request.method) {
         case '$ping':
           return { host: testHost, agentStartedAt };
@@ -81,7 +88,7 @@ async function startFakeAgent(t) {
     await rm(dir, { recursive: true, force: true });
   });
 
-  return { calls, sessionFile, snapshotsDir };
+  return { calls, mutationLeases, sessionFile, snapshotsDir };
 }
 
 function runCli(args, sessionFile) {
@@ -251,4 +258,50 @@ test('waitForBackupProgress exposes NotConfirmedError to the CLI exit mapper', a
       return true;
     },
   );
+});
+
+test('backup load without progress_id is NOT_CONFIRMED and fences the workflow', async (t) => {
+  const fake = await startFakeAgent(t, { '/api/loadBackup': {} });
+  const result = await runCli(
+    [
+      'backup',
+      'load',
+      '--did',
+      'd',
+      '--ts',
+      't',
+      '--file-name',
+      'f',
+      '--snapshots-dir',
+      fake.snapshotsDir,
+    ],
+    fake.sessionFile,
+  );
+  const payload = assertJsonFailure(result, 'NOT_CONFIRMED', 2);
+  assert.match(payload.error.message, /without a progress_id/);
+  assert.equal(fake.mutationLeases.status().fenced, true);
+  assert.equal(
+    fake.calls.some(({ method }) => method === '/api/getBackupProgress'),
+    false,
+  );
+});
+
+test('raw loadBackup without progress_id is NOT_CONFIRMED and fenced', async (t) => {
+  const fake = await startFakeAgent(t, { '/api/loadBackup': true });
+  const result = await runCli(
+    [
+      'api',
+      '/api/loadBackup',
+      '--kind',
+      'write',
+      '--params',
+      JSON.stringify({ from: 'fds', params: { did: 'd', ts: 't', fileName: 'f' } }),
+      '--snapshots-dir',
+      fake.snapshotsDir,
+    ],
+    fake.sessionFile,
+  );
+  const payload = assertJsonFailure(result, 'NOT_CONFIRMED', 2);
+  assert.match(payload.error.message, /without a progress_id/);
+  assert.equal(fake.mutationLeases.status().fenced, true);
 });

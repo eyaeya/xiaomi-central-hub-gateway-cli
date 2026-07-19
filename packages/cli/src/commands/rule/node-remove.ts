@@ -6,6 +6,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -44,22 +45,28 @@ export function attachNodeRemove(cmd: Command): void {
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
 
-        const snapshotPath = !guard.snapshotEnabled
-          ? null
-          : await dumpBeforeWrite({
-              baseUrl: deps.baseUrl,
-              store: deps.store,
-              ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-              ...(snapshotsDir !== undefined && { snapshotsDir }),
-            });
-
-        const result = await removeNode(
-          {
-            ruleId: opts.ruleId,
-            nodeId: opts.nodeId,
-            ...(opts.cascadeEdges === true && { cascadeEdges: true }),
-          },
+        const { snapshotPath, result } = await runMutationWorkflow(
+          'rule.node.remove',
           deps,
+          async () => {
+            const snapshotPath = !guard.snapshotEnabled
+              ? null
+              : await dumpBeforeWrite({
+                  baseUrl: deps.baseUrl,
+                  store: deps.store,
+                  ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+                  ...(snapshotsDir !== undefined && { snapshotsDir }),
+                });
+            const result = await removeNode(
+              {
+                ruleId: opts.ruleId,
+                nodeId: opts.nodeId,
+                ...(opts.cascadeEdges === true && { cascadeEdges: true }),
+              },
+              deps,
+            );
+            return { snapshotPath, result };
+          },
         );
         emit(
           {

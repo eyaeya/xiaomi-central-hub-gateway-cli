@@ -13,6 +13,7 @@ import {
   addRefreshHintFlag,
   assertAgentModeOrSnapshotsDir,
   printRefreshHint,
+  runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
 
@@ -45,29 +46,29 @@ export function attachDelete(cmd: Command): void {
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
-        // F28: gateway delete silently succeeds for unknown ids → look up first
-        // and classify as NOT_FOUND, matching `device get` / `rule node add`.
-        const rules = await listRules(deps);
-        const existed = rules.some((r) => r.id === id);
-        if (!existed && opts.allowMissing !== true) {
-          throw new NotFoundError(`rule not found: ${id}`, { id });
-        }
-        // F53 (2026-05-30): when --allow-missing turns this into a no-op
-        // (existed=false), skip the pre-write snapshot. dumpBeforeWrite
-        // captures and atomically persists a full rollback artifact; recording a
-        // "before" checkpoint for an op that won't mutate state produces
-        // a misleading snapshot path in the response payload (looks like
-        // we deleted something).
-        const snapshotPath =
-          !guard.snapshotEnabled || !existed
-            ? null
-            : await dumpBeforeWrite({
-                baseUrl: deps.baseUrl,
-                store: deps.store,
-                ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
-                ...(snapshotsDir !== undefined && { snapshotsDir }),
-              });
-        if (existed) await deleteGraph(id, deps);
+        const { existed, snapshotPath } = await runMutationWorkflow(
+          'rule.delete',
+          deps,
+          async () => {
+            // Gateway delete silently succeeds for unknown ids, so classify first.
+            const rules = await listRules(deps);
+            const existed = rules.some((r) => r.id === id);
+            if (!existed && opts.allowMissing !== true) {
+              throw new NotFoundError(`rule not found: ${id}`, { id });
+            }
+            const snapshotPath =
+              !guard.snapshotEnabled || !existed
+                ? null
+                : await dumpBeforeWrite({
+                    baseUrl: deps.baseUrl,
+                    store: deps.store,
+                    ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+                    ...(snapshotsDir !== undefined && { snapshotsDir }),
+                  });
+            if (existed) await deleteGraph(id, deps);
+            return { existed, snapshotPath };
+          },
+        );
         const payloadBase = {
           ok: true,
           id,
