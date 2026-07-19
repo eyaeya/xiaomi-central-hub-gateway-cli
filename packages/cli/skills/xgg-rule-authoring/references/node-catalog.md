@@ -50,7 +50,7 @@ pin 颜色有 event、state、event|state。只有源输出可以是 event|state
 
 | 类型 | 常用 shortcut | 要点 |
 |---|---|---|
-| `deviceInput` | property：`--device-property <p> --op <op> ...`；event：`--device-event <e> ...` | property 依赖 push；event filters 可重复 |
+| `deviceInput` | property：`--device-property <p> --op <op> ...`；event：`--device-event <e> --event-filter* ...` | property/event 严格二选一；property 依赖 push；event filters 可重复，不能混入 property 比较 flag |
 | `deviceGet` | `--device-property <p> --op <op> ...` | 输入后主动读；满足 output，否则 output2 |
 | `deviceOutput` | property：`--device-property <p> --value <v>`；action：`--device-action <a> --params '<json>'` | 参数按 MIoT format 保留原生类型 |
 | `deviceInputSetVar` | property + `--var-scope/--var-id`；event + repeatable `--event-arg-var` | 变化/事件参数写变量 |
