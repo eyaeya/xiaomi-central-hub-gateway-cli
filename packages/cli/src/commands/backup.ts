@@ -494,7 +494,7 @@ export function backupCommand(): Command {
           .description('Request a cloud backup download (writes snapshot first)')
           .addHelpText(
             'after',
-            '\nExample:\n  $ xgg backup download --from fds --did <DID> --ts <TS> --file-name <NAME> --snapshots-dir ./snapshots/ --wait\n  # download is a prerequisite for `backup generate` / `backup load` of the same\n  # {did,ts,file-name}; result 0 means the file is already in the gateway cache.',
+            '\nExample:\n  $ xgg backup download --from fds --did <DID> --ts <TS> --file-name <NAME> --snapshots-dir ./snapshots/ --wait\n  # download is a prerequisite for low-level `backup generate` of the same\n  # {did,ts,file-name}; result 0 means the file is already in the gateway cache.\n  # `backup load` performs and confirms its own download automatically.',
           ),
       ),
     ),
@@ -551,7 +551,7 @@ export function backupCommand(): Command {
           .description('Restore a cloud backup (writes snapshot first)')
           .addHelpText(
             'after',
-            '\nExample:\n  $ xgg backup load --from fds --did <DID> --ts <TS> --file-name <NAME> --snapshots-dir ./snapshots/\n  # Prerequisite: run `xgg backup download` with the SAME {did,ts,file-name} first.',
+            '\nExample:\n  $ xgg backup load --from fds --did <DID> --ts <TS> --file-name <NAME> --snapshots-dir ./snapshots/\n  # The command downloads and confirms the selected backup before restoring it.',
           ),
       ),
     ),
@@ -561,10 +561,8 @@ export function backupCommand(): Command {
       const guard = assertAgentModeOrSnapshotsDir(opts);
       const target = backupRef(opts);
       const deps = makeDeps(opts);
-      const { snapshot, result, progress } = await runMutationWorkflow(
-        'backup.load',
-        deps,
-        async () => {
+      const { snapshot, downloadResult, downloadProgress, result, progress } =
+        await runMutationWorkflow('backup.load', deps, async () => {
           const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
           const completed = await loadBackup({ from: opts.from, backup: target }, deps, {
             includeProgress: true,
@@ -577,13 +575,21 @@ export function backupCommand(): Command {
           });
           return {
             snapshot,
+            downloadResult: completed.downloadResult,
+            downloadProgress: completed.downloadProgress,
             result: completed.result,
             progress: waitOpts.enabled ? completed.progress : undefined,
           };
-        },
-      );
+        });
       emit(
-        { ok: true, snapshot, result, ...(progress && { progress }) },
+        {
+          ok: true,
+          snapshot,
+          downloadResult,
+          downloadProgress,
+          result,
+          ...(progress && { progress }),
+        },
         { pretty: opts.pretty === true },
       );
     }),

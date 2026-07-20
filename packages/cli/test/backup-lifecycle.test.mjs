@@ -499,7 +499,10 @@ test('waitForBackupProgress exposes NotConfirmedError to the CLI exit mapper', a
 });
 
 test('backup load without progress_id is NOT_CONFIRMED and fences the workflow', async (t) => {
-  const fake = await startFakeAgent(t, { '/api/loadBackup': {} });
+  const fake = await startFakeAgent(t, {
+    '/api/downloadBackup': 0,
+    '/api/loadBackup': {},
+  });
   const result = await runCli(
     [
       'backup',
@@ -522,15 +525,58 @@ test('backup load without progress_id is NOT_CONFIRMED and fences the workflow',
     fake.calls.some(({ method }) => method === '/api/getBackupProgress'),
     false,
   );
+  assert.deepEqual(
+    fake.calls
+      .filter(({ method }) => ['/api/downloadBackup', '/api/loadBackup'].includes(method))
+      .map(({ method }) => method),
+    ['/api/downloadBackup', '/api/loadBackup'],
+  );
 });
 
-test('backup load confirms terminal progress exactly once and reuses it for --wait output', async (t) => {
-  let progressReads = 0;
+test('backup load never calls load after an ambiguous automatic-download acknowledgement', async (t) => {
   const fake = await startFakeAgent(t, {
+    '/api/downloadBackup': true,
+    '/api/loadBackup': () => {
+      throw new Error('load must not run');
+    },
+  });
+  const result = await runCli(
+    [
+      'backup',
+      'load',
+      '--did',
+      'd',
+      '--ts',
+      't',
+      '--file-name',
+      'f',
+      '--snapshots-dir',
+      fake.snapshotsDir,
+    ],
+    fake.sessionFile,
+  );
+
+  assertJsonFailure(result, 'NOT_CONFIRMED', 2);
+  assert.equal(
+    fake.calls.some(({ method }) => method === '/api/loadBackup'),
+    false,
+  );
+  assert.equal(fake.mutationLeases.status().fenced, true);
+});
+
+test('backup load confirms download before load and reuses terminal progress for --wait', async (t) => {
+  let downloadProgressReads = 0;
+  let loadProgressReads = 0;
+  const fake = await startFakeAgent(t, {
+    '/api/downloadBackup': { progress_id: 3 },
     '/api/loadBackup': { progress_id: 7 },
-    '/api/getBackupProgress': () => {
-      progressReads += 1;
-      if (progressReads > 1) throw new Error('terminal progress handle was polled twice');
+    '/api/getBackupProgress': (request) => {
+      if (request.params.params.progress_id === 3) {
+        downloadProgressReads += 1;
+        return { progress: downloadProgressReads === 1 ? 25 : 100 };
+      }
+      loadProgressReads += 1;
+      if (loadProgressReads > 1) throw new Error('terminal load handle was polled twice');
       return { progress: 100, speed: 12 };
     },
   });
@@ -555,14 +601,32 @@ test('backup load confirms terminal progress exactly once and reuses it for --wa
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, '');
   const payload = JSON.parse(result.stdout);
+  assert.deepEqual(payload.downloadResult, { progress_id: 3 });
+  assert.deepEqual(payload.downloadProgress, { progress: 100 });
   assert.deepEqual(payload.result, { progress_id: 7 });
   assert.deepEqual(payload.progress, { progress: 100, speed: 12 });
-  assert.equal(progressReads, 1);
+  assert.equal(downloadProgressReads, 2);
+  assert.equal(loadProgressReads, 1);
+  const sequence = fake.calls.filter(({ method }) =>
+    ['/api/downloadBackup', '/api/getBackupProgress', '/api/loadBackup'].includes(method),
+  );
+  assert.deepEqual(
+    sequence.map(({ method }) => method),
+    [
+      '/api/downloadBackup',
+      '/api/getBackupProgress',
+      '/api/getBackupProgress',
+      '/api/loadBackup',
+      '/api/getBackupProgress',
+    ],
+  );
+  assert.equal(new Set(sequence.map(({ leaseId }) => leaseId)).size, 1);
 });
 
 test('backup load accepts polling controls without --wait and omits progress output', async (t) => {
   let progressReads = 0;
   const fake = await startFakeAgent(t, {
+    '/api/downloadBackup': 0,
     '/api/loadBackup': { progress_id: 7 },
     '/api/getBackupProgress': () => {
       progressReads += 1;
@@ -589,13 +653,18 @@ test('backup load accepts polling controls without --wait and omits progress out
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, '');
   const payload = JSON.parse(result.stdout);
+  assert.equal(payload.downloadResult, 0);
+  assert.deepEqual(payload.downloadProgress, { progress: 100 });
   assert.deepEqual(payload.result, { progress_id: 7 });
   assert.equal(Object.hasOwn(payload, 'progress'), false);
   assert.equal(progressReads, 1);
 });
 
 test('raw loadBackup without progress_id is NOT_CONFIRMED and fenced', async (t) => {
-  const fake = await startFakeAgent(t, { '/api/loadBackup': true });
+  const fake = await startFakeAgent(t, {
+    '/api/downloadBackup': 0,
+    '/api/loadBackup': true,
+  });
   const result = await runCli(
     [
       'api',

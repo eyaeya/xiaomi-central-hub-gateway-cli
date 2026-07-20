@@ -53,7 +53,7 @@ await withMutationWorkflow(
 );
 ```
 
-`loadBackup()` 是异步 restore 的安全复合 API：网关最初的 ACK 只表示已接受，它会继续在同一租约中轮询 `progress_id` 到 100 后才返回。ACK 缺少进度句柄、进度超时或确认丢失都会抛出 `NotConfirmedError` 并 fence 当前 mutation，调用方应 logout、重新登录并检查 live state，不能盲目重试。可用第三个参数配置 `pollIntervalMs` 和 `pollTimeoutMs`；需要真实 terminal 明细时传 `includeProgress: true`，返回 `{ result, progress }`。高层 API 不接受进度查询注入，不能跳过真实 terminal 确认。
+`loadBackup()` 是异步 restore 的安全复合 API：它在同一租约中先调用 `downloadBackup` 并确认缓存进度到 100，再调用 `loadBackup` 并确认恢复进度到 100。下载 ACK/进度含糊时不会进入 load；load ACK 缺少进度句柄、任一阶段超时或确认丢失都会抛出 `NotConfirmedError` 并 fence 当前 mutation。调用方应 logout、重新登录并检查 live state，不能盲目重试。可用第三个参数配置 `pollIntervalMs` 和 `pollTimeoutMs`，每个阶段获得独立超时预算；需要真实 terminal 明细时传 `includeProgress: true`，返回 `{ downloadResult, downloadProgress, result, progress }`。高层 API 不接受进度查询注入，不能跳过真实 terminal 确认。
 
 standalone raw `agentCall()` 调用 `/api/loadBackup` 时也执行同样的 terminal wait。若 raw restore 已处于显式 `withMutationWorkflow` 中，调用方仍必须在该 callback 返回前完成 `/api/getBackupProgress` 的 terminal 确认。
 
