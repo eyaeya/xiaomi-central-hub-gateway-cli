@@ -14,8 +14,9 @@ export interface SpawnAgentOptions {
   args: string[];
   /** Single-use login code written to the child's anonymous stdin pipe. */
   passcode: string;
-  /** Environment for the child. Defaults to inheriting from parent, except
-   * `XGG_LOGIN_CODE` is always removed before spawn. */
+  /** Environment for the child. Defaults to inheriting from parent after
+   * launch-only secrets, overrides, and interpreter/loader injection keys
+   * are removed. */
   env?: NodeJS.ProcessEnv;
   /** Max time to wait for the child's READY line before failing the spawn. */
   readyTimeoutMs?: number;
@@ -34,6 +35,22 @@ interface ReadyPayload {
   agentVersion: string;
 }
 
+const DETACHED_AGENT_ENV_BLOCKLIST = new Set([
+  'XGG_LOGIN_CODE',
+  'XGG_AGENT_BINARY',
+  'XGG_AGENT_ARGS',
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'LD_PRELOAD',
+  'LD_AUDIT',
+  'LD_LIBRARY_PATH',
+]);
+
+function isDetachedAgentEnvBlocked(key: string): boolean {
+  const normalized = key.toUpperCase();
+  return normalized.startsWith('DYLD_') || DETACHED_AGENT_ENV_BLOCKLIST.has(normalized);
+}
+
 /**
  * Spawn the agent as a detached child and wait for it to publish its IPC
  * endpoint. Resolves once the child writes a single `READY <json>` line to
@@ -49,12 +66,12 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     throw new ConfigError('agent login code must contain 6–8 digits');
   }
 
-  // A caller may itself have received the code via XGG_LOGIN_CODE. Never
-  // forward any case variant of that inherited key to the detached child.
+  // The launch command has already been resolved. Do not retain its one-shot
+  // secret/overrides or interpreter/loader injection settings in the
+  // long-lived child. Preserve PATH and ordinary runtime/session variables:
+  // development `tsx` and cross-platform helpers still need command lookup.
   const childEnv: NodeJS.ProcessEnv = Object.fromEntries(
-    Object.entries(opts.env ?? process.env).filter(
-      ([key]) => key.toUpperCase() !== 'XGG_LOGIN_CODE',
-    ),
+    Object.entries(opts.env ?? process.env).filter(([key]) => !isDetachedAgentEnvBlocked(key)),
   );
 
   const child: ChildProcess = spawn(opts.binary, opts.args, {
