@@ -139,8 +139,9 @@ export type BackupOperationResponse = z.infer<typeof BackupOperationResponse>;
 
 // generateBackup is a state-coupled READ: it streams the previously
 // `downloadBackup`-cached backup file back to the caller as the decoded
-// `{ version, rules, variables }` payload — same shape that `loadBackup`
-// consumes when restoring. Without a prior `download` the gateway returns
+// portable payload consumed by `loadBackup`: either the historical rules-only
+// array or the current `{ version: 2, rules, variables }` object. Without a
+// prior `download` the gateway returns
 // `"backup file not exist, stat: null, err: 2"` (POSIX ENOENT).
 // See [docs/api/backup.md](../../../../docs/api/backup.md) §generate.
 export const BackupContentRule = z
@@ -221,11 +222,11 @@ export const LocalBackupPayload: z.ZodType<LocalBackupPayload> = z
     }
   });
 
-export const BackupContent = z
-  .object({
-    version: z.number(),
-    rules: z.array(BackupContentRule),
-    variables: z.record(z.unknown()),
-  })
-  .passthrough();
+/**
+ * Raw payload returned by `/api/generateBackup`. The production Bundle wraps
+ * this value unchanged in the official `.bak` envelope, so historical cloud
+ * backups may still be the legacy rules-only array while current backups use
+ * the canonical version-2 object.
+ */
+export const BackupContent = z.union([LocalBackupPayload, LegacyLocalBackupPayload]);
 export type BackupContent = z.infer<typeof BackupContent>;

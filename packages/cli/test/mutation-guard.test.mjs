@@ -46,6 +46,7 @@ const affectedMutations = [
 ];
 
 const expectedTypedMutationSurfaces = [
+  'backup cloud-export',
   'backup config set',
   'backup create',
   'backup delete',
@@ -72,6 +73,21 @@ const expectedTypedMutationSurfaces = [
 ];
 
 const typedMutationCases = [
+  {
+    command: 'backup cloud-export',
+    args: (ruleBodyPath) => [
+      'backup',
+      'cloud-export',
+      '--did',
+      'did-1',
+      '--ts',
+      'ts-1',
+      '--file-name',
+      'one.bak',
+      '--output',
+      join(dirname(ruleBodyPath), 'cloud-export.bak'),
+    ],
+  },
   {
     command: 'backup config set',
     args: () => ['backup', 'config', 'set', '--auto-backup', 'true'],

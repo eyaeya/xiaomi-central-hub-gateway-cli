@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-4e38a4a7fab448dc3b606a6d980b77db437e84ad5570f08858804716ba268adc -->
+<!-- xgg-skill-content-build: sha256-7f5f973ce59285ea1f986070bb84e3c99b743208ae6e9bba7768e0f182d08766 -->
 
 # xgg 自动化编写 Skill
 
@@ -423,6 +423,7 @@ xgg backup local-import --input ./gateway-rules.bak \
 ```bash
 xgg backup list --from fds --pretty             # 列云备份
 xgg backup create --from fds --file-name "<名字>"   # 网关会给名字追加 .bak 后缀
+xgg backup cloud-export --from fds --did <did> --ts <ts> --file-name "<名字>" --output ./history.bak --snapshots-dir "$PWD/snapshots"
 xgg backup download --from fds --did <did> --ts <ts> --file-name "<名字>"   # 三项均来自 backup list；generate/load 前必须先 download
 xgg backup progress --from fds --progress-id <id>
 xgg backup generate --from fds --did <did> --ts <ts> --file-name "<名字>"
@@ -432,6 +433,8 @@ xgg backup config get --from fds
 xgg backup config set --from fds --auto-backup true --auto-backup-limit <N> --snapshots-dir "$PWD/snapshots"
 xgg backup create --from fds --file-name "<名字>" --wait   # 轮询进度到 100% 再返回
 ```
+
+从历史云备份保存可移植文件时使用 `cloud-export`：它会在一个 mutation lease 内自动 download、等到终态再 generate，随后把官方 length-prefix/raw-deflate + SHA-256 envelope 以 `0600` 原子写入本地；默认拒绝覆盖，确需替换才加 `--overwrite`。stdout 只给文件与进度摘要，不输出完整家庭规则/变量。`generate` 是依赖网关缓存状态的低层命令，只用于已经明确完成同一 `{did,ts,file-name}` download 的高级流程。
 
 `--from fds` 指小米云存储。Agent 模式同样受快照目录约束。
 

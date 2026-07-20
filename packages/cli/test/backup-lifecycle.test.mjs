@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -11,6 +11,7 @@ import {
   NotConfirmedError,
   createInMemoryMutationLeaseCoordinator,
   createIpcServer,
+  readLocalBackup,
   waitForBackupProgress,
 } from '../../core/dist/index.js';
 import { errorToExit, formatErrorJson } from '../dist/errors.js';
@@ -18,6 +19,15 @@ import { errorToExit, formatErrorJson } from '../dist/errors.js';
 const cliPath = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const testHost = 'http://backup-lifecycle.test';
 const agentStartedAt = '2026-07-19T00:00:00.000Z';
+const backupFixture = JSON.parse(
+  await readFile(new URL('../../core/test/fixtures/local-backup-v2.json', import.meta.url), 'utf8'),
+);
+const legacyBackupFixture = JSON.parse(
+  await readFile(
+    new URL('../../core/test/fixtures/local-backup-legacy-array.json', import.meta.url),
+    'utf8',
+  ),
+);
 
 function endpointPath(dir) {
   if (process.platform === 'win32') {
@@ -38,8 +48,8 @@ async function startFakeAgent(t, responses = {}) {
   const server = await createIpcServer({
     path: socketPath,
     mutationLeases,
-    handler: async (request) => {
-      calls.push(request);
+    handler: async (request, context) => {
+      calls.push({ ...request, leaseId: context.leaseId });
       if (Object.hasOwn(responses, request.method)) {
         const response = responses[request.method];
         return typeof response === 'function' ? response(request) : response;
@@ -243,6 +253,179 @@ test('create/download --wait accepts only explicit synchronous completion withou
       assert.equal(ambiguous.mutationLeases.status().fenced, true);
     }
   }
+});
+
+test('cloud-export downloads, confirms, generates, and publishes one official file under one lease', async (t) => {
+  let progressReads = 0;
+  const content = backupFixture.payload;
+  const fake = await startFakeAgent(t, {
+    '/api/downloadBackup': { progress_id: 41 },
+    '/api/getBackupProgress': () => {
+      progressReads += 1;
+      return { progress: progressReads === 1 ? 25 : 100 };
+    },
+    '/api/generateBackup': content,
+  });
+  const output = join(dirname(fake.sessionFile), 'historical.bak');
+  const result = await runCli(
+    [
+      'backup',
+      'cloud-export',
+      '--did',
+      'd',
+      '--ts',
+      't',
+      '--file-name',
+      'history.bak',
+      '--output',
+      output,
+      '--snapshots-dir',
+      fake.snapshotsDir,
+      '--poll-interval-ms=1',
+      '--poll-timeout-ms=100',
+    ],
+    fake.sessionFile,
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.downloadResult, { progress_id: 41 });
+  assert.deepEqual(payload.downloadProgress, { progress: 100 });
+  assert.equal(payload.format, 'v2');
+  assert.equal(payload.version, 2);
+  assert.equal(Object.hasOwn(payload, 'content'), false);
+  assert.deepEqual(await readLocalBackup(output), content);
+  assert.deepEqual(await readFile(output), Buffer.from(backupFixture.backupBase64, 'base64'));
+  assert.equal((await stat(output)).mode & 0o777, 0o600);
+  assert.equal((await readdir(fake.snapshotsDir)).length, 1);
+  assert.deepEqual(
+    (await readdir(dirname(output))).filter((name) => name.includes('.tmp')),
+    [],
+  );
+
+  const sequence = fake.calls.filter(({ method }) =>
+    ['/api/downloadBackup', '/api/getBackupProgress', '/api/generateBackup'].includes(method),
+  );
+  assert.deepEqual(
+    sequence.map(({ method }) => method),
+    [
+      '/api/downloadBackup',
+      '/api/getBackupProgress',
+      '/api/getBackupProgress',
+      '/api/generateBackup',
+    ],
+  );
+  const leaseIds = new Set(sequence.map(({ leaseId }) => leaseId));
+  assert.equal(leaseIds.size, 1);
+  assert.equal(typeof sequence[0].leaseId, 'string');
+});
+
+test('cloud-export preserves and can re-import an official legacy rules-array backup', async (t) => {
+  const fake = await startFakeAgent(t, {
+    '/api/downloadBackup': 0,
+    '/api/generateBackup': legacyBackupFixture.payload,
+  });
+  const output = join(dirname(fake.sessionFile), 'legacy-history.bak');
+  const result = await runCli(
+    [
+      'backup',
+      'cloud-export',
+      '--did',
+      'd',
+      '--ts',
+      't',
+      '--file-name',
+      'legacy.bak',
+      '--output',
+      output,
+      '--snapshots-dir',
+      fake.snapshotsDir,
+    ],
+    fake.sessionFile,
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.format, 'legacy-rules-array');
+  assert.equal(Object.hasOwn(payload, 'version'), false);
+  assert.equal(payload.rules, legacyBackupFixture.payload.length);
+  assert.deepEqual(await readLocalBackup(output), {
+    version: 2,
+    rules: legacyBackupFixture.payload.map((rule) => ({
+      ...rule,
+      id: rule.id ?? rule.cfg.id,
+    })),
+    variables: {},
+  });
+});
+
+test('cloud-export refuses an existing target before IPC and overwrites only when explicit', async (t) => {
+  const fake = await startFakeAgent(t, {
+    '/api/downloadBackup': 0,
+    '/api/generateBackup': { version: 2, rules: [], variables: {} },
+  });
+  const output = join(dirname(fake.sessionFile), 'existing.bak');
+  await writeFile(output, 'keep-me');
+  const args = [
+    'backup',
+    'cloud-export',
+    '--did',
+    'd',
+    '--ts',
+    't',
+    '--file-name',
+    'history.bak',
+    '--output',
+    output,
+    '--snapshots-dir',
+    fake.snapshotsDir,
+  ];
+
+  const refused = await runCli(args, fake.sessionFile);
+  const error = assertJsonFailure(refused, 'CONFIG', 5);
+  assert.match(error.error.message, /already exists/);
+  assert.deepEqual(fake.calls, []);
+  assert.equal(await readFile(output, 'utf8'), 'keep-me');
+
+  const replaced = await runCli([...args, '--overwrite'], fake.sessionFile);
+  assert.equal(replaced.status, 0, replaced.stderr);
+  assert.deepEqual(await readLocalBackup(output), { version: 2, rules: [], variables: {} });
+  assert.equal(
+    fake.calls.some(({ method }) => method === '/api/getBackupProgress'),
+    false,
+  );
+});
+
+test('cloud-export never generates or creates a file after an ambiguous download acknowledgement', async (t) => {
+  const fake = await startFakeAgent(t, { '/api/downloadBackup': true });
+  const output = join(dirname(fake.sessionFile), 'must-not-exist.bak');
+  const result = await runCli(
+    [
+      'backup',
+      'cloud-export',
+      '--did',
+      'd',
+      '--ts',
+      't',
+      '--file-name',
+      'history.bak',
+      '--output',
+      output,
+      '--snapshots-dir',
+      fake.snapshotsDir,
+    ],
+    fake.sessionFile,
+  );
+
+  assertJsonFailure(result, 'NOT_CONFIRMED', 2);
+  assert.equal(
+    fake.calls.some(({ method }) => method === '/api/generateBackup'),
+    false,
+  );
+  await assert.rejects(readFile(output), { code: 'ENOENT' });
+  assert.equal(fake.mutationLeases.status().fenced, true);
 });
 
 test('backup polling timeout is NotConfirmed with actionable details and exit 2', async (t) => {

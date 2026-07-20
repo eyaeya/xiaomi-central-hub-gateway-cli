@@ -57,12 +57,15 @@ export { logout } from './logout.js';
 export type { LogoutInputs, LogoutResult, SignalFn } from './logout.js';
 export { defaultSnapshotsDir } from './snapshots-dir.js';
 export {
+  assertBackupOutputAvailable,
   collectLocalBackup,
   decodeLocalBackup,
+  encodeGeneratedBackup,
   encodeLocalBackup,
   exportLocalBackup,
   importLocalBackup,
   planLocalBackupImport,
+  publishGeneratedBackup,
   readLocalBackup,
   validateLocalBackupPayload,
 } from './local-backup.js';
@@ -70,6 +73,7 @@ export type {
   LocalBackupAppliedCounts,
   LocalBackupExportOptions,
   LocalBackupExportResult,
+  GeneratedBackupFileResult,
   LocalBackupImportOptions,
   LocalBackupImportPlan,
   LocalBackupImportResult,
