@@ -1,10 +1,18 @@
 import { z } from 'zod';
 
-export const DURATION_UNITS = ['ms', 's', 'm'] as const;
+export const CANONICAL_DURATION_UNITS = ['ms', 's', 'min', 'hour'] as const;
+export type CanonicalDurationUnit = (typeof CANONICAL_DURATION_UNITS)[number];
+
+// `m` was emitted by older xgg releases. Keep accepting it when reading an
+// existing graph, but never return it from the shortcut parser: newly
+// synthesized nodes always use the Bundle's canonical `min` spelling.
+export const DURATION_UNITS = ['ms', 's', 'min', 'hour', 'm'] as const;
 export type DurationUnit = (typeof DURATION_UNITS)[number];
 
 export const DurationUnitSchema = z.enum(DURATION_UNITS, {
-  errorMap: () => ({ message: 'duration unit must be one of ms, s, or m' }),
+  errorMap: () => ({
+    message: 'duration unit must be one of ms, s, min, or hour (legacy m is also accepted)',
+  }),
 });
 
 // Keep the gateway-compatible sign policy in the runtime fields: delay and
@@ -18,6 +26,8 @@ export const DurationValueSchema = z
 const DURATION_MULTIPLIERS: Readonly<Record<DurationUnit, number>> = {
   ms: 1,
   s: 1_000,
+  min: 60_000,
+  hour: 3_600_000,
   m: 60_000,
 };
 
@@ -25,18 +35,18 @@ const DURATION_MULTIPLIERS: Readonly<Record<DurationUnit, number>> = {
 // serialize with String(number), including very large values such as 1e+21.
 // This keeps export -> shortcut replay lossless across the schema's full
 // gateway-compatible integer domain.
-const DURATION_LITERAL = /^(-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)(ms|s|m)$/;
+const DURATION_LITERAL = /^(-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)(ms|s|min|hour|m|h)$/;
 
 export type DurationRange = 'integer' | 'positive';
 
 export interface ParsedDuration {
-  unit: DurationUnit;
+  unit: CanonicalDurationUnit;
   value: number;
   milliseconds: number;
 }
 
 export function isDurationUnit(value: unknown): value is DurationUnit {
-  return value === 'ms' || value === 's' || value === 'm';
+  return value === 'ms' || value === 's' || value === 'min' || value === 'hour' || value === 'm';
 }
 
 export function durationToMilliseconds(value: number, unit: DurationUnit): number {
@@ -47,7 +57,9 @@ export function parseDurationLiteral(raw: string, range: DurationRange): ParsedD
   const match = DURATION_LITERAL.exec(raw.trim());
   if (match === null) return null;
   const value = Number(match[1]);
-  const unit = match[2] as DurationUnit;
+  const literalUnit = match[2] as CanonicalDurationUnit | 'm' | 'h';
+  const unit: CanonicalDurationUnit =
+    literalUnit === 'm' ? 'min' : literalUnit === 'h' ? 'hour' : literalUnit;
   const milliseconds = durationToMilliseconds(value, unit);
   if (
     !Number.isFinite(value) ||

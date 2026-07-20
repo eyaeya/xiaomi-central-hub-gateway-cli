@@ -1546,8 +1546,14 @@ function renderAlarmClock(n: {
       flags.push({ name: '--latitude', value: String(props.latitude) });
     if (typeof props.longitude === 'number')
       flags.push({ name: '--longitude', value: String(props.longitude) });
-    const offsetSec = Number(props.offset ?? 0);
-    if (offsetSec !== 0) flags.push({ name: '--offset-min', value: String(offsetSec / 60) });
+    const offsetMinutes = props.offset;
+    if (
+      typeof offsetMinutes === 'number' &&
+      Number.isFinite(offsetMinutes) &&
+      Number.isInteger(offsetMinutes)
+    ) {
+      flags.push({ name: '--offset-min', value: String(offsetMinutes) });
+    }
   }
   addDayFilterFlags(flags, props.filter);
   return { kind: 'node-add', nodeId: n.id, type: 'alarmClock', flags, comment: 'alarmClock' };
