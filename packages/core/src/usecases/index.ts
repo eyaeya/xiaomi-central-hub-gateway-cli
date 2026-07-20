@@ -92,6 +92,26 @@ export {
   parseLogLine,
   parseTimestamp,
 } from './rule-logs.js';
+export {
+  buildRuleTraceWatchpoints,
+  calculateRuleTrace,
+  findNextRuleTraceWatchpoint,
+  resolveRuleTraceDeviceGetLabels,
+  ruleTraceLinkWatchpointId,
+  ruleTraceNodeWatchpointId,
+} from './rule-trace.js';
+export type {
+  CalculateRuleTraceInput,
+  RuleTraceCalculation,
+  RuleTraceDeviceGetLabelResult,
+  RuleTraceFrame,
+  RuleTraceSemanticDrift,
+  RuleTraceTopologyDrift,
+  RuleTraceWatchpoint,
+  RuleTraceWatchpointStatus,
+  RuleTraceWatchpointType,
+  ResolveRuleTraceDeviceGetLabelsOptions,
+} from './rule-trace.js';
 export type {
   FetchRuleLogsInputs,
   FetchRuleLogsResult,
