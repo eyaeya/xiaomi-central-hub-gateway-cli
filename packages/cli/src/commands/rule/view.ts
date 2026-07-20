@@ -1,10 +1,12 @@
 import { viewRule } from '@eyaeya/xgg-core';
 import Table from 'cli-table3';
 import type { Command } from 'commander';
-import stringWidth from 'string-width';
 import { wrap } from '../../action-wrap.js';
 import { emit } from '../../output.js';
+import { splitGraphemes, truncateDisplayText, wrapDisplayText } from '../../terminal-text.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
+
+export { truncateDisplayText, wrapDisplayText } from '../../terminal-text.js';
 
 interface ViewOpts extends RuleOpts {
   nodesOnly?: boolean;
@@ -29,7 +31,6 @@ const TABLE_CONTENT_WIDTHS = {
   props: RULE_VIEW_PRETTY_COLUMN_WIDTHS[4] - TABLE_CELL_PADDING_WIDTH,
   outputs: RULE_VIEW_PRETTY_COLUMN_WIDTHS[5] - TABLE_CELL_PADDING_WIDTH,
 } as const;
-const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
 function compareKeys(left: string, right: string): number {
   const leftMatch = /^(.*?)(\d+)$/.exec(left);
@@ -39,60 +40,6 @@ function compareKeys(left: string, right: string): number {
     if (numericDifference !== 0) return numericDifference;
   }
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function graphemes(value: string): string[] {
-  return Array.from(graphemeSegmenter.segment(value), ({ segment }) => segment);
-}
-
-export function truncateDisplayText(value: string, maxWidth: number, marker = '…'): string {
-  if (!Number.isSafeInteger(maxWidth) || maxWidth < 1) {
-    throw new RangeError('maxWidth must be a positive safe integer');
-  }
-  if (stringWidth(value) <= maxWidth) return value;
-
-  const markerWidth = stringWidth(marker);
-  if (markerWidth > maxWidth) return '';
-  let result = '';
-  let resultWidth = 0;
-  for (const grapheme of graphemes(value)) {
-    const graphemeWidth = stringWidth(grapheme);
-    if (resultWidth + graphemeWidth + markerWidth > maxWidth) break;
-    result += grapheme;
-    resultWidth += graphemeWidth;
-  }
-  return `${result}${marker}`;
-}
-
-export function wrapDisplayText(value: string, maxWidth: number): string {
-  if (!Number.isSafeInteger(maxWidth) || maxWidth < 1) {
-    throw new RangeError('maxWidth must be a positive safe integer');
-  }
-
-  const wrapped: string[] = [];
-  for (const sourceLine of value.split('\n')) {
-    let line = '';
-    let lineWidth = 0;
-    let emittedLine = false;
-    for (const grapheme of graphemes(sourceLine)) {
-      const graphemeWidth = stringWidth(grapheme);
-      if (line !== '' && lineWidth + graphemeWidth > maxWidth) {
-        wrapped.push(line);
-        emittedLine = true;
-        line = '';
-        lineWidth = 0;
-      }
-      if (graphemeWidth > maxWidth) {
-        wrapped.push(truncateDisplayText(grapheme, maxWidth));
-        emittedLine = true;
-        continue;
-      }
-      line += grapheme;
-      lineWidth += graphemeWidth;
-    }
-    if (line !== '' || !emittedLine) wrapped.push(line);
-  }
-  return wrapped.join('\n');
 }
 
 function jsonString(value: string): string {
@@ -112,7 +59,7 @@ function quotedStringWithin(value: string, maxChars: number): string {
   const encoded = jsonString(value);
   if (encoded.length <= maxChars) return encoded;
 
-  const characters = graphemes(value);
+  const characters = splitGraphemes(value);
   for (let keep = Math.min(characters.length, maxChars); keep >= 0; keep -= 1) {
     const omitted = characters.length - keep;
     const candidate = jsonString(`${characters.slice(0, keep).join('')}…(+${omitted} chars)`);

@@ -171,6 +171,17 @@ test('rule trace emits stable bounded JSON and a compact explicit-boundary human
     failedUrns: [],
     failureCount: 0,
   });
+  assert.deepEqual(json.completeness.semantic.projection, {
+    attemptedUrns: [],
+    failedUrns: [],
+    failureCount: 0,
+    catalogStatuses: [],
+    catalogFallbackUrns: [],
+    catalogFallbackCount: 0,
+    valueLabelFallbackUrns: [],
+    valueLabelFallbackCatalogCount: 0,
+  });
+  assert.match(json.completeness.semantic.boundary, /shared best-effort MIoT semantic projection/);
   assert.equal(
     json.completeness.reasonCodes.includes('device-get-spec-lookup-failed-raw-fallback'),
     false,

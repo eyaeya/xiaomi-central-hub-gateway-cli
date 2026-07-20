@@ -87,6 +87,24 @@ export type { IpcProbe, StatusInputs, StatusResult } from './status.js';
 export { getDeviceSpec } from './get-device-spec.js';
 export type { GetDeviceSpecOptions } from './get-device-spec.js';
 export {
+  DeviceSpecSemanticCache,
+  projectDeviceSpecSemantics,
+} from './device-spec-semantics.js';
+export type {
+  DeviceSpecSemanticCatalogName,
+  DeviceSpecSemanticCatalogStatus,
+  DeviceSpecSemanticFetch,
+  ProjectDeviceSpecSemanticsOptions,
+  SemanticDeviceAction,
+  SemanticDeviceActionOutputMetadata,
+  SemanticDeviceEvent,
+  SemanticDeviceExcludedService,
+  SemanticDeviceProperty,
+  SemanticDevicePropertyReference,
+  SemanticDevicePropertyValue,
+  SemanticDeviceSpecProjection,
+} from './device-spec-semantics.js';
+export {
   fetchRuleLogs,
   filterRuleLogs,
   parseLogLine,

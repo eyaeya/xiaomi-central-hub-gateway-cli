@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  DeviceSpecSemanticCache,
   buildRuleTraceWatchpoints,
   calculateRuleTrace,
   fetchRuleLogs,
@@ -275,7 +276,7 @@ test('known Bundle pin values are filtered while deviceInput output keeps all th
   assert.equal(result.semanticDrift.entryCount, 3);
 });
 
-test('deviceGet labels resolve each URN once with raw fallback metadata on spec failure', async () => {
+test('deviceGet labels reuse semantic projection with notify gate, priority, bools, and fallback metadata', async () => {
   const sharedUrn = 'urn:miot-spec-v2:device:test:0000A000:shared:1';
   const failedUrn = 'urn:miot-spec-v2:device:test:0000A000:failed:1';
   const graph = [
@@ -290,6 +291,7 @@ test('deviceGet labels resolve each URN once with raw fallback metadata on spec 
     { ...traceNode('get-failed', 'deviceGet', { siid: 2, piid: 1 }), cfg: { urn: failedUrn } },
   ];
   const calls = [];
+  const semanticCalls = [];
   const resolved = await resolveRuleTraceDeviceGetLabels(graph, {
     loadSpec: async (urn) => {
       calls.push(urn);
@@ -309,7 +311,10 @@ test('deviceGet labels resolve each URN once with raw fallback metadata on spec 
                 description: 'property',
                 format: 'uint8',
                 access: ['read', 'notify'],
-                'value-list': [{ value: 1, description: '开启' }],
+                'value-list': [
+                  { value: 1, description: 'raw-one' },
+                  { value: 2, description: 'raw-two' },
+                ],
               },
               {
                 iid: 2,
@@ -338,12 +343,51 @@ test('deviceGet labels resolve each URN once with raw fallback metadata on spec 
         ],
       };
     },
+    semanticOptions: {
+      cache: new DeviceSpecSemanticCache(),
+      fetch: async (input) => {
+        const url = String(input);
+        semanticCalls.push(url);
+        if (url.includes('/multiLanguage')) {
+          return Response.json({
+            data: { zh_cn: { 'service:2:property:1:value:0': '多语一' } },
+          });
+        }
+        if (url.includes('/normalization/list/property_value')) {
+          return Response.json({
+            result: [
+              {
+                urn: 'urn:miot-spec-v2:service:test:00007800',
+                proName: 'test',
+                normalization: 'raw-one',
+                description: '归一一',
+              },
+              {
+                urn: 'urn:miot-spec-v2:service:test:00007800',
+                proName: 'test',
+                normalization: 'raw-two',
+                description: '归一二',
+              },
+            ],
+          });
+        }
+        if (url.endsWith('/template/list/event')) {
+          return new Response('fixture fallback', { status: 503 });
+        }
+        return Response.json({ result: [] });
+      },
+    },
   });
 
   assert.deepEqual(calls.sort(), [failedUrn, sharedUrn].sort());
+  assert.equal(
+    semanticCalls.length,
+    6,
+    'one successful URN uses the six shared projector catalogs',
+  );
   assert.deepEqual(resolved.labelsByNodeId, {
-    'get-a': { 1: '开启' },
-    'get-b': { 1: '开启' },
+    'get-a': { 1: '多语一', 2: '归一二' },
+    'get-b': { 1: '多语一', 2: '归一二' },
     'get-motion': { true: '有人', false: '无人' },
     'get-on': { true: '开启', false: '关闭' },
   });
@@ -352,6 +396,25 @@ test('deviceGet labels resolve each URN once with raw fallback metadata on spec 
     failedUrns: [failedUrn],
     failureCount: 1,
   });
+  assert.deepEqual(resolved.semanticProjection.attemptedUrns, [sharedUrn]);
+  assert.deepEqual(resolved.semanticProjection.failedUrns, []);
+  assert.equal(resolved.semanticProjection.failureCount, 0);
+  assert.deepEqual(resolved.semanticProjection.catalogFallbackUrns, [sharedUrn]);
+  assert.equal(resolved.semanticProjection.catalogFallbackCount, 1);
+  assert.deepEqual(resolved.semanticProjection.valueLabelFallbackUrns, []);
+  assert.equal(resolved.semanticProjection.valueLabelFallbackCatalogCount, 0);
+  assert.deepEqual(
+    resolved.semanticProjection.catalogStatuses.filter(({ status }) => status === 'fallback'),
+    [
+      {
+        urn: sharedUrn,
+        catalog: 'event-template',
+        status: 'fallback',
+        reason: 'http',
+        httpStatus: 503,
+      },
+    ],
+  );
   const traced = calculateRuleTrace({
     ruleId: 'rule-1',
     nodes: graph,
@@ -369,8 +432,8 @@ test('deviceGet labels resolve each URN once with raw fallback metadata on spec 
   assert.deepEqual(
     traced.frames.map((frame) => frame.status[frame.changed].info),
     [
-      '查询成功, 值为开启',
-      '查询成功, 值为2',
+      '查询成功, 值为多语一',
+      '查询成功, 值为归一二',
       '查询成功, 值为1',
       '查询成功, 值为有人',
       '查询成功, 值为无人',
@@ -378,6 +441,114 @@ test('deviceGet labels resolve each URN once with raw fallback metadata on spec 
       '查询成功, 值为1',
     ],
   );
+});
+
+test('deviceGet semantic fallback keeps raw values and shares global catalogs across URNs', async () => {
+  const urns = [
+    'urn:miot-spec-v2:device:test:0000A000:raw-a:1',
+    'urn:miot-spec-v2:device:test:0000A000:raw-b:1',
+  ];
+  const graph = urns.map((urn, index) => ({
+    ...traceNode(`get-raw-${index}`, 'deviceGet', { siid: 2, piid: 1 }),
+    cfg: { urn },
+  }));
+  const semanticCalls = [];
+  const resolved = await resolveRuleTraceDeviceGetLabels(graph, {
+    loadSpec: async (urn) => ({
+      type: urn,
+      description: 'fixture',
+      services: [
+        {
+          iid: 2,
+          type: 'urn:miot-spec-v2:service:test:00007800:fixture:1',
+          description: 'service',
+          properties: [
+            {
+              iid: 1,
+              type: 'urn:miot-spec-v2:property:test:00000000:fixture:1',
+              description: 'property',
+              format: 'uint8',
+              access: ['read', 'notify'],
+              'value-list': [{ value: 1, description: 'raw-one' }],
+            },
+          ],
+        },
+      ],
+    }),
+    semanticOptions: {
+      cache: new DeviceSpecSemanticCache(),
+      fetch: async (input) => {
+        const url = String(input);
+        semanticCalls.push(url);
+        if (url.includes('/multiLanguage')) {
+          return Response.json({ data: { zh_cn: {} } });
+        }
+        if (url.includes('/normalization/list/property_value')) {
+          return new Response('fixture fallback', { status: 503 });
+        }
+        return Response.json({ result: [] });
+      },
+    },
+  });
+
+  assert.equal(
+    semanticCalls.length,
+    7,
+    'two URNs fetch two multiLanguage catalogs but share five global catalog requests',
+  );
+  assert.deepEqual(resolved.labelsByNodeId, {
+    'get-raw-0': { 1: 'raw-one' },
+    'get-raw-1': { 1: 'raw-one' },
+  });
+  assert.deepEqual(resolved.semanticProjection.catalogFallbackUrns, urns);
+  assert.equal(resolved.semanticProjection.catalogFallbackCount, 2);
+  assert.deepEqual(resolved.semanticProjection.valueLabelFallbackUrns, urns);
+  assert.equal(resolved.semanticProjection.valueLabelFallbackCatalogCount, 2);
+});
+
+test('deviceGet semantic projector failure is bounded and leaves trace values raw', async () => {
+  const urn = 'urn:miot-spec-v2:device:test:0000A000:projection-failure:1';
+  const node = { ...traceNode('get-raw', 'deviceGet', { siid: 2, piid: 1 }), cfg: { urn } };
+  const resolved = await resolveRuleTraceDeviceGetLabels([node], {
+    loadSpec: async () => ({
+      type: urn,
+      description: 'fixture',
+      services: [
+        {
+          iid: 2,
+          type: 'urn:miot-spec-v2:service:test:00007800:fixture:1',
+          description: 'service',
+        },
+      ],
+    }),
+    projectSemantics: async () => {
+      throw new Error('fixture projection failure');
+    },
+  });
+
+  assert.deepEqual(resolved.labelsByNodeId, {});
+  assert.deepEqual(resolved.specLookup, {
+    requestedUrns: [urn],
+    failedUrns: [],
+    failureCount: 0,
+  });
+  assert.deepEqual(resolved.semanticProjection, {
+    attemptedUrns: [urn],
+    failedUrns: [urn],
+    failureCount: 1,
+    catalogStatuses: [],
+    catalogFallbackUrns: [],
+    catalogFallbackCount: 0,
+    valueLabelFallbackUrns: [],
+    valueLabelFallbackCatalogCount: 0,
+  });
+  const traced = calculateRuleTrace({
+    ruleId: 'rule-1',
+    nodes: [node],
+    entries: logs(['3|1|i|rule-1|get-raw|raw-value']),
+    deviceGetLabels: resolved.labelsByNodeId,
+  });
+  assert.equal(traced.frames[0].status['node:get-raw'].info, '查询成功, 值为raw-value');
 });
 
 test('legacy deviceGet fallback skips malformed spec lookup and keeps raw trace info', async () => {
@@ -401,6 +572,16 @@ test('legacy deviceGet fallback skips malformed spec lookup and keeps raw trace 
   assert.deepEqual(resolved, {
     labelsByNodeId: {},
     specLookup: { requestedUrns: [], failedUrns: [], failureCount: 0 },
+    semanticProjection: {
+      attemptedUrns: [],
+      failedUrns: [],
+      failureCount: 0,
+      catalogStatuses: [],
+      catalogFallbackUrns: [],
+      catalogFallbackCount: 0,
+      valueLabelFallbackUrns: [],
+      valueLabelFallbackCatalogCount: 0,
+    },
   });
   const traced = calculateRuleTrace({
     ruleId: 'rule-1',

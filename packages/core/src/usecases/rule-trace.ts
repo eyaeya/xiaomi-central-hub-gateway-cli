@@ -1,6 +1,12 @@
 import type { DeviceSpec } from '../schemas/device-spec.js';
 import type { DeviceGetNode } from '../schemas/nodes/device-get.js';
 import type { Node } from '../schemas/rule.js';
+import {
+  type DeviceSpecSemanticCatalogStatus,
+  type ProjectDeviceSpecSemanticsOptions,
+  type SemanticDeviceSpecProjection,
+  projectDeviceSpecSemantics,
+} from './device-spec-semantics.js';
 import { getDeviceSpec } from './get-device-spec.js';
 import type { RuleLogEntry } from './rule-logs.js';
 
@@ -63,88 +69,32 @@ export interface RuleTraceDeviceGetLabelResult {
     failedUrns: string[];
     failureCount: number;
   };
+  semanticProjection: {
+    attemptedUrns: string[];
+    failedUrns: string[];
+    failureCount: number;
+    catalogStatuses: Array<DeviceSpecSemanticCatalogStatus & { urn: string }>;
+    catalogFallbackUrns: string[];
+    catalogFallbackCount: number;
+    valueLabelFallbackUrns: string[];
+    valueLabelFallbackCatalogCount: number;
+  };
 }
+
+const RULE_TRACE_VALUE_LABEL_CATALOGS: ReadonlySet<DeviceSpecSemanticCatalogStatus['catalog']> =
+  new Set(['multi-language', 'property-value-normalization']);
 
 export interface ResolveRuleTraceDeviceGetLabelsOptions {
   /** Test seam; defaults to the shared cached public MIoT spec loader. */
   loadSpec?: (urn: string) => Promise<DeviceSpec>;
+  /** Test seam; defaults to the shared best-effort semantic projector. */
+  projectSemantics?: (
+    spec: DeviceSpec,
+    options?: ProjectDeviceSpecSemanticsOptions,
+  ) => Promise<SemanticDeviceSpecProjection>;
+  /** Forwarded to the shared projector; timeout also bounds the default raw-spec loader. */
+  semanticOptions?: ProjectDeviceSpecSemanticsOptions;
 }
-
-const BUNDLE_BOOLEAN_LABELS: Readonly<Record<string, { true: string; false: string }>> = {
-  'urn:miot-spec-v2:property:air-cooler:000000EB': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:alarm:00000012': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:anion:00000025': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:anti-fake:00000130': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:arrhythmia:000000B4': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:auto-cleanup:00000124': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:auto-deodorization:00000125': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:auto-keep-warm:0000002B': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:automatic-feeding:000000F0': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:blow:000000CD': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:card-insertion-state:00000106': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:contact-state:0000007C': { true: '接触', false: '分离' },
-  'urn:miot-spec-v2:property:current-physical-control-lock:00000099': {
-    true: '开启',
-    false: '关闭',
-  },
-  'urn:miot-spec-v2:property:delay:0000014F': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:deodorization:000000C6': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:dns-auto-mode:000000DC': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:driving-status:000000B9': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:dryer:00000027': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:eco:00000024': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:glimmer-full-color:00000089': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:guard-mode:000000B6': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:heater:00000026': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:heating:000000C7': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:horizontal-swing:00000017': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:hot-water-recirculation:0000011C': {
-    true: '开启',
-    false: '关闭',
-  },
-  'urn:miot-spec-v2:property:image-distortion-correction:0000010F': {
-    true: '开启',
-    false: '关闭',
-  },
-  'urn:miot-spec-v2:property:local-storage:0000011E': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:motion-detection:00000056': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:motion-state:0000007D': { true: '有人', false: '无人' },
-  'urn:miot-spec-v2:property:motion-tracking:0000008A': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:motor-reverse:00000072': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:off-delay:00000053': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:on:00000006': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:physical-controls-locked:0000001D': {
-    true: '开启',
-    false: '关闭',
-  },
-  'urn:miot-spec-v2:property:plasma:00000132': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:preheat:00000103': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:seating-state:000000B8': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:silent-execution:000000FB': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:sleep-aid-mode:0000010B': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:sleep-mode:00000028': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:snore-state:0000012A': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:soft-wind:000000CF': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:speed-control:000000E8': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:submersion-state:0000007E': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:time-watermark:00000087': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:un-straight-blowing:00000100': {
-    true: '开启',
-    false: '关闭',
-  },
-  'urn:miot-spec-v2:property:uv:00000029': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:valve-switch:000000FE': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:ventilation:000000CE': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:vertical-swing:00000018': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:wake-up-mode:00000107': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:water-pump:000000F2': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:watering:000000CC': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:wdr-mode:00000088': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:wet:0000002A': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:wifi-band-combine:000000E0': { true: '开启', false: '关闭' },
-  'urn:miot-spec-v2:property:wifi-ssid-hidden:000000E3': { true: '是', false: '否' },
-  'urn:miot-spec-v2:property:wind-reverse:00000117': { true: '是', false: '否' },
-};
 
 export interface RuleTraceCalculation {
   frames: RuleTraceFrame[];
@@ -284,7 +234,7 @@ export function calculateRuleTrace(input: CalculateRuleTraceInput): RuleTraceCal
   };
 }
 
-/** Resolve each unique deviceGet URN once and build the Bundle value-list lookup by node. */
+/** Resolve each unique deviceGet URN once and build the shared semantic value lookup by node. */
 export async function resolveRuleTraceDeviceGetLabels(
   nodes: Node[],
   options: ResolveRuleTraceDeviceGetLabelsOptions = {},
@@ -293,13 +243,29 @@ export async function resolveRuleTraceDeviceGetLabels(
   const requestedUrns = [
     ...new Set(deviceGetNodes.map((node) => node.cfg.urn).filter((urn) => urn.length > 0)),
   ];
-  const loadSpec = options.loadSpec ?? ((urn: string) => getDeviceSpec(urn));
-  const specs = new Map<string, DeviceSpec>();
+  const loadSpec =
+    options.loadSpec ??
+    ((urn: string) =>
+      getDeviceSpec(
+        urn,
+        options.semanticOptions?.timeoutMs === undefined
+          ? {}
+          : { timeoutMs: options.semanticOptions.timeoutMs },
+      ));
+  const projectSemantics = options.projectSemantics ?? projectDeviceSpecSemantics;
+  const projections = new Map<string, SemanticDeviceSpecProjection>();
   const failedUrns: string[] = [];
+  const semanticFailedUrns: string[] = [];
   await Promise.all(
     requestedUrns.map(async (urn) => {
       try {
-        specs.set(urn, await loadSpec(urn));
+        const spec = await loadSpec(urn);
+        try {
+          const projection = await projectSemantics(spec, options.semanticOptions);
+          projections.set(urn, projection);
+        } catch {
+          semanticFailedUrns.push(urn);
+        }
       } catch {
         failedUrns.push(urn);
       }
@@ -307,35 +273,39 @@ export async function resolveRuleTraceDeviceGetLabels(
   );
   const labelsByNodeId: Record<string, Record<string, string>> = {};
   for (const node of deviceGetNodes) {
-    const spec = specs.get(node.cfg.urn);
-    const property = spec?.services
-      .find((service) => service.iid === node.props.siid)
-      ?.properties?.find((entry) => entry.iid === node.props.piid);
-    if (property?.access.includes('notify') !== true) continue;
-    const booleanLabels =
-      property.format === 'bool'
-        ? (BUNDLE_BOOLEAN_LABELS[property.type.split(':').slice(0, 5).join(':')] ?? {
-            true: 'true',
-            false: 'false',
-          })
-        : undefined;
-    const valueList =
-      property['value-list'] ??
-      (booleanLabels === undefined
-        ? undefined
-        : [
-            { value: true, description: booleanLabels.true },
-            { value: false, description: booleanLabels.false },
-          ]);
+    const valueList = projections
+      .get(node.cfg.urn)
+      ?.propertyNotify.find(
+        (property) => property.siid === node.props.siid && property.piid === node.props.piid,
+      )?.valueList;
     if (valueList === undefined) continue;
     labelsByNodeId[node.id] = Object.fromEntries(
       valueList.map((entry) => [String(entry.value), entry.description]),
     );
   }
   failedUrns.sort();
+  semanticFailedUrns.sort();
+  const catalogStatuses: Array<DeviceSpecSemanticCatalogStatus & { urn: string }> =
+    requestedUrns.flatMap((urn) =>
+      (projections.get(urn)?.catalogs ?? []).map((status) => ({ urn, ...status })),
+    );
+  const fallbackStatuses = catalogStatuses.filter((status) => status.status === 'fallback');
+  const valueLabelFallbackStatuses = fallbackStatuses.filter((status) =>
+    RULE_TRACE_VALUE_LABEL_CATALOGS.has(status.catalog),
+  );
   return {
     labelsByNodeId,
     specLookup: { requestedUrns, failedUrns, failureCount: failedUrns.length },
+    semanticProjection: {
+      attemptedUrns: requestedUrns.filter((urn) => !failedUrns.includes(urn)),
+      failedUrns: semanticFailedUrns,
+      failureCount: semanticFailedUrns.length,
+      catalogStatuses,
+      catalogFallbackUrns: [...new Set(fallbackStatuses.map((status) => status.urn))],
+      catalogFallbackCount: fallbackStatuses.length,
+      valueLabelFallbackUrns: [...new Set(valueLabelFallbackStatuses.map((status) => status.urn))],
+      valueLabelFallbackCatalogCount: valueLabelFallbackStatuses.length,
+    },
   };
 }
 
