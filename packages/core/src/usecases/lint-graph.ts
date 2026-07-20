@@ -3,6 +3,7 @@ import {
   isEditorCompatibleNodeId,
 } from '../schemas/node-identifier.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
+import { devicePushCapabilityMessage, isDevicePushSourceCard } from './device-card-capabilities.js';
 import { isModeledNodeType, targetInputPinStatus } from './edge-integrity.js';
 import {
   duplicateNodeIdIssues,
@@ -150,16 +151,17 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
       }
     }
 
-    if (nodeType === 'deviceInput') {
+    if (isDevicePushSourceCard(nodeType)) {
       const props = (node.props ?? {}) as Record<string, unknown>;
       const did = typeof props.did === 'string' ? props.did : undefined;
-      const isStateMode = props.piid !== undefined && props.eiid === undefined;
-      if (did !== undefined && isStateMode && input.devices?.[did]?.pushAvailable === false) {
+      const isPushMode = Number.isInteger(props.piid) || Number.isInteger(props.eiid);
+      const pushAvailable = did === undefined ? undefined : input.devices?.[did]?.pushAvailable;
+      if (did !== undefined && isPushMode && pushAvailable === false) {
+        const message = devicePushCapabilityMessage(nodeType, did, pushAvailable);
         issues.push({
           severity: 'warn',
-          path: `nodes[${i}]`,
-          message:
-            'deviceInput state-mode on pushAvailable:false device — input never fires (F17). Use deviceGet or register.',
+          path: `nodes[${i}].props.did`,
+          message: `${message}. --allow-no-push is transient probe intent and is not persisted; use deviceGet/deviceGetSetVar for an active read, or verify this source on the target gateway.`,
         });
       }
     }

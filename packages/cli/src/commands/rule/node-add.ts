@@ -5,7 +5,6 @@ import {
   assertExplicitBetweenBounds,
   createEditorCompatibleNodeId,
   dumpBeforeWrite,
-  getDevice,
   isEditorCompatibleNodeId,
   nodeSchemaForType,
   parseEventArgVarTarget,
@@ -71,20 +70,6 @@ function collectShortcutVariableScopes(
     if (match?.[1] !== undefined) scopes.add(match[1]);
   }
   return [...scopes];
-}
-
-async function warnIfDeviceInputNoPush(
-  did: string | undefined,
-  deps: Parameters<typeof getDevice>[1],
-  allow: boolean | undefined,
-): Promise<void> {
-  if (allow === true) return;
-  if (did === undefined) return;
-  const device = await getDevice(did, deps);
-  if (device.pushAvailable !== false) return;
-  process.stderr.write(
-    `[xgg rule node add deviceInput] warning: device ${did} has pushAvailable=false; deviceInput state-mode listens for push notify events that this device does not send. The rule will save, but the state input will never fire from the device's own updates. Either use deviceGet (active poll) with a condition node to gate by state, or maintain state in-graph via a register. Pass --allow-no-push to silence (F17).\n`,
-  );
 }
 
 function parseParamsJson(raw: string): Record<string, unknown> {
@@ -496,7 +481,7 @@ export function attachNodeAdd(cmd: Command): void {
     )
     .option(
       '--allow-no-push',
-      'silence F17 warning for deviceInput state-mode on pushAvailable=false devices',
+      'transient runtime-probe override for this typed deviceInput/deviceInputSetVar add on a pushAvailable=false device; never bypasses property notify/read/write access and does not prove runtime emission',
     )
     .option(
       '--preload',
@@ -924,6 +909,7 @@ Raw/full-tuple path:
             ...(parsedParams !== undefined && { params: parsedParams }),
             ...(opts.value !== undefined && { value: opts.value }),
             ...(opts.forceOutOfRange === true && { forceOutOfRange: true }),
+            ...(opts.allowNoPush === true && { allowNoPush: true }),
             ...(opts.preload !== undefined && { preload: opts.preload }),
             ...(opts.varScope !== undefined && { varScope: opts.varScope }),
             ...(opts.varId !== undefined && { varId: opts.varId }),
@@ -996,14 +982,6 @@ Raw/full-tuple path:
           'rule.node.add',
           deps,
           async () => {
-            if (
-              opts.deviceDid !== undefined &&
-              opts.type === 'deviceInput' &&
-              opts.deviceProperty !== undefined &&
-              opts.deviceEvent === undefined
-            ) {
-              await warnIfDeviceInputNoPush(opts.deviceDid, deps, opts.allowNoPush);
-            }
             const snapshotPath = !guard.snapshotEnabled
               ? null
               : await dumpBeforeWrite({

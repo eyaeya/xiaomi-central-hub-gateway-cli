@@ -24,6 +24,10 @@ import { nodeSchemaForType } from '../schemas/nodes/registry.js';
 import { isValidVariableIdentifier } from '../schemas/variable-identifier.js';
 import { isValidVariableScopeName } from '../schemas/variable.js';
 import { ConfigError, NotFoundError } from '../transport/errors.js';
+import {
+  type DevicePropertyCardType,
+  devicePropertyAccessCapabilityMessage,
+} from './device-card-capabilities.js';
 import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
 import {
   checkDeviceOutputActionInputContract,
@@ -204,6 +208,7 @@ export async function exportRuleFromView(
   //    we cache by did so a rule with many nodes touching the same device
   //    only fetches once.
   const specCache = new Map<string, DeviceSpec>();
+  const devicePushCache = new Map<string, boolean>();
   for (const node of view.nodes) {
     const warningCountBefore = nodeWarnings.length;
     const rawNode = node as { id?: unknown; type?: unknown };
@@ -219,7 +224,7 @@ export async function exportRuleFromView(
         );
       }
     }
-    const result = await renderNode(node, deps, specCache, nodeWarnings);
+    const result = await renderNode(node, deps, specCache, devicePushCache, nodeWarnings);
     const rawNodeId = typeof rawNode.id === 'string' ? rawNode.id : undefined;
     const legacyTypedId =
       result?.kind === 'node-add' &&
@@ -478,6 +483,7 @@ async function renderNode(
   node: unknown,
   deps: ExportRuleDeps,
   specCache: Map<string, DeviceSpec>,
+  devicePushCache: Map<string, boolean>,
   warnings: string[],
 ): Promise<ExportedCommand | null> {
   const n = node as {
@@ -490,12 +496,12 @@ async function renderNode(
   } & Record<string, unknown>;
   switch (n.type) {
     case 'deviceInput':
-      return renderDeviceInput(n, deps, specCache, warnings);
+      return renderDeviceInput(n, deps, specCache, devicePushCache, warnings);
     case 'deviceGet':
       return renderDeviceGet(n, deps, specCache, warnings);
     case 'deviceInputSetVar':
     case 'deviceGetSetVar':
-      return renderDeviceSetVar(n, deps, specCache, warnings);
+      return renderDeviceSetVar(n, deps, specCache, devicePushCache, warnings);
     case 'deviceOutput':
       return renderDeviceOutput(n, deps, specCache, warnings);
     case 'onLoad':
@@ -756,10 +762,37 @@ function appendPropertyDomainIntent(
   warnings.push(`${nodeType} node ${nodeId}: ${domainIssue.message}; typed replay will reject`);
 }
 
+function appendDevicePropertyAccessWarning(
+  nodeType: DevicePropertyCardType,
+  nodeId: string,
+  property: MiotProperty,
+  warnings: string[],
+): void {
+  const message = devicePropertyAccessCapabilityMessage(nodeType, property);
+  if (message === null) return;
+  warnings.push(`${nodeType} node ${nodeId}: ${message}; typed replay will reject`);
+}
+
+function appendNoPushReplayIntent(
+  flags: ExportFlag[],
+  nodeType: 'deviceInput' | 'deviceInputSetVar',
+  nodeId: string,
+  did: string,
+  devicePushCache: ReadonlyMap<string, boolean>,
+  warnings: string[],
+): void {
+  if (devicePushCache.get(did) !== false) return;
+  flags.push({ name: '--allow-no-push' });
+  warnings.push(
+    `${nodeType} node ${nodeId}: device ${did} reports pushAvailable=false; permissive replay includes transient --allow-no-push probe intent, which does not prove runtime emission. Strict round-trip refuses to grant that non-persisted intent silently.`,
+  );
+}
+
 async function renderDeviceInput(
   n: { id: string; cfg?: Record<string, unknown>; props?: Record<string, unknown> },
   deps: ExportRuleDeps,
   specCache: Map<string, DeviceSpec>,
+  devicePushCache: Map<string, boolean>,
   warnings: string[],
 ): Promise<ExportedCommand> {
   const props = n.props ?? {};
@@ -777,7 +810,7 @@ async function renderDeviceInput(
   appendDeviceSiidFlag(flags, props.siid);
 
   if (isEvent) {
-    const spec = await ensureSpec(did, deps, specCache);
+    const spec = await ensureSpec(did, deps, specCache, devicePushCache);
     const eventDetails = findEventDetails(spec, Number(props.siid), Number(props.eiid));
     if (eventDetails === null) {
       warnings.push(
@@ -904,7 +937,7 @@ async function renderDeviceInput(
       }
     }
   } else if (isProperty) {
-    const spec = await ensureSpec(did, deps, specCache);
+    const spec = await ensureSpec(did, deps, specCache, devicePushCache);
     const sourceSiid = Number(props.siid);
     const propertyDetails = findPropertyDetails(spec, sourceSiid, Number(props.piid));
     if (propertyDetails === null) {
@@ -917,6 +950,7 @@ async function renderDeviceInput(
       });
     } else {
       flags.push({ name: '--device-property', value: propertyDetails.propertyName });
+      appendDevicePropertyAccessWarning('deviceInput', n.id, propertyDetails.property, warnings);
     }
     const projectedDtype =
       propertyDetails === null
@@ -942,6 +976,10 @@ async function renderDeviceInput(
     warnings.push(
       `deviceInput node ${n.id}: neither piid nor eiid in props; cannot infer trigger kind`,
     );
+  }
+
+  if (isEvent || isProperty) {
+    appendNoPushReplayIntent(flags, 'deviceInput', n.id, did, devicePushCache, warnings);
   }
 
   return {
@@ -987,6 +1025,7 @@ async function renderDeviceGet(
     });
   } else {
     flags.push({ name: '--device-property', value: propertyDetails.propertyName });
+    appendDevicePropertyAccessWarning('deviceGet', n.id, propertyDetails.property, warnings);
   }
   const projectedDtype =
     propertyDetails === null
@@ -1021,6 +1060,7 @@ async function renderDeviceSetVar(
   n: { id: string; type: string; cfg?: Record<string, unknown>; props?: Record<string, unknown> },
   deps: ExportRuleDeps,
   specCache: Map<string, DeviceSpec>,
+  devicePushCache: Map<string, boolean>,
   warnings: string[],
 ): Promise<ExportedCommand> {
   const props = n.props ?? {};
@@ -1035,7 +1075,10 @@ async function renderDeviceSetVar(
   ];
   appendDeviceSiidFlag(flags, props.siid);
 
-  const spec = await ensureSpec(did, deps, specCache);
+  const spec = await ensureSpec(did, deps, specCache, devicePushCache);
+  if (n.type === 'deviceInputSetVar') {
+    appendNoPushReplayIntent(flags, 'deviceInputSetVar', n.id, did, devicePushCache, warnings);
+  }
   // F50 (2026-05-30) — deviceInputSetVar can be event-mode
   // ({eiid, arguments: [...]}) in addition to property-mode ({piid,
   // dtype, scope, id}). Detect via the presence of `eiid` in props.
@@ -1091,8 +1134,8 @@ async function renderDeviceSetVar(
       comment: n.type,
     };
   }
-  const propertyName = findPropertyName(spec, Number(props.siid), Number(props.piid));
-  if (propertyName === null) {
+  const propertyDetails = findPropertyDetails(spec, Number(props.siid), Number(props.piid));
+  if (propertyDetails === null) {
     warnings.push(
       `${n.type} node ${n.id}: property siid=${props.siid} piid=${props.piid} not found in device spec`,
     );
@@ -1101,7 +1144,13 @@ async function renderDeviceSetVar(
       value: `<UNKNOWN_PROPERTY_siid${props.siid}_piid${props.piid}>`,
     });
   } else {
-    flags.push({ name: '--device-property', value: propertyName });
+    flags.push({ name: '--device-property', value: propertyDetails.propertyName });
+    appendDevicePropertyAccessWarning(
+      n.type as DevicePropertyCardType,
+      n.id,
+      propertyDetails.property,
+      warnings,
+    );
   }
 
   if (typeof props.scope === 'string') flags.push({ name: '--var-scope', value: props.scope });
@@ -1696,10 +1745,15 @@ async function ensureSpec(
   did: string,
   deps: ExportRuleDeps,
   cache: Map<string, DeviceSpec>,
+  devicePushCache?: Map<string, boolean>,
 ): Promise<DeviceSpec> {
   const cached = cache.get(did);
-  if (cached) return cached;
+  if (cached !== undefined && (devicePushCache === undefined || devicePushCache.has(did))) {
+    return cached;
+  }
   const device = await getDevice(did, deps);
+  devicePushCache?.set(did, device.pushAvailable);
+  if (cached !== undefined) return cached;
   const spec =
     deps.getDeviceSpec !== undefined
       ? await deps.getDeviceSpec(device.urn)

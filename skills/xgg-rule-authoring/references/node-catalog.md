@@ -72,7 +72,7 @@ pin 颜色有 event、state、event|state。只有源输出可以是 event|state
 | `varSetNumber` / `varSetString` | `--expr '<expr>'` | shell 中始终单引号保护 `$` |
 | `nop` | `--text` 或 `--delta`，可加 `--background` | 备注节点，不参与执行/可达性 |
 
-所有执行卡 shortcut 可加 `--simplified true|false`。只有 `deviceInput` / `deviceInputSetVar` property mode 与 `varChange` 可加 `--preload` / `--no-preload`，默认 false。按已审计 bundle/UI 语义，`true` 会在规则启用时先查询/评估一次当前属性或变量，`false` 只跳过这次初始动作；后续 property notify / variable change 路径不变。该时序是 bundle 证据，不代表所有目标固件都已实机验证，仍要用日志或变量读数验收。`nop` 和 raw `--cfg` 路径不接受这些 shortcut flags。
+所有执行卡 shortcut 可加 `--simplified true|false`。只有 `deviceInput` / `deviceInputSetVar` property mode 与 `varChange` 可加 `--preload` / `--no-preload`，默认 false。按已审计 bundle/UI 语义，`true` 会在规则启用时先查询/评估一次当前属性或变量，`false` 只跳过这次初始动作；后续 property notify / variable change 路径不变，且 preload 不会制造缺失的 notify/read/push 能力。`deviceInput` / `deviceInputSetVar` property/event push source 可用 transient `--allow-no-push` 做目标网关 runtime probe；它不持久化、不绕过 property access、不证明会发出，在线 spec-aware 仍诊断 no-push。该时序是 bundle 证据，不代表所有目标固件都已实机验证，仍要用日志或变量读数验收。`nop` 和 raw `--cfg` 路径不接受这些 shortcut flags。
 
 审计 bundle 枚举的 `onLoad` 时机是保存、网关重启、禁用转启用和备份恢复；本轮安全实机只验证了 `disable → enable`。保存/重启/恢复时机必须在目标网关通过日志重新验证，不要把 bundle 分支直接写成全部实机证据。
 

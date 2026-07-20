@@ -65,6 +65,11 @@ import {
 } from '../transport/errors.js';
 import { agentCall } from '../usecases/agent-call.js';
 import {
+  assertDevicePropertyAccessCapability,
+  assertDevicePushCapability,
+  isDevicePushSourceCard,
+} from '../usecases/device-card-capabilities.js';
+import {
   type DeviceReplacementCandidate,
   type DeviceReplacementEvaluation,
   type DeviceReplacementPlan,
@@ -1304,6 +1309,11 @@ export interface AddNodeShortcut {
   // callers that relied on xgg's historical eager deviceInput default must
   // now pass `preload: true` explicitly.
   preload?: boolean;
+  // Explicit, transient probe intent for a typed deviceInput /
+  // deviceInputSetVar source on a device that reports pushAvailable=false.
+  // It never persists and never bypasses the selected property's required
+  // notify/read/write access contract.
+  allowNoPush?: boolean;
   // ---- non-device-side fields (M10 F17) ----
   // nop rich-text canvas note. `noteText` is normalized to a Quill document
   // line; `noteDelta` is the lossless cfg.contents operations path.
@@ -1491,6 +1501,15 @@ function assertShortcutPreloadUsage(shortcut: AddNodeShortcut): void {
   }
   throw new ConfigError(
     'preload only applies to deviceInput/deviceInputSetVar property-mode shortcuts and varChange',
+    { type: shortcut.type },
+  );
+}
+
+function assertShortcutAllowNoPushUsage(shortcut: AddNodeShortcut): void {
+  if (shortcut.allowNoPush !== true) return;
+  if (isDevicePushSourceCard(shortcut.type)) return;
+  throw new ConfigError(
+    `allowNoPush only applies to deviceInput/deviceInputSetVar push-source shortcuts (got type ${shortcut.type})`,
     { type: shortcut.type },
   );
 }
@@ -1737,6 +1756,7 @@ function preflightAddNode(input: AddNodeInput): void {
     assertShortcutSimplified(input.shortcut);
     assertDeviceInputModeUsage(input.shortcut);
     assertShortcutPreloadUsage(input.shortcut);
+    assertShortcutAllowNoPushUsage(input.shortcut);
     assertNopShortcutUsage(input.shortcut);
     assertShortcutComparisonUsage(input.shortcut);
     if (isNonDeviceShortcut(input.shortcut)) {
@@ -1852,6 +1872,7 @@ async function addNodeWithinWorkflow(
     assertShortcutPositionUsage(input.shortcut);
     assertShortcutSimplified(input.shortcut);
     assertShortcutPreloadUsage(input.shortcut);
+    assertShortcutAllowNoPushUsage(input.shortcut);
     assertNopShortcutUsage(input.shortcut);
     assertShortcutComparisonUsage(input.shortcut);
     if (isNonDeviceShortcut(input.shortcut)) {
@@ -1973,6 +1994,7 @@ async function addNodeWithinWorkflow(
           did: input.shortcut.deviceDid,
           urn: device.urn,
           name: device.name,
+          pushAvailable: device.pushAvailable,
           // F64b: model enables partition-label injection in ambiguity errors
           // when the device is in PARTITION_MODEL_ALLOWLIST.
           model: device.model,
@@ -2924,7 +2946,13 @@ function synthesizePropertyComparison(
 
 function synthesizeNodeFromShortcut(
   shortcut: AddNodeShortcut,
-  device: { did: string; urn: string; name: string; model?: string },
+  device: {
+    did: string;
+    urn: string;
+    name: string;
+    pushAvailable: boolean;
+    model?: string;
+  },
   spec: DeviceSpec,
 ): Record<string, unknown> {
   // F64b: pulled out of the device closure so the spec-resolver error
@@ -2951,6 +2979,7 @@ function synthesizeNodeFromShortcut(
         shortcut.deviceSiid,
         deviceModel,
       );
+      assertDevicePushCapability('deviceInput', device, shortcut.allowNoPush === true);
       // B9 / F63d (2026-05-30) — translate --event-filter expressions into
       // typed arguments[] elements. Empty list preserves F11 behavior.
       const rawArgs: Array<{ raw: string; kind: EventFilterKind }> = [
@@ -3002,6 +3031,12 @@ function synthesizeNodeFromShortcut(
       shortcut.deviceSiid,
       deviceModel,
     );
+    assertDevicePropertyAccessCapability(
+      'deviceInput',
+      property,
+      `property "${shortcut.deviceProperty}" on ${spec.type}`,
+    );
+    assertDevicePushCapability('deviceInput', device, shortcut.allowNoPush === true);
     const props: Record<string, unknown> = {
       did: device.did,
       siid: service.iid,
@@ -3149,12 +3184,11 @@ function synthesizeNodeFromShortcut(
         shortcut.deviceSiid,
         deviceModel,
       );
-      if (!property.access.includes('write')) {
-        throw new ConfigError(
-          `property "${shortcut.deviceProperty}" is not writable on ${spec.type}`,
-          { property: shortcut.deviceProperty, access: property.access },
-        );
-      }
+      assertDevicePropertyAccessCapability(
+        'deviceOutput',
+        property,
+        `property "${shortcut.deviceProperty}" on ${spec.type}`,
+      );
       // A single leading dollar keeps the established variable-reference
       // grammar. Doubling it escapes exactly one dollar so string literals
       // such as "$hello" and "$global.foo" can round-trip without being
@@ -3218,6 +3252,11 @@ function synthesizeNodeFromShortcut(
       shortcut.deviceSiid,
       deviceModel,
     );
+    assertDevicePropertyAccessCapability(
+      'deviceGet',
+      property,
+      `property "${shortcut.deviceProperty}" on ${spec.type}`,
+    );
     const props: Record<string, unknown> = {
       did: device.did,
       siid: service.iid,
@@ -3266,6 +3305,7 @@ function synthesizeNodeFromShortcut(
         shortcut.deviceSiid,
         deviceModel,
       );
+      assertDevicePushCapability('deviceInputSetVar', device, shortcut.allowNoPush === true);
       const eventArgs = event.arguments ?? [];
       // F61 (2026-05-30, user-physical-test) — 0-arg events (BLE button
       // click / dbl-click / long-press) MUST NOT synthesize a
@@ -3411,6 +3451,14 @@ function synthesizeNodeFromShortcut(
       shortcut.deviceSiid,
       deviceModel,
     );
+    assertDevicePropertyAccessCapability(
+      shortcut.type,
+      property,
+      `property "${shortcut.deviceProperty}" on ${spec.type}`,
+    );
+    if (shortcut.type === 'deviceInputSetVar') {
+      assertDevicePushCapability('deviceInputSetVar', device, shortcut.allowNoPush === true);
+    }
     const base = {
       id,
       type: shortcut.type,

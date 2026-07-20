@@ -730,18 +730,6 @@ test('node-add rejects flags not consumed by the selected modeled type or mode b
     {
       args: [
         '--type',
-        'deviceInput',
-        '--device-did',
-        'did',
-        '--device-event',
-        'changed',
-        '--allow-no-push',
-      ],
-      message: /deviceInput event mode does not accept authoring option\(s\): --allow-no-push/,
-    },
-    {
-      args: [
-        '--type',
         'deviceInputSetVar',
         '--device-did',
         'did',

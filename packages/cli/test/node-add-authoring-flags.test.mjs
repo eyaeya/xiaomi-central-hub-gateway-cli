@@ -101,7 +101,14 @@ const ROUTES = [
   {
     label: 'deviceInput/event',
     base: { type: 'deviceInput', deviceDid: 'did', deviceEvent: 'changed' },
-    allowed: [...DEVICE, 'deviceEvent', 'eventFilter', 'eventFilterInclude', 'eventFilterBetween'],
+    allowed: [
+      ...DEVICE,
+      'deviceEvent',
+      'eventFilter',
+      'eventFilterInclude',
+      'eventFilterBetween',
+      'allowNoPush',
+    ],
   },
   {
     label: 'deviceGet/property',
@@ -121,12 +128,12 @@ const ROUTES = [
   {
     label: 'deviceInputSetVar/property',
     base: { type: 'deviceInputSetVar', deviceDid: 'did', deviceProperty: 'temperature' },
-    allowed: [...DEVICE, 'deviceProperty', ...VARIABLE_TARGET, 'preload'],
+    allowed: [...DEVICE, 'deviceProperty', ...VARIABLE_TARGET, 'preload', 'allowNoPush'],
   },
   {
     label: 'deviceInputSetVar/event',
     base: { type: 'deviceInputSetVar', deviceDid: 'did', deviceEvent: 'changed' },
-    allowed: [...DEVICE, 'deviceEvent', 'eventArgVar', ...VARIABLE_TARGET],
+    allowed: [...DEVICE, 'deviceEvent', 'eventArgVar', ...VARIABLE_TARGET, 'allowNoPush'],
   },
   {
     label: 'deviceGetSetVar/property',
