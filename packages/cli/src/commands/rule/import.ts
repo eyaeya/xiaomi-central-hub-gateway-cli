@@ -75,9 +75,10 @@ Notes:
     path and NODE_BIN optionally selects one Node executable path. They become
     two separately quoted argv elements; the script uses no eval or unquoted
     word splitting.
-  - Replay first asserts every global dependency exists with its exported
-    number|string type, then preflights captured local variables. Global checks
-    compare neither value nor display name and never create or modify globals.
+  - Replay first asserts every discoverable modeled global dependency exists
+    with its exported number|string type, then preflights captured local
+    variables. Global checks compare neither value nor display name and never
+    create or modify globals.
     Its first target-graph write is the exported empty shell with cfg overwrite
     and enable=false. When captured
     local variables exist, same-id prepares them with compatibility guards
@@ -97,14 +98,15 @@ Notes:
     because the gateway has no cross-variable transaction. A variable can also
     drift after preflight. global variables remain typed external dependencies;
     historical untyped global JSON fails closed and must be re-exported, while
-    old JSON with no global dependencies remains compatible.
+    old JSON with no discovered modeled global dependencies remains compatible.
   - --target-id must differ from the exported rule id. Omit it for same-ID
     replay. --target-name is applied to both a clone and an existing same-ID
     target by the staged cfg overwrite.
   - Exports containing opaque raw fallbacks for unknown future node types can
     be replayed with the same id, but cannot be cloned with --target-id: xgg
-    cannot safely discover and rewrite rule-local references inside an
-    unmodeled payload.
+    cannot safely discover or rewrite local or global references inside an
+    unmodeled payload. Generated variable preflight is therefore not proof of
+    opaque payload dependencies; review and prove them separately before enable.
   - Pre-canonical-ID JSON exports are upgraded only for modeled typed replay:
     render adds the explicit legacy-id intent, and ambiguous colon-bearing
     edge ids use split node-id/pin flags. Raw and unknown commands are never

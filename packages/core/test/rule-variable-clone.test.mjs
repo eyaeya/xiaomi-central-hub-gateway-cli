@@ -829,6 +829,11 @@ if (process.env.XGG_FAIL_SECOND === '1' && args[0] === 'variable' && args[1] ===
     ],
     warnings: [],
   };
+  assert.match(
+    renderExportedAsShell(source),
+    /Preflight every declared\/discoverable global dependency read-only/,
+  );
+  assert.match(renderExportedAsShell(source), /Opaque payload dependencies are not discovered/);
 
   const failedCapture = join(root, 'failed.jsonl');
   const failed = spawnSync('bash', ['-c', renderExportedAsShell(source)], {

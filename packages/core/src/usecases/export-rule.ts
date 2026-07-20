@@ -2511,7 +2511,7 @@ export function renderExportedAsShell(
   if (externalDependencies.length > 0) {
     lines.push(
       ...renderShellComment(
-        'Preflight every global dependency read-only before local checks or any gateway write. A concurrent change after preflight can still stop a later command because the gateway has no replay-wide transaction.',
+        'Preflight every declared/discoverable global dependency read-only before local checks or any gateway write. Opaque payload dependencies are not discovered. A concurrent change after preflight can still stop a later command because the gateway has no replay-wide transaction.',
       ),
     );
     for (const dependency of externalDependencies) {
