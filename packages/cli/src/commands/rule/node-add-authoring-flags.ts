@@ -13,6 +13,7 @@ import type { AddNodeShortcut } from '@eyaeya/xgg-core';
 const AUTHORING_FLAG = {
   cfg: '--cfg',
   id: '--id',
+  allowLegacyId: '--allow-legacy-id',
   deviceDid: '--device-did',
   deviceSiid: '--device-siid',
   deviceProperty: '--device-property',
@@ -94,6 +95,7 @@ export function assertExclusivePreloadSpellings(input: {
 
 const executable = (...specific: AuthoringOption[]): readonly AuthoringOption[] => [
   'id',
+  'allowLegacyId',
   'pos',
   'simplified',
   ...specific,
@@ -190,7 +192,7 @@ const MODELED_SHORTCUT_ALLOWLIST = {
     shortcut: executable(...VARIABLE_TARGET, 'expr', 'defaultExprScope'),
   },
   nop: {
-    shortcut: ['id', 'pos', 'text', 'delta', 'background'],
+    shortcut: ['id', 'allowLegacyId', 'pos', 'text', 'delta', 'background'],
   },
 } satisfies Record<ModeledShortcutType, ModeAllowlist>;
 

@@ -1,3 +1,7 @@
+import {
+  editorNodeIdCompatibilityMessage,
+  isEditorCompatibleNodeId,
+} from '../schemas/node-identifier.js';
 import { NodeUnion } from '../schemas/nodes/index.js';
 import { isModeledNodeType, targetInputPinStatus } from './edge-integrity.js';
 import {
@@ -23,6 +27,66 @@ export interface LintGraphInput {
   strict?: boolean;
 }
 
+function editorNodeIdCompatibilityIssue(
+  node: Record<string, unknown>,
+  index: number,
+): LintIssue | null {
+  if (typeof node.type !== 'string' || typeof node.id !== 'string') return null;
+  if (isEditorCompatibleNodeId(node.id)) return null;
+  return {
+    severity: 'warn',
+    path: `nodes[${index}].id`,
+    message: editorNodeIdCompatibilityMessage(node.id),
+  };
+}
+
+/** Advisory only: never rewrites or rejects persisted legacy node ids. */
+export function editorNodeIdCompatibilityIssues(nodes: readonly unknown[]): LintIssue[] {
+  const issues: LintIssue[] = [];
+  const legacyIds = new Set<string>();
+  for (let index = 0; index < nodes.length; index += 1) {
+    const raw = nodes[index];
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const node = raw as Record<string, unknown>;
+    const compatibility = editorNodeIdCompatibilityIssue(node, index);
+    if (compatibility !== null) {
+      issues.push(compatibility);
+      legacyIds.add(node.id as string);
+    }
+  }
+
+  // Every graph edge is source-owned: the source identity is implicit in the
+  // node containing outputs, while the target identity is stored as
+  // "nodeId.pin". Report the exact stored reference whenever either endpoint
+  // uses a legacy id, so an eventual atomic migration has an auditable
+  // rewrite inventory instead of only a node-level warning.
+  for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
+    const raw = nodes[nodeIndex];
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const node = raw as Record<string, unknown>;
+    const outputs = node.outputs;
+    if (outputs === null || typeof outputs !== 'object' || Array.isArray(outputs)) continue;
+    const sourceId = typeof node.id === 'string' ? node.id : undefined;
+    for (const [pin, targets] of Object.entries(outputs)) {
+      if (!Array.isArray(targets)) continue;
+      for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+        const target = targets[targetIndex];
+        if (typeof target !== 'string') continue;
+        const affectedIds = [...legacyIds].filter(
+          (id) => id === sourceId || target.startsWith(`${id}.`),
+        );
+        if (affectedIds.length === 0) continue;
+        issues.push({
+          severity: 'warn',
+          path: `nodes[${nodeIndex}].outputs.${pin}[${targetIndex}]`,
+          message: `edge ${JSON.stringify(`${sourceId ?? '<unknown>'}.${pin} -> ${target}`)} is affected by non-editor-compatible node id(s): ${affectedIds.map((id) => JSON.stringify(id)).join(', ')}. The stored endpoint remains unchanged; migrate the whole graph atomically before renaming any id.`,
+        });
+      }
+    }
+  }
+  return issues;
+}
+
 /** Client-side linter: surfaces edge-format errors and semantic smells
  *  that the gateway accepts silently. */
 export function lintGraph(input: LintGraphInput): LintIssue[] {
@@ -36,6 +100,7 @@ export function lintGraph(input: LintGraphInput): LintIssue[] {
   const duplicateGroups = findDuplicateNodeIds(nodes);
   issues.push(...duplicateNodeIdIssues(duplicateGroups));
   const duplicateIds = new Set(duplicateGroups.map((group) => group.id));
+  issues.push(...editorNodeIdCompatibilityIssues(nodes));
 
   // Phase 1: parse each node, collect valid ids.
   const parsed: Array<{ node: Record<string, unknown>; idx: number }> = [];

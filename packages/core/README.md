@@ -57,6 +57,10 @@ await withMutationWorkflow(
 
 standalone raw `agentCall()` 调用 `/api/loadBackup` 时也执行同样的 terminal wait。若 raw restore 已处于显式 `withMutationWorkflow` 中，调用方仍必须在该 callback 返回前完成 `/api/getBackupProgress` 的 terminal 确认。
 
+## Typed 节点 ID
+
+`addNode({ shortcut })` 新建 typed 节点时，显式 `shortcut.id` 必须符合小米网页编辑器的 `[A-Za-z0-9]+`；省略则由 core 生成兼容 ID。校验发生在 workflow 租约、session 与任何 RPC 之前。只有 export/import 重放已存在的 modeled typed 节点时，才可同时传 `legacyNodeIdReplay: true` 和明确的非 canonical `shortcut.id`；该 intent 对 raw node、缺少 ID 或已兼容 ID 都会拒绝，不能用来放宽普通新建语法。持久化旧图和 opaque node 的读取 schema 仍保持宽松，不会静默改名。
+
 ## 规则校验的 I/O 契约
 
 `validateGraph({ graph })` 默认只执行本地、确定性的 schema/字段/表达式检查，不会隐式访问 daemon、网关或公网 MIoT spec 服务。需要设备 spec-aware 检查时，调用方必须显式注入 `getDeviceSpec`，并自行决定使用网络、缓存还是本地 fixture：

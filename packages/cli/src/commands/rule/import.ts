@@ -90,6 +90,10 @@ Notes:
     be replayed with the same id, but cannot be cloned with --target-id: xgg
     cannot safely discover and rewrite rule-local references inside an
     unmodeled payload.
+  - Pre-canonical-ID JSON exports are upgraded only for modeled typed replay:
+    render adds the explicit legacy-id intent, and ambiguous colon-bearing
+    edge ids use split node-id/pin flags. Raw and unknown commands are never
+    mislabeled as typed replay.
   - All five modeled device-backed node families (deviceInput, deviceGet,
     deviceOutput, deviceInputSetVar, deviceGetSetVar) require their referenced
     DIDs and specs on the target gateway; otherwise replay fails at the

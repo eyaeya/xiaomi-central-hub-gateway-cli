@@ -725,7 +725,7 @@ test('integer action inputs reject unsafe numbers and lossy decimal strings', as
       addCounterAction(
         createGateway(),
         { 'signed-counter': value, 'unsigned-counter': 0 },
-        `unsafe-${index}`,
+        `unsafe${index}`,
       ),
       (error) =>
         error?.code === 'CONFIG' &&

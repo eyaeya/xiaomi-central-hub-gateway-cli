@@ -242,7 +242,12 @@ function shortcutFromExport(command) {
   if (command.flags.some((flag) => flag.name === '--force-out-of-range')) {
     shortcut.forceOutOfRange = true;
   }
-  return shortcut;
+  return {
+    shortcut,
+    ...(command.flags.some((flag) => flag.name === '--allow-legacy-id') && {
+      legacyNodeIdReplay: true,
+    }),
+  };
 }
 
 function shortcutFromArgv(argv) {
@@ -289,11 +294,15 @@ appendFileSync(process.env.XGG_CAPTURE, JSON.stringify(process.argv.slice(2)) + 
     .map(shortcutFromArgv);
 }
 
-async function addShortcut(gateway, shortcut) {
+async function addShortcut(gateway, shortcutOrReplayInput) {
+  const replayInput =
+    shortcutOrReplayInput.shortcut === undefined
+      ? { shortcut: shortcutOrReplayInput }
+      : shortcutOrReplayInput;
   return addNode(
     {
       ruleId: gateway.state.summary.id,
-      shortcut,
+      ...replayInput,
       getDeviceSpec: gateway.deps.getDeviceSpec,
       varCheck: false,
     },
@@ -336,7 +345,7 @@ test('between accepts explicit zero bounds while non-between comparisons keep th
   for (const shortcut of [
     {
       type: 'deviceInput',
-      id: 'device-input-between-zero',
+      id: 'deviceInputBetweenZero',
       deviceDid: did,
       deviceProperty: 'count',
       op: 'between',
@@ -345,7 +354,7 @@ test('between accepts explicit zero bounds while non-between comparisons keep th
     },
     {
       type: 'deviceGet',
-      id: 'device-get-between-zero',
+      id: 'deviceGetBetweenZero',
       deviceDid: did,
       deviceProperty: 'count',
       op: 'between',
@@ -354,7 +363,7 @@ test('between accepts explicit zero bounds while non-between comparisons keep th
     },
     {
       type: 'varChange',
-      id: 'var-change-between-zero',
+      id: 'varChangeBetweenZero',
       varScope: 'global',
       varId: 'count',
       varType: 'number',
@@ -364,7 +373,7 @@ test('between accepts explicit zero bounds while non-between comparisons keep th
     },
     {
       type: 'varGet',
-      id: 'var-get-between-zero',
+      id: 'varGetBetweenZero',
       varScope: 'global',
       varId: 'count',
       varType: 'number',
@@ -384,21 +393,21 @@ test('between accepts explicit zero bounds while non-between comparisons keep th
   for (const shortcut of [
     {
       type: 'deviceInput',
-      id: 'device-input-default-zero',
+      id: 'deviceInputDefaultZero',
       deviceDid: did,
       deviceProperty: 'count',
       op: 'gt',
     },
     {
       type: 'deviceGet',
-      id: 'device-get-default-zero',
+      id: 'deviceGetDefaultZero',
       deviceDid: did,
       deviceProperty: 'count',
       op: 'gt',
     },
     {
       type: 'varChange',
-      id: 'var-change-default-zero',
+      id: 'varChangeDefaultZero',
       varScope: 'global',
       varId: 'count',
       varType: 'number',
@@ -406,7 +415,7 @@ test('between accepts explicit zero bounds while non-between comparisons keep th
     },
     {
       type: 'varGet',
-      id: 'var-get-default-zero',
+      id: 'varGetDefaultZero',
       varScope: 'global',
       varId: 'count',
       varType: 'number',
@@ -490,7 +499,7 @@ test('string property shortcut creates, validates, exports, and replays without 
   const source = createStatefulGateway();
   await addShortcut(source, {
     type: 'deviceInput',
-    id: 'string-input',
+    id: 'stringInput',
     deviceDid: did,
     deviceProperty: 'mode',
     op: 'eq',
@@ -498,7 +507,7 @@ test('string property shortcut creates, validates, exports, and replays without 
   });
   await addShortcut(source, {
     type: 'deviceGet',
-    id: 'string-get',
+    id: 'stringGet',
     deviceDid: did,
     deviceProperty: 'mode',
     op: 'eq',
@@ -506,7 +515,7 @@ test('string property shortcut creates, validates, exports, and replays without 
   });
 
   const props = comparisonProps(source.state.nodes);
-  assert.deepEqual(props['string-input'], {
+  assert.deepEqual(props.stringInput, {
     did,
     siid: 2,
     piid: 1,
@@ -515,7 +524,7 @@ test('string property shortcut creates, validates, exports, and replays without 
     v1: '00123',
     preload: false,
   });
-  assert.deepEqual(props['string-get'], {
+  assert.deepEqual(props.stringGet, {
     did,
     siid: 2,
     piid: 1,
@@ -638,21 +647,21 @@ test('exclusive deviceInput property and event modes keep their complete compari
   const gateway = createStatefulGateway();
   await addShortcut(gateway, {
     type: 'deviceInput',
-    id: 'property-mode',
+    id: 'propertyMode',
     deviceDid: did,
     deviceProperty: 'count',
     propertyInclude: [2, 4],
   });
   await addShortcut(gateway, {
     type: 'deviceInput',
-    id: 'event-mode',
+    id: 'eventMode',
     deviceDid: did,
     deviceEvent: 'enum-event',
     deviceEventIncludes: ['2=1,2'],
   });
 
   const props = comparisonProps(gateway.state.nodes);
-  assert.deepEqual(props['property-mode'], {
+  assert.deepEqual(props.propertyMode, {
     did,
     siid: 2,
     piid: 5,
@@ -661,13 +670,13 @@ test('exclusive deviceInput property and event modes keep their complete compari
     v1: [2, 4],
     preload: false,
   });
-  assert.deepEqual(props['event-mode'], {
+  assert.deepEqual(props.eventMode, {
     did,
     siid: 2,
     eiid: 10,
     arguments: [{ piid: 2, dtype: 'int', operator: 'include', v1: [1, 2] }],
   });
-  const eventNode = gateway.state.nodes.find((node) => node.id === 'event-mode');
+  const eventNode = gateway.state.nodes.find((node) => node.id === 'eventMode');
   assert.equal(eventNode.cfg.name, 'deviceInput');
   assert.equal(eventNode.cfg.version, 1);
 });
@@ -676,7 +685,7 @@ test('continuous float property shortcut keeps its numeric comparison contract',
   const gateway = createStatefulGateway();
   await addShortcut(gateway, {
     type: 'deviceGet',
-    id: 'continuous-property',
+    id: 'continuousProperty',
     deviceDid: did,
     deviceProperty: 'temperature',
     op: 'between',
@@ -715,7 +724,7 @@ test('complete property/event operands survive strict JSON and rendered-shell re
   const shortcuts = [
     {
       type: 'deviceInput',
-      id: 'property-enum-include',
+      id: 'propertyEnumInclude',
       deviceDid: did,
       deviceProperty: 'enum-level',
       propertyInclude: [1, 2],
@@ -723,7 +732,7 @@ test('complete property/event operands survive strict JSON and rendered-shell re
     },
     {
       type: 'deviceInput',
-      id: 'property-enum-include-no-preload',
+      id: 'propertyEnumIncludeNoPreload',
       deviceDid: did,
       deviceProperty: 'enum-level',
       propertyInclude: [2, 1],
@@ -731,28 +740,28 @@ test('complete property/event operands survive strict JSON and rendered-shell re
     },
     {
       type: 'deviceGet',
-      id: 'property-int-include',
+      id: 'propertyIntInclude',
       deviceDid: did,
       deviceProperty: 'count',
       propertyInclude: [2, 4, 6],
     },
     {
       type: 'deviceInput',
-      id: 'event-enum-include',
+      id: 'eventEnumInclude',
       deviceDid: did,
       deviceEvent: 'enum-event',
       deviceEventIncludes: ['2=1,2'],
     },
     {
       type: 'deviceInput',
-      id: 'event-int-between',
+      id: 'eventIntBetween',
       deviceDid: did,
       deviceEvent: 'mixed-event',
       deviceEventBetweens: ['5=2,6'],
     },
     {
       type: 'deviceInput',
-      id: 'event-float-between',
+      id: 'eventFloatBetween',
       deviceDid: did,
       deviceEvent: 'continuous-event',
       deviceEventBetweens: ['3=1.5,2.5'],
@@ -761,7 +770,7 @@ test('complete property/event operands survive strict JSON and rendered-shell re
   for (const shortcut of shortcuts) await addShortcut(source, shortcut);
 
   assert.deepEqual(comparisonProps(source.state.nodes), {
-    'property-enum-include': {
+    propertyEnumInclude: {
       did,
       siid: 2,
       piid: 2,
@@ -770,7 +779,7 @@ test('complete property/event operands survive strict JSON and rendered-shell re
       v1: [1, 2],
       preload: true,
     },
-    'property-enum-include-no-preload': {
+    propertyEnumIncludeNoPreload: {
       did,
       siid: 2,
       piid: 2,
@@ -779,7 +788,7 @@ test('complete property/event operands survive strict JSON and rendered-shell re
       v1: [2, 1],
       preload: false,
     },
-    'property-int-include': {
+    propertyIntInclude: {
       did,
       siid: 2,
       piid: 5,
@@ -787,19 +796,19 @@ test('complete property/event operands survive strict JSON and rendered-shell re
       operator: 'include',
       v1: [2, 4, 6],
     },
-    'event-enum-include': {
+    eventEnumInclude: {
       did,
       siid: 2,
       eiid: 10,
       arguments: [{ piid: 2, dtype: 'int', operator: 'include', v1: [1, 2] }],
     },
-    'event-int-between': {
+    eventIntBetween: {
       did,
       siid: 2,
       eiid: 12,
       arguments: [{ piid: 5, dtype: 'int', operator: 'between', v1: 2, v2: 6 }],
     },
-    'event-float-between': {
+    eventFloatBetween: {
       did,
       siid: 2,
       eiid: 11,
@@ -868,21 +877,21 @@ test('event filter export requires membership in the exact selected event argume
   for (const shortcut of [
     {
       type: 'deviceInput',
-      id: 'valid-scalar',
+      id: 'validScalar',
       deviceDid: did,
       deviceEvent: 'mixed-event',
       deviceEventArgs: ['5>=2'],
     },
     {
       type: 'deviceInput',
-      id: 'valid-include',
+      id: 'validInclude',
       deviceDid: did,
       deviceEvent: 'enum-event',
       deviceEventIncludes: ['2=1,2'],
     },
     {
       type: 'deviceInput',
-      id: 'valid-between',
+      id: 'validBetween',
       deviceDid: did,
       deviceEvent: 'continuous-event',
       deviceEventBetweens: ['3=1.5,2.5'],
@@ -929,21 +938,21 @@ test('int operands preserve MAX_SAFE_INTEGER and reject every unsafe numeric pat
   const source = createStatefulGateway();
   await addShortcut(source, {
     type: 'deviceGet',
-    id: 'safe-property-include',
+    id: 'safePropertyInclude',
     deviceDid: did,
     deviceProperty: 'large-count',
     propertyInclude: [max],
   });
   await addShortcut(source, {
     type: 'deviceInput',
-    id: 'safe-event-include',
+    id: 'safeEventInclude',
     deviceDid: did,
     deviceEvent: 'large-event',
     deviceEventIncludes: [`6=${max}`],
   });
   await addShortcut(source, {
     type: 'deviceInput',
-    id: 'safe-event-between',
+    id: 'safeEventBetween',
     deviceDid: did,
     deviceEvent: 'large-event',
     deviceEventBetweens: [`6=${max - 1},${max}`],
@@ -1028,7 +1037,7 @@ test('integer shortcuts reject decimal tokens that only become integers after IE
   const exact = createStatefulGateway();
   await addShortcut(exact, {
     type: 'deviceGet',
-    id: 'exact-scientific-int',
+    id: 'exactScientificInt',
     deviceDid: did,
     deviceProperty: 'large-count',
     op: 'gt',
@@ -1089,7 +1098,7 @@ test('--force-out-of-range survives injected spec validation and strict replay w
   const source = createStatefulGateway();
   await addShortcut(source, {
     type: 'deviceGet',
-    id: 'forced-range',
+    id: 'forcedRange',
     deviceDid: did,
     deviceProperty: 'count',
     op: 'gt',
@@ -1111,7 +1120,7 @@ test('--force-out-of-range survives injected spec validation and strict replay w
     await validateGraph({
       graph: { id: 'rule-1', nodes: source.state.nodes },
       getDeviceSpec: source.deps.getDeviceSpec,
-      forceOutOfRangeNodeIds: new Set(['forced-range']),
+      forceOutOfRangeNodeIds: new Set(['forcedRange']),
     }),
     [],
   );
@@ -1171,28 +1180,28 @@ test('raw validation rejects empty includes, unsafe/non-finite operands, reverse
   const source = createStatefulGateway();
   await addShortcut(source, {
     type: 'deviceGet',
-    id: 'property-include',
+    id: 'propertyInclude',
     deviceDid: did,
     deviceProperty: 'count',
     propertyInclude: [2],
   });
   await addShortcut(source, {
     type: 'deviceInput',
-    id: 'event-int',
+    id: 'eventInt',
     deviceDid: did,
     deviceEvent: 'large-event',
     deviceEventArgs: ['6>1'],
   });
   await addShortcut(source, {
     type: 'deviceInput',
-    id: 'event-int-between',
+    id: 'eventIntBetween',
     deviceDid: did,
     deviceEvent: 'large-event',
     deviceEventBetweens: ['6=1,2'],
   });
   await addShortcut(source, {
     type: 'deviceInput',
-    id: 'event-float-between',
+    id: 'eventFloatBetween',
     deviceDid: did,
     deviceEvent: 'continuous-event',
     deviceEventBetweens: ['3=1,2'],
@@ -1354,14 +1363,14 @@ test('complete operands reject dtype, value-list, range, step, order, and duplic
   const rawGraph = createStatefulGateway();
   await addShortcut(rawGraph, {
     type: 'deviceInput',
-    id: 'raw-property-domain',
+    id: 'rawPropertyDomain',
     deviceDid: did,
     deviceProperty: 'enum-level',
     propertyInclude: [1, 2],
   });
   await addShortcut(rawGraph, {
     type: 'deviceInput',
-    id: 'raw-event-domain',
+    id: 'rawEventDomain',
     deviceDid: did,
     deviceEvent: 'continuous-event',
     deviceEventBetweens: ['3=1.5,2.5'],
@@ -1390,7 +1399,7 @@ test('strict round-trip rejects every remaining comparison semantic-loss warning
   const source = createStatefulGateway();
   await addShortcut(source, {
     type: 'deviceInput',
-    id: 'future-filter',
+    id: 'futureFilter',
     deviceDid: did,
     deviceEvent: 'enum-event',
     deviceEventArgs: ['2=1'],
@@ -1405,13 +1414,13 @@ test('strict round-trip rejects every remaining comparison semantic-loss warning
   );
   await assert.rejects(
     exportRuleFromView(view, source.deps, undefined, true),
-    /strict round-trip cannot preserve node future-filter/,
+    /strict round-trip cannot preserve node futureFilter/,
   );
 
   const scalarProperty = createStatefulGateway();
   await addShortcut(scalarProperty, {
     type: 'deviceGet',
-    id: 'scalar-int-equality',
+    id: 'scalarIntEquality',
     deviceDid: did,
     deviceProperty: 'count',
     op: 'eq',
@@ -1432,14 +1441,14 @@ test('strict round-trip rejects every remaining comparison semantic-loss warning
   const malformed = createStatefulGateway();
   await addShortcut(malformed, {
     type: 'deviceInput',
-    id: 'duplicate-event-piid',
+    id: 'duplicateEventPiid',
     deviceDid: did,
     deviceEvent: 'mixed-event',
     deviceEventArgs: ['4=1'],
   });
   await addShortcut(malformed, {
     type: 'deviceGet',
-    id: 'invalid-bool-operator',
+    id: 'invalidBoolOperator',
     deviceDid: did,
     deviceProperty: 'on',
     op: 'eq',
@@ -1447,7 +1456,7 @@ test('strict round-trip rejects every remaining comparison semantic-loss warning
   });
   await addShortcut(malformed, {
     type: 'deviceGet',
-    id: 'invalid-float-operator',
+    id: 'invalidFloatOperator',
     deviceDid: did,
     deviceProperty: 'temperature',
     op: 'gt',
@@ -1485,14 +1494,14 @@ test('float value-list event args validate as int while continuous floats remain
   const gateway = createStatefulGateway();
   await addShortcut(gateway, {
     type: 'deviceInput',
-    id: 'enum-event',
+    id: 'enumEvent',
     deviceDid: did,
     deviceEvent: 'enum-event',
     deviceEventArgs: ['2=1'],
   });
   await addShortcut(gateway, {
     type: 'deviceInput',
-    id: 'continuous-event',
+    id: 'continuousEvent',
     deviceDid: did,
     deviceEvent: 'continuous-event',
     deviceEventArgs: ['3>1.5'],
@@ -1547,7 +1556,7 @@ test('event-filter parser preserves bool, string, and integer contracts and reje
   const gateway = createStatefulGateway();
   await addShortcut(gateway, {
     type: 'deviceInput',
-    id: 'mixed-event',
+    id: 'mixedEvent',
     deviceDid: did,
     deviceEvent: 'mixed-event',
     deviceEventArgs: ['1=open', '4=1', '5>=2'],

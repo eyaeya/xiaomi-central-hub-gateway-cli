@@ -29,6 +29,7 @@
 import {
   INDEPENDENT_EVENT_SOURCE_TYPES,
   INDEPENDENT_STATE_SOURCE_TYPES,
+  isEditorCompatibleNodeId,
   modeledNodePinNames,
 } from '@eyaeya/xgg-core';
 import { type Command, Option } from 'commander';
@@ -106,16 +107,47 @@ const readNodeType = (r: unknown, opts: unknown): string =>
       ? r.type
       : '';
 
+function hintShellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function splitEdgeHint(
+  ruleId: string,
+  from: { nodeId: string; pin: string },
+  to: { nodeId: string; pin: string },
+): string {
+  return `xgg rule edge add --rule-id ${ruleId} --from-node-id ${hintShellQuote(from.nodeId)} --from-pin ${hintShellQuote(from.pin)} --to-node-id ${hintShellQuote(to.nodeId)} --to-pin ${hintShellQuote(to.pin)}`;
+}
+
+function hintEdgeRef(value: string): { nodeId: string; pin: string } | undefined {
+  const separator = value.lastIndexOf(':');
+  if (separator <= 0 || separator === value.length - 1) return undefined;
+  return { nodeId: value.slice(0, separator), pin: value.slice(separator + 1) };
+}
+
 function incomingNodeEdgeHint(r: unknown, opts: unknown, source = '<upstream>:<pin>'): string {
   const type = readNodeType(r, opts);
   const inputPin = modeledNodePinNames(type, 'input')?.[0] ?? '<pin>';
-  return `xgg rule edge add --rule-id ${readRuleId(r)} --from ${source} --to ${readNodeId(r)}:${inputPin}`;
+  const nodeId = readNodeId(r);
+  const sourceRef = hintEdgeRef(source);
+  if (!isEditorCompatibleNodeId(nodeId) && sourceRef !== undefined) {
+    return splitEdgeHint(readRuleId(r), sourceRef, { nodeId, pin: inputPin });
+  }
+  return `xgg rule edge add --rule-id ${readRuleId(r)} --from ${source} --to ${nodeId}:${inputPin}`;
 }
 
 function outgoingNodeEdgeHint(r: unknown, opts: unknown): string {
   const type = readNodeType(r, opts);
   const outputPin = modeledNodePinNames(type, 'output')?.[0] ?? '<pin>';
-  return `xgg rule edge add --rule-id ${readRuleId(r)} --from ${readNodeId(r)}:${outputPin} --to <downstream>:<state-pin>`;
+  const nodeId = readNodeId(r);
+  if (!isEditorCompatibleNodeId(nodeId)) {
+    return splitEdgeHint(
+      readRuleId(r),
+      { nodeId, pin: outputPin },
+      { nodeId: '<downstream>', pin: '<state-pin>' },
+    );
+  }
+  return `xgg rule edge add --rule-id ${readRuleId(r)} --from ${nodeId}:${outputPin} --to <downstream>:<state-pin>`;
 }
 
 const hasCleanSummary = (r: unknown): boolean =>

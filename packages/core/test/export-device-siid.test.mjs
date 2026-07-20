@@ -128,6 +128,12 @@ function flagValues(command, name) {
   return command.flags.filter((flag) => flag.name === name).map((flag) => flag.value);
 }
 
+function legacyReplayIntentFromExport(command) {
+  return command.flags.some((flag) => flag.name === '--allow-legacy-id')
+    ? { legacyNodeIdReplay: true }
+    : {};
+}
+
 function shortcutFromExport(command) {
   const one = (name) => flagValues(command, name)[0];
   const shortcut = {
@@ -181,11 +187,12 @@ function shortcutFromExport(command) {
   return shortcut;
 }
 
-async function addShortcut(gateway, shortcut) {
+async function addShortcut(gateway, shortcut, replayIntent = {}) {
   await addNode(
     {
       ruleId,
       shortcut,
+      ...replayIntent,
       getDeviceSpec: gateway.deps.getDeviceSpec,
       validate: false,
       varCheck: false,
@@ -202,21 +209,21 @@ function positioned(index, shortcut) {
 }
 
 const affectedIds = [
-  'input-event',
-  'output-action',
-  'output-property',
-  'input-set-var-event',
-  'input-set-var-property',
-  'get-set-var-property',
+  'inputEvent',
+  'outputAction',
+  'outputProperty',
+  'inputSetVarEvent',
+  'inputSetVarProperty',
+  'getSetVarProperty',
 ];
-const controlIds = ['input-property-control', 'get-property-control'];
+const controlIds = ['inputPropertyControl', 'getPropertyControl'];
 
 test('all device shortcut branches export one SIID and replay duplicate MIoT names exactly', async () => {
   const source = createGateway();
   const shortcuts = [
     positioned(0, {
       type: 'deviceInput',
-      id: 'input-event',
+      id: 'inputEvent',
       deviceDid: did,
       deviceSiid: 2,
       deviceEvent: 'shared-event',
@@ -224,7 +231,7 @@ test('all device shortcut branches export one SIID and replay duplicate MIoT nam
     }),
     positioned(1, {
       type: 'deviceOutput',
-      id: 'output-action',
+      id: 'outputAction',
       deviceDid: did,
       deviceSiid: 2,
       deviceAction: 'apply-shared',
@@ -232,7 +239,7 @@ test('all device shortcut branches export one SIID and replay duplicate MIoT nam
     }),
     positioned(2, {
       type: 'deviceOutput',
-      id: 'output-property',
+      id: 'outputProperty',
       deviceDid: did,
       deviceSiid: 2,
       deviceProperty: 'shared-value',
@@ -240,7 +247,7 @@ test('all device shortcut branches export one SIID and replay duplicate MIoT nam
     }),
     positioned(3, {
       type: 'deviceInputSetVar',
-      id: 'input-set-var-event',
+      id: 'inputSetVarEvent',
       deviceDid: did,
       deviceSiid: 2,
       deviceEvent: 'shared-event',
@@ -248,7 +255,7 @@ test('all device shortcut branches export one SIID and replay duplicate MIoT nam
     }),
     positioned(4, {
       type: 'deviceInputSetVar',
-      id: 'input-set-var-property',
+      id: 'inputSetVarProperty',
       deviceDid: did,
       deviceSiid: 2,
       deviceProperty: 'shared-value',
@@ -257,7 +264,7 @@ test('all device shortcut branches export one SIID and replay duplicate MIoT nam
     }),
     positioned(5, {
       type: 'deviceGetSetVar',
-      id: 'get-set-var-property',
+      id: 'getSetVarProperty',
       deviceDid: did,
       deviceSiid: 2,
       deviceProperty: 'shared-value',
@@ -266,7 +273,7 @@ test('all device shortcut branches export one SIID and replay duplicate MIoT nam
     }),
     positioned(6, {
       type: 'deviceInput',
-      id: 'input-property-control',
+      id: 'inputPropertyControl',
       deviceDid: did,
       deviceSiid: 2,
       deviceProperty: 'shared-value',
@@ -275,7 +282,7 @@ test('all device shortcut branches export one SIID and replay duplicate MIoT nam
     }),
     positioned(7, {
       type: 'deviceGet',
-      id: 'get-property-control',
+      id: 'getPropertyControl',
       deviceDid: did,
       deviceSiid: 2,
       deviceProperty: 'shared-value',
@@ -300,33 +307,33 @@ test('all device shortcut branches export one SIID and replay duplicate MIoT nam
 
   const replay = createGateway();
   for (const command of commands) {
-    await addShortcut(replay, shortcutFromExport(command));
+    await addShortcut(replay, shortcutFromExport(command), legacyReplayIntentFromExport(command));
   }
   assert.deepEqual(replay.state.nodes, source.state.nodes);
 
   const props = Object.fromEntries(replay.state.nodes.map((node) => [node.id, node.props]));
   for (const id of [...affectedIds, ...controlIds]) assert.equal(props[id].siid, 2, id);
-  assert.equal(props['input-event'].eiid, 20);
-  assert.deepEqual(props['input-event'].arguments, [
+  assert.equal(props.inputEvent.eiid, 20);
+  assert.deepEqual(props.inputEvent.arguments, [
     { piid: 1, dtype: 'int', operator: '>=', v1: 7 },
     { piid: 2, dtype: 'string', operator: '=', v1: 'ready' },
   ]);
-  assert.equal(props['output-action'].aiid, 10);
-  assert.deepEqual(props['output-action'].ins, [
+  assert.equal(props.outputAction.aiid, 10);
+  assert.deepEqual(props.outputAction.ins, [
     { piid: 1, value: 9 },
     { piid: 2, value: 'payload' },
   ]);
-  assert.equal(props['output-property'].piid, 1);
-  assert.equal(props['input-set-var-event'].eiid, 20);
-  assert.deepEqual(props['input-set-var-event'].arguments, [
+  assert.equal(props.outputProperty.piid, 1);
+  assert.equal(props.inputSetVarEvent.eiid, 20);
+  assert.deepEqual(props.inputSetVarEvent.arguments, [
     { piid: 1, dtype: 'number', scope: 'global', id: 'eventNumber' },
     { piid: 2, dtype: 'string', scope: 'global', id: 'eventText' },
   ]);
   for (const id of [
-    'input-set-var-property',
-    'get-set-var-property',
-    'input-property-control',
-    'get-property-control',
+    'inputSetVarProperty',
+    'getSetVarProperty',
+    'inputPropertyControl',
+    'getPropertyControl',
   ]) {
     assert.equal(props[id].piid, 1, id);
   }
@@ -367,7 +374,7 @@ test('legacy version-0 event input stays readable and exports without mutation t
   const command = exported.commands.find((candidate) => candidate.kind === 'node-add');
   assert.ok(command);
   const replay = createGateway();
-  await addShortcut(replay, shortcutFromExport(command));
+  await addShortcut(replay, shortcutFromExport(command), legacyReplayIntentFromExport(command));
   assert.equal(replay.state.nodes[0].cfg.name, 'deviceInput');
   assert.equal(replay.state.nodes[0].cfg.version, 1);
 });

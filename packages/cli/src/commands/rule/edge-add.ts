@@ -16,12 +16,10 @@ import {
   runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
-import { parseEdgeRef } from './_helpers.js';
+import { type EdgeEndpointOpts, parseEdgeEndpoints } from './_helpers.js';
 
-interface EdgeAddOpts extends RuleOpts {
+interface EdgeAddOpts extends RuleOpts, EdgeEndpointOpts {
   ruleId: string;
-  from: string;
-  to: string;
   snapshot?: boolean;
   snapshotsDir?: string;
   refreshHint?: boolean;
@@ -37,8 +35,12 @@ export function attachEdgeAdd(cmd: Command): void {
     .command('add')
     .description('Add an edge between two nodes in a rule graph')
     .requiredOption('--rule-id <id>', 'rule id')
-    .requiredOption('--from <NID:pin>', 'source endpoint as nodeId:pin')
-    .requiredOption('--to <NID:pin>', 'target endpoint as nodeId:pin')
+    .option('--from <NID:pin>', 'source endpoint as nodeId:pin (canonical ids)')
+    .option('--to <NID:pin>', 'target endpoint as nodeId:pin (canonical ids)')
+    .option('--from-node-id <id>', 'lossless source node id (requires all split endpoint flags)')
+    .option('--from-pin <pin>', 'lossless source pin (requires all split endpoint flags)')
+    .option('--to-node-id <id>', 'lossless target node id (requires all split endpoint flags)')
+    .option('--to-pin <pin>', 'lossless target pin (requires all split endpoint flags)')
     .option('--no-snapshot', 'skip the pre-write dump snapshot')
     .option('--no-var-check', 'skip the F66f incremental var-existence sweep (raw probes only)')
     .option('--snapshots-dir <path>', 'directory for pre-write snapshots (env: XGG_SNAPSHOTS_DIR)')
@@ -49,15 +51,14 @@ export function attachEdgeAdd(cmd: Command): void {
   addNextHintFlag(addRefreshHintFlag(sub))
     .addHelpText(
       'after',
-      '\nExample:\n  $ xgg rule edge add --rule-id r1 --from n1:output --to n2:trigger --snapshots-dir ./snapshots/',
+      '\nExamples:\n  $ xgg rule edge add --rule-id r1 --from n1:output --to n2:trigger --snapshots-dir ./snapshots/\n  $ xgg rule edge add --rule-id r1 --from-node-id legacy:id --from-pin output --to-node-id n2 --to-pin trigger --snapshots-dir ./snapshots/',
     )
     .action(
       wrap('rule.edge.add', async (opts: EdgeAddOpts) => {
+        const { from, to } = parseEdgeEndpoints(opts);
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
-        const from = parseEdgeRef(opts.from, '--from');
-        const to = parseEdgeRef(opts.to, '--to');
 
         const { snapshotPath, result } = await runMutationWorkflow(
           'rule.edge.add',
@@ -93,7 +94,7 @@ export function attachEdgeAdd(cmd: Command): void {
         });
         printRefreshHint(opts, {
           baseUrl: deps.baseUrl,
-          context: `rule ${opts.ruleId} (edge-add ${opts.from}→${opts.to})`,
+          context: `rule ${opts.ruleId} (edge-add ${from.nodeId}:${from.pin}→${to.nodeId}:${to.pin})`,
         });
         printNextStepHintLine(hints, opts, {
           contextLabel: `rule ${opts.ruleId} (+edge)`,

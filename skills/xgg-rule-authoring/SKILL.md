@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-9ac9113ddca53ac01e74475dda41c15bcdf59eda2e3f310e715852cdd9ba5cc0 -->
+<!-- xgg-skill-content-build: sha256-1dfac51dfb1be54008739a3203e1729059065eb4796fe47ee9396e600e243483 -->
 
 # xgg 自动化编写 Skill
 
@@ -175,8 +175,8 @@ xgg rule lint --rule-id <rid> --strict                          # 边拓扑 + pi
 关键点：
 
 - `rule new` 只创建空规则 envelope；每张卡片用 `rule node add` 加。默认 rule id 是无连字符的数字串。
-- `rule node add --id <node-id>` 给节点稳定命名，后续连线更安全；不指定则随机。
-- 连线用 `<node-id>:<pin>`，例如 `n-click:output` → `n-light-on:trigger`。
+- 新建 typed 节点的显式 `--id` 只允许 ASCII 字母数字 `[A-Za-z0-9]+`；不指定时 CLI 生成同语法的碰撞安全 ID。不要给新节点使用 `-`、`_`、`.`、`:`、空白或 Unicode。
+- canonical ID 连线用 `<node-id>:<pin>`，例如 `nClick:output` → `nLightOn:trigger`。旧图中的非 canonical ID 保持可读，`rule validate` / `rule lint` 会列出节点及受影响 edge；export/import 会自动携带 typed replay 兼容 intent，并对含 `:` 的旧 ID 使用分离 endpoint flags，不能把该 intent 用于新建。
 - `rule layout` 只改可执行卡片的网页画布坐标、不改逻辑：触发器/源在左，每个节点严格排在其所有输入右侧，分支纵向堆叠，相互独立的子自动化各占一条横带。`nop` 备注的位置表达它所说明的画布区域，因此保持不动。网页 UI 自己不做自动布局，所以这步是让 CLI 创建的规则在网页里可读的关键。
 - 用户授权运行时才 `rule enable` 并在触发后读 `rule logs`；否则用 `rule view` 确认保持 `enable=false`。
 - `rule enable` 返回成功只代表启用完成，**不代表触发成功**；触发后必须看 `rule logs`。
@@ -338,10 +338,10 @@ $ xgg rule expr-check --pretty 'abs($x'                           # 括号不配
 xgg device spec <did> --pretty
 xgg variable create --scope global --id snap --type <number|string> --value <初值> --name snap
 xgg rule new --name "读取属性到变量"                    # 记下 rid
-xgg rule node add --rule-id <rid> --type onLoad --id n-load
-xgg rule node add --rule-id <rid> --type deviceGetSetVar --id n-read \
+xgg rule node add --rule-id <rid> --type onLoad --id nLoad
+xgg rule node add --rule-id <rid> --type deviceGetSetVar --id nRead \
   --device-did <did> --device-property <p> --var-scope global --var-id snap
-xgg rule edge add --rule-id <rid> --from n-load:output --to n-read:input
+xgg rule edge add --rule-id <rid> --from nLoad:output --to nRead:input
 xgg rule layout <rid>
 xgg rule validate --rule-id <rid>
 xgg rule lint --rule-id <rid> --strict
@@ -400,9 +400,9 @@ xgg rule device replace --rule-id <rid> --node-id <nid> \
 
    ```
    info  -        规则启用
-   info  n-load   link n-load.output → n-on.trigger = 事件
-   info  n-on     n-on [true]
-   info  n-on     n-on success
+   info  nLoad   link nLoad.output → nOn.trigger = 事件
+   info  nOn     nOn [true]
+   info  nOn     nOn success
    ```
 
    读法：`link <src>.<pin> → <dst>.<pin> = 事件` 是边触发，`<node> [value]` 是该节点执行的取值/分支，`<node> success` / `failed` 是动作结果。

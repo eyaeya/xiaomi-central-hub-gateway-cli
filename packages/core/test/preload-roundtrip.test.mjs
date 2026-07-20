@@ -121,11 +121,12 @@ function positioned(index, shortcut) {
   };
 }
 
-async function addShortcut(gateway, shortcut) {
+async function addShortcut(gateway, shortcut, replayIntent = {}) {
   await addNode(
     {
       ruleId,
       shortcut,
+      ...replayIntent,
       getDeviceSpec: gateway.deps.getDeviceSpec,
       validate: false,
       varCheck: false,
@@ -136,6 +137,10 @@ async function addShortcut(gateway, shortcut) {
 
 function flag(command, name) {
   return command.flags.find((candidate) => candidate.name === name);
+}
+
+function legacyReplayIntentFromExport(command) {
+  return flag(command, '--allow-legacy-id') !== undefined ? { legacyNodeIdReplay: true } : {};
 }
 
 function shortcutFromExport(command) {
@@ -168,7 +173,7 @@ const shortcuts = [
   ...[true, false, undefined].map((preload, index) =>
     positioned(index, {
       type: 'deviceInput',
-      id: `input-${String(preload)}`,
+      id: `input${index}`,
       deviceDid: did,
       deviceProperty: 'level',
       op: 'gt',
@@ -179,7 +184,7 @@ const shortcuts = [
   ...[true, false, undefined].map((preload, offset) =>
     positioned(offset + 3, {
       type: 'deviceInputSetVar',
-      id: `set-var-${String(preload)}`,
+      id: `setVar${offset}`,
       deviceDid: did,
       deviceProperty: 'level',
       varScope: 'global',
@@ -190,7 +195,7 @@ const shortcuts = [
   ...[true, false, undefined].map((preload, offset) =>
     positioned(offset + 6, {
       type: 'varChange',
-      id: `var-change-${String(preload)}`,
+      id: `varChange${offset}`,
       varScope: 'global',
       varId: `observed${offset}`,
       varType: 'number',
@@ -214,7 +219,7 @@ test('supported typed shortcuts default to false and schemas accept both preload
   }
 
   const inputEvent = {
-    id: 'input-event',
+    id: 'inputEvent',
     type: 'deviceInput',
     cfg: {
       urn,
@@ -227,7 +232,7 @@ test('supported typed shortcuts default to false and schemas accept both preload
     props: { did, siid: 2, eiid: 10, arguments: [], preload: true },
   };
   const setVarEvent = {
-    id: 'set-var-event',
+    id: 'setVarEvent',
     type: 'deviceInputSetVar',
     cfg: {
       urn,
@@ -280,7 +285,9 @@ test('export emits exact positive/negative preload flags and replay preserves ev
   assert.equal((shell.match(/'--no-preload'/g) ?? []).length, 6);
 
   const replay = createGateway();
-  for (const command of commands) await addShortcut(replay, shortcutFromExport(command));
+  for (const command of commands) {
+    await addShortcut(replay, shortcutFromExport(command), legacyReplayIntentFromExport(command));
+  }
   assert.deepEqual(replay.state.nodes, source.state.nodes);
 });
 
@@ -288,7 +295,7 @@ test('deviceGet without preload remains schema-valid and strict-round-trips', as
   const source = createGateway();
   await addShortcut(source, {
     type: 'deviceGet',
-    id: 'device-get',
+    id: 'deviceGet',
     deviceDid: did,
     deviceProperty: 'level',
     op: 'gt',
@@ -320,7 +327,7 @@ test('legacy deviceGet preload values fail schema, warn on permissive export, an
   const source = createGateway();
   await addShortcut(source, {
     type: 'deviceGet',
-    id: 'device-get',
+    id: 'deviceGet',
     deviceDid: did,
     deviceProperty: 'level',
     op: 'gt',

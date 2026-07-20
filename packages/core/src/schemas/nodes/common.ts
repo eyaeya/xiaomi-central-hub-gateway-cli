@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+// Deliberately read-compatible rather than editor-strict. Typed shortcut
+// authoring applies the ASCII-alphanumeric editor contract separately; this
+// schema must continue to parse existing/opaque graphs whose ids predate that
+// guard so `rule view`, raw replay, and export never rewrite identities.
 export const NodeId = z.string().min(1);
 export type NodeId = z.infer<typeof NodeId>;
 

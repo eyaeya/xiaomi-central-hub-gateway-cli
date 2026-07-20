@@ -64,6 +64,12 @@ test('export and import help cover all five modeled device families', () => {
     importHelp,
     /a clone keeps its expect-absent guard and prepares remapped local variables only after the disabled empty target exists/,
   );
+  assert.match(
+    importHelp,
+    /Pre-canonical-ID JSON exports are upgraded only for modeled typed replay/,
+  );
+  assert.match(importHelp, /ambiguous colon-bearing edge ids use split node-id\/pin flags/);
+  assert.match(importHelp, /Raw and unknown commands are never mislabeled/);
   assert.doesNotMatch(
     exportHelp,
     /Replay preflights the complete variable plan, then creates the empty target/,
@@ -85,6 +91,24 @@ test('node-add help directs every modeled type to shortcuts and bounds raw fallb
   assert.match(nodeAdd, /deviceInput\/deviceGet\/varChange\/varGet/);
   assert.match(nodeAdd, /varChange\/varGet\/varSetNumber\/varSetString\/device\*SetVar/);
   assert.match(nodeAdd, /varChange\/varGet variable type/);
+  assert.match(nodeAdd, /ASCII alphanumeric \[A-Za-z0-9\]\+/);
+  assert.match(nodeAdd, /auto-generated editor-compatible id/);
+  assert.match(nodeAdd, /Raw --cfg replay preserves legacy\/opaque ids verbatim/);
+  assert.match(nodeAdd, /--allow-legacy-id/);
+  assert.match(nodeAdd, /export-replay compatibility only/);
+});
+
+test('edge help exposes lossless split endpoints for legacy ids', () => {
+  for (const command of ['add', 'remove']) {
+    const edge = help(['rule', 'edge', command]);
+    assert.match(edge, /--from <NID:pin>/);
+    assert.match(edge, /--to <NID:pin>/);
+    assert.match(edge, /--from-node-id <id>/);
+    assert.match(edge, /--from-pin <pin>/);
+    assert.match(edge, /--to-node-id <id>/);
+    assert.match(edge, /--to-pin <pin>/);
+    assert.match(edge, /legacy:id/);
+  }
 });
 
 test('device replacement help makes ghost targets diagnostic-only and rechecks eligibility', () => {
@@ -92,10 +116,14 @@ test('device replacement help makes ghost targets diagnostic-only and rechecks e
   assert.match(discovery, /Default discovery excludes ghost devices/);
   assert.match(discovery, /eligible=false with no planId/);
   assert.match(discovery, /diagnostic-only/);
+  assert.match(discovery, /--node-id lightOn/);
+  assert.doesNotMatch(discovery, /--node-id light-on/);
 
   const replace = help(['rule', 'device', 'replace']);
   assert.match(replace, /fresh device inventory rejects a target that is or became a ghost/);
   assert.match(replace, /before setGraph/);
+  assert.match(replace, /--node-id lightOn/);
+  assert.doesNotMatch(replace, /--node-id light-on/);
 });
 
 test('rule trace help separates source block scanning from frame truncation', () => {

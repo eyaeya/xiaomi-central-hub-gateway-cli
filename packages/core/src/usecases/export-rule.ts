@@ -17,6 +17,7 @@ import {
   miotNumericOperandDomainIssue,
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
+import { isEditorCompatibleNodeId } from '../schemas/node-identifier.js';
 import { durationToMilliseconds, isDurationUnit } from '../schemas/nodes/duration.js';
 import { NopNode } from '../schemas/nodes/nop.js';
 import { nodeSchemaForType } from '../schemas/nodes/registry.js';
@@ -59,7 +60,16 @@ export type ExportedCommand =
       /** The command carries an opaque full-node --cfg fallback for an unmodeled type. */
       opaqueRaw?: boolean;
     }
-  | { kind: 'edge-add'; from: string; to: string }
+  | {
+      kind: 'edge-add';
+      /** Compact compatibility representation for existing API consumers. */
+      from: string;
+      /** Compact compatibility representation for existing API consumers. */
+      to: string;
+      /** Lossless structured endpoints used by shell replay. */
+      fromRef?: { nodeId: string; pin: string };
+      toRef?: { nodeId: string; pin: string };
+    }
   | { kind: 'rule-enable' }
   | { kind: 'warning'; message: string };
 
@@ -207,11 +217,21 @@ export async function exportRuleFromView(
       }
     }
     const result = await renderNode(node, deps, specCache, nodeWarnings);
+    const rawNodeId = typeof rawNode.id === 'string' ? rawNode.id : undefined;
+    const legacyTypedId =
+      result?.kind === 'node-add' &&
+      result.opaqueRaw !== true &&
+      rawNodeId !== undefined &&
+      modeledSchema !== undefined &&
+      !isEditorCompatibleNodeId(rawNodeId);
+    if (legacyTypedId && rawNodeId !== undefined && result?.kind === 'node-add') {
+      result.flags.push({ name: '--allow-legacy-id' });
+    }
     if (result) commands.push(result);
     // An opaque-raw command is deliberately lossless for same-id replay: its
     // warning is informational (the target gateway must understand the future
-    // card), not evidence that this exporter dropped semantics. All modeled
-    // node warnings still describe omitted or mutated typed data.
+    // card), not evidence that this exporter dropped semantics. A modeled
+    // legacy-id card remains typed and receives its explicit replay opt-in.
     const semanticWarnings =
       result?.kind === 'node-add' && result.opaqueRaw === true
         ? []
@@ -237,6 +257,8 @@ export async function exportRuleFromView(
       isRecord(n.cfg) &&
       typeof n.id === 'string' &&
       typeof n.type === 'string' &&
+      result?.kind === 'node-add' &&
+      result.opaqueRaw !== true &&
       nodeSchemaForType(n.type) !== undefined
     ) {
       const dropped = unknownCfgKeys(n.cfg, n.type);
@@ -263,8 +285,16 @@ export async function exportRuleFromView(
       if (!Array.isArray(targets)) continue;
       for (const target of targets) {
         if (typeof target !== 'string') continue;
-        const colonTarget = target.replace('.', ':');
-        commands.push({ kind: 'edge-add', from: `${srcId}:${pin}`, to: colonTarget });
+        const separator = target.lastIndexOf('.');
+        if (separator <= 0 || separator === target.length - 1) continue;
+        const toRef = { nodeId: target.slice(0, separator), pin: target.slice(separator + 1) };
+        commands.push({
+          kind: 'edge-add',
+          from: `${srcId}:${pin}`,
+          to: `${toRef.nodeId}:${toRef.pin}`,
+          fromRef: { nodeId: srcId, pin },
+          toRef,
+        });
       }
     }
   }
@@ -2293,18 +2323,33 @@ export function renderExportedAsShell(
       }
       case 'node-add': {
         lines.push(...renderShellComment(cmd.comment));
-        const flagsStr = renderFlagsForShell(cmd.flags);
+        const flagsStr = renderFlagsForShell(nodeAddReplayFlags(cmd));
         lines.push(
           `"$XGG" rule node add --rule-id ${ruleId} ${flagsStr} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
         );
         lines.push('');
         break;
       }
-      case 'edge-add':
+      case 'edge-add': {
+        const inferredFrom = inferLegacyStructuredEdgeRef(cmd.from);
+        const inferredTo = inferLegacyStructuredEdgeRef(cmd.to);
+        const structured =
+          cmd.fromRef !== undefined && cmd.toRef !== undefined
+            ? { from: cmd.fromRef, to: cmd.toRef }
+            : inferredFrom !== undefined &&
+                inferredTo !== undefined &&
+                (hasAmbiguousCompactEdgeRef(cmd.from) || hasAmbiguousCompactEdgeRef(cmd.to))
+              ? { from: inferredFrom, to: inferredTo }
+              : undefined;
+        const endpointFlags =
+          structured !== undefined
+            ? `--from-node-id ${shellQuote(structured.from.nodeId)} --from-pin ${shellQuote(structured.from.pin)} --to-node-id ${shellQuote(structured.to.nodeId)} --to-pin ${shellQuote(structured.to.pin)}`
+            : `--from ${shellQuote(cmd.from)} --to ${shellQuote(cmd.to)}`;
         lines.push(
-          `"$XGG" rule edge add --rule-id ${ruleId} --from ${shellQuote(cmd.from)} --to ${shellQuote(cmd.to)} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
+          `"$XGG" rule edge add --rule-id ${ruleId} ${endpointFlags} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
         );
         break;
+      }
       case 'rule-enable':
         lines.push('');
         lines.push(
@@ -2318,6 +2363,38 @@ export function renderExportedAsShell(
   }
 
   return `${lines.join('\n')}\n`;
+}
+
+function hasAmbiguousCompactEdgeRef(value: string): boolean {
+  return value.indexOf(':') !== value.lastIndexOf(':');
+}
+
+/** Recover the old exporter `${nodeId}:${pin}` shape from its final separator. */
+function inferLegacyStructuredEdgeRef(value: string): { nodeId: string; pin: string } | undefined {
+  const separator = value.lastIndexOf(':');
+  if (separator <= 0 || separator === value.length - 1) return undefined;
+  return { nodeId: value.slice(0, separator), pin: value.slice(separator + 1) };
+}
+
+/**
+ * Upgrade pre-#167 JSON exports at render time. Older xgg releases generated
+ * hyphenated typed ids and therefore did not know to emit the explicit replay
+ * intent required by the canonical-id guard. Raw/opaque commands are excluded:
+ * their full tuple follows the compatibility path and the CLI intentionally
+ * rejects --allow-legacy-id there.
+ */
+function nodeAddReplayFlags(command: Extract<ExportedCommand, { kind: 'node-add' }>): ExportFlag[] {
+  if (
+    command.opaqueRaw === true ||
+    nodeSchemaForType(command.type) === undefined ||
+    command.flags.some((flag) => flag.name === '--cfg') ||
+    command.flags.some((flag) => flag.name === '--allow-legacy-id')
+  ) {
+    return command.flags;
+  }
+  const explicitId = command.flags.find((flag) => flag.name === '--id')?.value;
+  if (explicitId === undefined || isEditorCompatibleNodeId(explicitId)) return command.flags;
+  return [...command.flags, { name: '--allow-legacy-id' }];
 }
 
 function renderVariableCreates(
