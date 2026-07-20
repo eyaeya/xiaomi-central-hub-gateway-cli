@@ -233,6 +233,92 @@ function runCli(args, agent) {
   });
 }
 
+test('modeled non-device --cfg preserves the complete raw tuple', async (t) => {
+  const agent = await startFakeAgent(t);
+  const rawNode = {
+    id: 'raw-on-load',
+    type: 'onLoad',
+    cfg: {
+      simplified: true,
+      pos: { x: 37, y: 19, width: 200, height: 120 },
+      name: 'onLoad',
+      version: 1,
+    },
+    inputs: {},
+    outputs: { output: [] },
+    props: {},
+  };
+
+  const result = await runCli(
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'rule-80',
+      '--type',
+      'onLoad',
+      '--cfg',
+      JSON.stringify(rawNode),
+      '--no-snapshot',
+      '--no-var-check',
+    ],
+    agent,
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.signal, null);
+  assert.equal(JSON.parse(result.stdout).nodeId, rawNode.id);
+  assert.equal(agent.writes.length, 1);
+  assert.deepEqual(
+    agent.state.nodes.find(({ id }) => id === rawNode.id),
+    rawNode,
+  );
+});
+
+test('modeled non-device --cfg stays schema-checked unless --no-validate is explicit', async (t) => {
+  const agent = await startFakeAgent(t);
+  const malformed = {
+    id: 'raw-unchecked',
+    type: 'onLoad',
+    cfg: {
+      pos: { x: 37, y: 19, width: 200, height: 120 },
+      name: 'onLoad',
+      version: 1,
+    },
+    inputs: {},
+    outputs: {},
+    props: {},
+  };
+  const baseArgs = [
+    'rule',
+    'node',
+    'add',
+    '--rule-id',
+    'rule-80',
+    '--type',
+    'onLoad',
+    '--cfg',
+    JSON.stringify(malformed),
+    '--no-snapshot',
+    '--no-var-check',
+  ];
+
+  const rejected = await runCli(baseArgs, agent);
+  assert.equal(rejected.status, 5, rejected.stderr);
+  assert.match(rejected.stderr, /--cfg shape invalid at outputs\.output/);
+  assert.equal(agent.writes.length, 0);
+
+  const bypassed = await runCli([...baseArgs, '--no-validate'], agent);
+  assert.equal(bypassed.status, 0, bypassed.stderr);
+  assert.equal(JSON.parse(bypassed.stdout).nodeId, malformed.id);
+  assert.equal(agent.writes.length, 1);
+  assert.deepEqual(
+    agent.state.nodes.find(({ id }) => id === malformed.id),
+    malformed,
+  );
+});
+
 test('deviceOutput process hint names trigger and its follow-up edge succeeds', async (t) => {
   const agent = await startFakeAgent(t);
   const cfg = JSON.stringify({

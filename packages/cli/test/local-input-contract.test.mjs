@@ -373,6 +373,84 @@ test('preload flag misuse fails before Agent guards, snapshots, or IPC', async (
   }
 });
 
+test('--cfg rejects every shortcut authoring flag before Agent guards or IPC', async (t) => {
+  const agent = await startFakeAgent(t);
+  const shortcutCases = [
+    ['--device-did', 'd'],
+    ['--device-siid', '2'],
+    ['--device-property', 'on'],
+    ['--device-action', 'toggle'],
+    ['--device-event', 'changed'],
+    ['--event-filter', '1=1'],
+    ['--event-filter-include', '1=1,2'],
+    ['--event-filter-between', '1=1,2'],
+    ['--event-arg-var', '1=global.marker'],
+    ['--threshold', '1'],
+    ['--property-value', 'open'],
+    ['--property-include', '1,2'],
+    ['--op', 'eq'],
+    ['--params', '{}'],
+    ['--value', 'true'],
+    ['--force-out-of-range'],
+    ['--allow-no-push'],
+    ['--preload'],
+    ['--no-preload'],
+    ['--pos', '0,0,200,120'],
+    ['--simplified', 'true'],
+    ['--text', 'note'],
+    ['--delta', '[]'],
+    ['--background', '#fff'],
+    ['--inputs', '2'],
+    ['--duration', '5s'],
+    ['--interval', '5s'],
+    ['--start', '08:00'],
+    ['--end', '09:00'],
+    ['--ming-text-show', 'true'],
+    ['--weekday-only'],
+    ['--holiday-only'],
+    ['--days', '1,2'],
+    ['--var-scope', 'global'],
+    ['--var-id', 'marker'],
+    ['--var-type', 'number'],
+    ['--var-value', 'open'],
+    ['--threshold2', '2'],
+    ['--allow-unknown-scope'],
+    ['--at', '07:30'],
+    ['--sunrise'],
+    ['--sunset'],
+    ['--offset-min', '-15'],
+    ['--latitude', '30.46'],
+    ['--longitude', '114.41'],
+    ['--expr', '$global.marker + 1'],
+    ['--default-expr-scope', 'global'],
+    ['--outputs', '2'],
+  ];
+
+  for (const shortcutArgs of shortcutCases) {
+    agent.frames.length = 0;
+    const payload = assertSingleConfig(
+      await runCli(
+        [
+          'rule',
+          'node',
+          'add',
+          '--rule-id',
+          'r',
+          '--type',
+          'onLoad',
+          '--cfg',
+          '{}',
+          ...shortcutArgs,
+        ],
+        agent,
+      ),
+    );
+    assert.match(payload.error.message, /--cfg is mutually exclusive with shortcut option/);
+    assert.equal(payload.error.message.includes(shortcutArgs[0]), true, shortcutArgs[0]);
+    assert.deepEqual(agent.frames, [], shortcutArgs[0]);
+  }
+});
+
 test('nop rejects executable-card flags before Agent guards, snapshots, or IPC', async (t) => {
   const agent = await startFakeAgent(t);
   const args = [

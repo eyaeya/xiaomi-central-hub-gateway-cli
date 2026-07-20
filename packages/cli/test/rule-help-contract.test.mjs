@@ -75,7 +75,10 @@ test('node-add help directs every modeled type to shortcuts and bounds raw fallb
   const nodeAdd = help(['rule', 'node', 'add']);
   assert.match(nodeAdd, /All 25 modeled executable types plus nop have shortcuts/);
   assert.match(nodeAdd, /unmodeled future card/);
-  assert.doesNotMatch(nodeAdd, /eventSequence .*--cfg/);
+  assert.match(nodeAdd, /--cfg selects raw\/full-tuple handling for every type/);
+  assert.match(nodeAdd, /cannot be combined with shortcut authoring flags/);
+  assert.match(nodeAdd, /strict schema unless --no-validate/);
+  assert.doesNotMatch(nodeAdd, /\$ xgg rule node add --rule-id \S+ --type eventSequence[^$]*--cfg/);
   assert.match(nodeAdd, /deviceInput\/deviceInputSetVar trigger or capture source/);
   assert.match(nodeAdd, /deviceGet\/deviceGetSetVar read source/);
   assert.match(nodeAdd, /event-driven deviceInput\/deviceInputSetVar/);
