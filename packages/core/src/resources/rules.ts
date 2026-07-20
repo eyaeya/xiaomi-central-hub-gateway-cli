@@ -1242,8 +1242,8 @@ export interface AddNodeShortcut {
   deviceProperty?: string;
   deviceAction?: string;
   // F11 (M9): event-driven deviceInput trigger (e.g. BLE button `click`).
-  // Codex M8 reverse-engineering: props = `{did, siid, eiid, arguments: []}`
-  // with `cfg.version: 0`.
+  // Canonical editor-migrated shape: props =
+  // `{did, siid, eiid, arguments: []}` with `cfg.version: 1`.
   deviceEvent?: string;
   // B9 / F63d (2026-05-30): per-piid filter expressions for deviceInput
   // event-mode scalar comparisons. Each entry is `<piid><op><v1>` where op ∈
@@ -2920,9 +2920,9 @@ function synthesizeNodeFromShortcut(
     // reverse-engineering confirmed the resulting node uses `eiid` in place
     // of `piid`, an `arguments: []` field that the gateway iterates
     // unconditionally (omitting it crashes with `Symbol.iterator of
-    // undefined`), and `cfg.version: 0` (event nodes carry version 0;
-    // property nodes carry version 1 — verified by reading the working
-    // user sample `按钮单击播报（样例）`).
+    // undefined`). Legacy persisted graphs may still carry cfg.version 0,
+    // but the pinned editor runs its one-step card migration before saving a
+    // newly created node, so fresh XGG synthesis emits the canonical version 1.
     if (shortcut.deviceEvent) {
       const { service, event } = findServiceEvent(
         spec,
@@ -2957,7 +2957,7 @@ function synthesizeNodeFromShortcut(
           urn: spec.type,
           pos: shortcut.pos ?? sizedPos('deviceInput'),
           name: 'deviceInput',
-          version: 0,
+          version: 1,
           ...simplifiedCfgFromShortcut(shortcut),
         },
         inputs: {},

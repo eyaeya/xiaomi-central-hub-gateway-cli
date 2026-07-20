@@ -667,6 +667,9 @@ test('exclusive deviceInput property and event modes keep their complete compari
     eiid: 10,
     arguments: [{ piid: 2, dtype: 'int', operator: 'include', v1: [1, 2] }],
   });
+  const eventNode = gateway.state.nodes.find((node) => node.id === 'event-mode');
+  assert.equal(eventNode.cfg.name, 'deviceInput');
+  assert.equal(eventNode.cfg.version, 1);
 });
 
 test('continuous float property shortcut keeps its numeric comparison contract', async () => {

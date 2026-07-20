@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { addNode, exportRuleFromView } from '../dist/index.js';
+import { addNode, exportRuleFromView, nodeSchemaForType, validateGraph } from '../dist/index.js';
 
 const baseUrl = 'http://gateway.invalid';
 const startedAt = '2026-07-19T00:00:00.000Z';
@@ -330,6 +330,46 @@ test('all device shortcut branches export one SIID and replay duplicate MIoT nam
   ]) {
     assert.equal(props[id].piid, 1, id);
   }
+});
+
+test('legacy version-0 event input stays readable and exports without mutation to canonical replay', async () => {
+  const source = createGateway();
+  const legacyNode = {
+    id: 'legacyEvent',
+    type: 'deviceInput',
+    cfg: {
+      ...legacyCfg('deviceInput', 0),
+      version: 0,
+    },
+    inputs: {},
+    outputs: { output: [] },
+    props: { did, siid: 2, eiid: 20, arguments: [] },
+  };
+  source.state.nodes = [structuredClone(legacyNode)];
+
+  assert.equal(nodeSchemaForType('deviceInput').safeParse(legacyNode).success, true);
+  const issues = await validateGraph({
+    graph: { id: ruleId, cfg: source.state.summary, nodes: source.state.nodes },
+    getDeviceSpec: source.deps.getDeviceSpec,
+  });
+  assert.equal(
+    issues.some((issue) => issue.path === 'nodes[0].cfg.version'),
+    false,
+  );
+
+  const before = structuredClone(source.state.nodes);
+  const exported = await exportRuleFromView(
+    { id: ruleId, cfg: source.state.summary, nodes: source.state.nodes },
+    source.deps,
+  );
+  assert.deepEqual(source.state.nodes, before, 'read/export must not rewrite the observed graph');
+
+  const command = exported.commands.find((candidate) => candidate.kind === 'node-add');
+  assert.ok(command);
+  const replay = createGateway();
+  await addShortcut(replay, shortcutFromExport(command));
+  assert.equal(replay.state.nodes[0].cfg.name, 'deviceInput');
+  assert.equal(replay.state.nodes[0].cfg.version, 1);
 });
 
 function legacyCfg(type, index) {
