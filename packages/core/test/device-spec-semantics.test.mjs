@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DeviceSpecSemanticCache, projectDeviceSpecSemantics } from '../dist/index.js';
+import {
+  DeviceSpecSemanticCache,
+  projectDeviceSpecSemantics,
+  projectDeviceTypesSemantics,
+} from '../dist/index.js';
 
 const rawSpec = {
   type: 'urn:miot-spec-v2:device:test-light:0000A001:vendor-model:1',
@@ -148,6 +152,14 @@ const catalogBodies = {
       },
     ],
   },
+  devices: {
+    result: [
+      {
+        type: 'urn:miot-spec-v2:device:test-light:0000A001',
+        description: { zh_cn: '测试灯品类' },
+      },
+    ],
+  },
 };
 
 function catalogKey(url) {
@@ -157,6 +169,7 @@ function catalogKey(url) {
   if (url.endsWith('/template/list/property')) return 'properties';
   if (url.endsWith('/template/list/event')) return 'events';
   if (url.endsWith('/template/list/action')) return 'actions';
+  if (url.endsWith('/template/list/device')) return 'devices';
   throw new Error(`unexpected catalog URL: ${url}`);
 }
 
@@ -188,8 +201,11 @@ test('semantic projection applies precedence, automation access classes, and exc
       ['property-template', 'loaded'],
       ['event-template', 'loaded'],
       ['action-template', 'loaded'],
+      ['device-template', 'loaded'],
     ],
   );
+  assert.equal(projection.deviceType, 'test-light');
+  assert.equal(projection.deviceTypeDescription, '测试灯品类');
   assert.deepEqual(
     projection.excludedServices.map(({ siid, reason }) => [siid, reason]),
     [[1, 'device-information-not-automatable']],
@@ -260,16 +276,16 @@ test('catalog cache deduplicates global requests and keys multiLanguage by devic
     projectDeviceSpecSemantics(rawSpec, { fetch, cache, timeoutMs: 100 }),
     projectDeviceSpecSemantics(rawSpec, { fetch, cache, timeoutMs: 100 }),
   ]);
-  assert.equal(counter.count, 6, 'concurrent identical projections share all catalog requests');
+  assert.equal(counter.count, 7, 'concurrent identical projections share all catalog requests');
 
   await projectDeviceSpecSemantics(
     { ...rawSpec, type: 'urn:miot-spec-v2:device:other-light:0000A002:vendor-model:1' },
     { fetch, cache, timeoutMs: 100 },
   );
-  assert.equal(counter.count, 7, 'a new URN only refetches its per-device multiLanguage catalog');
+  assert.equal(counter.count, 8, 'a new URN only refetches its per-device multiLanguage catalog');
 
   await projectDeviceSpecSemantics(rawSpec, { fetch, cache, timeoutMs: 250 });
-  assert.equal(counter.count, 7, 'resolved catalogs are reused across later timeout policies');
+  assert.equal(counter.count, 8, 'resolved catalogs are reused across later timeout policies');
 });
 
 test('HTTP and timeout failures are reported and fall back without rejecting', async () => {
@@ -291,6 +307,12 @@ test('HTTP and timeout failures are reported and fall back without rejecting', a
     ),
   );
   assert.equal(httpFallback.propertyNotify[0].description, 'Raw power');
+  assert.equal(httpFallback.deviceType, 'test-light');
+  assert.equal(
+    httpFallback.deviceTypeDescription,
+    'test-light',
+    'device type fallback must not reuse the instance product description',
+  );
   assert.deepEqual(httpFallback.propertyNotify[0].valueList, [
     { value: true, description: '开启' },
     { value: false, description: '关闭' },
@@ -304,7 +326,7 @@ test('HTTP and timeout failures are reported and fall back without rejecting', a
     cache: httpCache,
     timeoutMs: 100,
   });
-  assert.equal(httpCounter.count, 12, 'fallback results do not poison the successful-result cache');
+  assert.equal(httpCounter.count, 14, 'fallback results do not poison the successful-result cache');
 
   const timeoutFallback = await projectDeviceSpecSemantics(rawSpec, {
     fetch: async (_input, init) =>
@@ -319,4 +341,155 @@ test('HTTP and timeout failures are reported and fall back without rejecting', a
       ({ status, reason }) => status === 'fallback' && reason === 'timeout',
     ),
   );
+});
+
+test('device template parser uses the exact endpoint, short token, zh_cn, and raw fallback', async () => {
+  const calls = [];
+  const fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method });
+    return Response.json({
+      result: [
+        {
+          type: 'urn:miot-spec-v2:device:light:0000A001',
+          description: { zh_cn: '灯' },
+        },
+        {
+          type: 'urn:miot-spec-v2:device:light:0000A001:duplicate:1',
+          description: { zh_cn: '照明设备' },
+        },
+        {
+          type: 'urn:miot-spec-v2:device:space-label:0000A002',
+          description: { zh_cn: ' ' },
+        },
+        {
+          type: 'urn:miot-spec-v2:device:empty-label:0000A003',
+          description: { zh_cn: '' },
+        },
+        { type: 'urn:miot-spec-v2:device:no-zh-cn:0000A004', description: { en: 'English' } },
+        { type: 'too-short', description: { zh_cn: '不可用' } },
+        { description: { zh_cn: '不可用' } },
+      ],
+    });
+  };
+  const cache = new DeviceSpecSemanticCache();
+  const urns = [
+    'urn:miot-spec-v2:device:light:0000A001:test:1',
+    'urn:miot-spec-v2:device:unknown:0000A099:test:1',
+    'urn:miot-spec-v2:device:space-label:0000A002:test:1',
+  ];
+
+  const [first, concurrent] = await Promise.all([
+    projectDeviceTypesSemantics(urns, { fetch, cache, timeoutMs: 100 }),
+    projectDeviceTypesSemantics(urns, { fetch, cache, timeoutMs: 100 }),
+  ]);
+  assert.deepEqual(first, concurrent);
+  assert.deepEqual(calls, [
+    {
+      url: 'https://miot-spec.org/miot-spec-v2/template/list/device',
+      method: 'GET',
+    },
+  ]);
+  assert.deepEqual(first.deviceTypes, [
+    {
+      urn: urns[0],
+      deviceType: 'light',
+      deviceTypeDescription: '照明设备',
+    },
+    {
+      urn: urns[1],
+      deviceType: 'unknown',
+      deviceTypeDescription: 'unknown',
+    },
+    {
+      urn: urns[2],
+      deviceType: 'space-label',
+      deviceTypeDescription: ' ',
+    },
+  ]);
+  assert.deepEqual(first.catalogs, [{ catalog: 'device-template', status: 'loaded' }]);
+
+  await projectDeviceTypesSemantics(urns, { fetch, cache, timeoutMs: 250 });
+  assert.equal(calls.length, 1, 'a successful device catalog is cached across timeout policies');
+});
+
+test('device template fallback reasons are independent and never use product descriptions', async () => {
+  const urn = 'urn:miot-spec-v2:device:air-purifier:0000A007:test:1';
+  const scenarios = [
+    {
+      reason: 'http',
+      httpStatus: 502,
+      fetch: async () => new Response('bad gateway', { status: 502 }),
+    },
+    {
+      reason: 'network',
+      fetch: async () => {
+        throw new Error('offline');
+      },
+    },
+    {
+      reason: 'invalid-content',
+      fetch: async () => Response.json({ result: 'not-an-array' }),
+    },
+    {
+      reason: 'timeout',
+      fetch: async (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        }),
+      timeoutMs: 5,
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const projection = await projectDeviceTypesSemantics([urn], {
+      fetch: scenario.fetch,
+      cache: new DeviceSpecSemanticCache(),
+      timeoutMs: scenario.timeoutMs ?? 100,
+    });
+    assert.deepEqual(projection.deviceTypes, [
+      {
+        urn,
+        deviceType: 'air-purifier',
+        deviceTypeDescription: 'air-purifier',
+      },
+    ]);
+    assert.deepEqual(projection.catalogs, [
+      {
+        catalog: 'device-template',
+        status: 'fallback',
+        reason: scenario.reason,
+        ...(scenario.httpStatus === undefined ? {} : { httpStatus: scenario.httpStatus }),
+      },
+    ]);
+  }
+});
+
+test('device template failures retry and a later success becomes cached', async () => {
+  const urn = 'urn:miot-spec-v2:device:curtain:0000A00C:test:1';
+  let calls = 0;
+  const fetch = async () => {
+    calls += 1;
+    if (calls === 1) return new Response('temporary', { status: 503 });
+    return Response.json({
+      result: [
+        {
+          type: 'urn:miot-spec-v2:device:curtain:0000A00C',
+          description: { zh_cn: '窗帘' },
+        },
+      ],
+    });
+  };
+  const cache = new DeviceSpecSemanticCache();
+
+  const failed = await projectDeviceTypesSemantics([urn], { fetch, cache, timeoutMs: 100 });
+  assert.equal(failed.deviceTypes[0].deviceTypeDescription, 'curtain');
+  assert.equal(failed.catalogs[0].status, 'fallback');
+
+  const recovered = await projectDeviceTypesSemantics([urn], { fetch, cache, timeoutMs: 100 });
+  assert.equal(recovered.deviceTypes[0].deviceTypeDescription, '窗帘');
+  assert.equal(recovered.catalogs[0].status, 'loaded');
+
+  const cached = await projectDeviceTypesSemantics([urn], { fetch, cache, timeoutMs: 250 });
+  assert.equal(cached.deviceTypes[0].deviceTypeDescription, '窗帘');
+  assert.equal(calls, 2, 'fallback is retried and the later successful result is cached');
 });

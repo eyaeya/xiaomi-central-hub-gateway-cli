@@ -17,6 +17,20 @@ test('device help bounds the live-property claim to the audited client surface',
   assert.doesNotMatch(result.stdout, /gateway exposes\s+no realtime device-property/i);
 });
 
+test('device get help describes its human-readable type-semantic view accurately', () => {
+  const result = spawnSync(process.execPath, [cliPath, 'device', 'get', '--help'], {
+    cwd: packageRoot,
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const help = result.stdout.replace(/\s+/g, ' ');
+  assert.match(
+    help,
+    /--pretty human-readable device metadata with stable type token and zh_cn description/,
+  );
+  assert.doesNotMatch(help, /pretty-print JSON output/);
+});
+
 test('variable watch help uses modeled set-var cards without a firmware-global claim', () => {
   const result = spawnSync(process.execPath, [cliPath, 'variable', 'watch', '--help'], {
     cwd: packageRoot,

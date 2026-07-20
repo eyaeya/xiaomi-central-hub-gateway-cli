@@ -382,8 +382,8 @@ test('deviceGet labels reuse semantic projection with notify gate, priority, boo
   assert.deepEqual(calls.sort(), [failedUrn, sharedUrn].sort());
   assert.equal(
     semanticCalls.length,
-    6,
-    'one successful URN uses the six shared projector catalogs',
+    7,
+    'one successful URN uses the seven shared projector catalogs',
   );
   assert.deepEqual(resolved.labelsByNodeId, {
     'get-a': { 1: '多语一', 2: '归一二' },
@@ -493,8 +493,8 @@ test('deviceGet semantic fallback keeps raw values and shares global catalogs ac
 
   assert.equal(
     semanticCalls.length,
-    7,
-    'two URNs fetch two multiLanguage catalogs but share five global catalog requests',
+    8,
+    'two URNs fetch two multiLanguage catalogs but share six global catalog requests',
   );
   assert.deepEqual(resolved.labelsByNodeId, {
     'get-raw-0': { 1: 'raw-one' },

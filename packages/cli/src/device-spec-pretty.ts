@@ -262,6 +262,8 @@ function appendCatalogStatus(lines: string[], projection: SemanticDeviceSpecProj
 export function renderDeviceSpecPretty(projection: SemanticDeviceSpecProjection): string {
   const lines: string[] = [];
   appendWrapped(lines, 'Device: ', projection.description);
+  appendWrapped(lines, 'Device type: ', projection.deviceType);
+  appendWrapped(lines, 'Device type description: ', projection.deviceTypeDescription);
   appendWrapped(lines, 'URN: ', projection.urn);
   appendCatalogStatus(lines, projection);
   if (projection.excludedServices.length > 0) {

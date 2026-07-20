@@ -98,6 +98,8 @@ const secondPower = {
 const projection = {
   urn: 'urn:miot-spec-v2:device:test-device:0000A001:vendor-model:1',
   description: 'Test device',
+  deviceType: 'test-device',
+  deviceTypeDescription: '测试设备品类',
   locale: 'zh_cn',
   propertyNotify: [power, modeA],
   propertyGet: [power, modeA, brightness, modeB, vendorProperty, secondPower],
@@ -161,6 +163,7 @@ const projection = {
     { catalog: 'property-template', status: 'loaded' },
     { catalog: 'event-template', status: 'loaded' },
     { catalog: 'action-template', status: 'loaded' },
+    { catalog: 'device-template', status: 'loaded' },
   ],
 };
 
@@ -184,6 +187,9 @@ test('pretty view maps capabilities to automation purpose and node types', () =>
   assert.match(output, /secret-mode/);
   assert.match(output, /private-action/);
   assert.match(output, /Excluded from automation:/);
+  assert.match(output, /^Device type: test-device$/m);
+  assert.match(output, /^Device type description: 测试设备品类$/m);
+  assert.match(output, /device-template=loaded/);
   assert.equal((output.match(/selector=device-information/g) ?? []).length, 1);
 });
 
@@ -232,6 +238,8 @@ test('wide semantic labels wrap by grapheme and terminal display width', () => {
   const wideProjection = structuredClone(projection);
   wideProjection.urn = longUrn;
   wideProjection.description = `${'中文设备'.repeat(35)}${family}${combining}`;
+  wideProjection.deviceType = 'long-device-type-token'.repeat(10);
+  wideProjection.deviceTypeDescription = `${'中文品类'.repeat(35)}${family}${combining}`;
   wideProjection.propertyGet[0].description = `${'组合标签'.repeat(30)}${family}${combining}`;
 
   const output = renderDeviceSpecPretty(wideProjection);
@@ -242,6 +250,14 @@ test('wide semantic labels wrap by grapheme and terminal display width', () => {
   assert.ok(output.includes(family), 'emoji ZWJ grapheme must remain intact');
   assert.ok(output.includes(combining), 'combining-mark grapheme must remain intact');
   assert.ok(output.replace(/\s/g, '').includes(longUrn), 'long URN must wrap without truncation');
+  assert.ok(
+    output.replace(/\s/g, '').includes(wideProjection.deviceType),
+    'stable device type must wrap without truncation',
+  );
+  assert.ok(
+    output.replace(/\s/g, '').includes(wideProjection.deviceTypeDescription.replace(/\s/g, '')),
+    'device type description must wrap without truncation',
+  );
 });
 
 test('default JSON preparation keeps the raw envelope and performs no semantic request', async () => {

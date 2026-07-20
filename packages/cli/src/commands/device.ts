@@ -18,6 +18,11 @@ import {
   withNextSteps,
 } from '../agent-hints.js';
 import { prepareDeviceSpecOutput } from '../device-spec-output.js';
+import {
+  prepareDeviceTypeProjection,
+  renderDeviceGetPretty,
+  renderDeviceListPretty,
+} from '../device-type-output.js';
 import { parsePositiveTimerMs } from '../local-input.js';
 import { type TableColumn, emit, emitList } from '../output.js';
 
@@ -73,18 +78,6 @@ export function isGhost(dev: DeviceFields): boolean {
   return isGhostDevice(dev);
 }
 
-// urn:miot-spec-v2:device:<category>:<urn-hash>:<vendor>:<version>
-//                                ^^^ split(':')[3]
-// Codex T3 confirmed the frontend resolves the Chinese label by joining
-// this with miot-spec.org/template/list/device descriptions; CLI keeps
-// the lowercase machine token so it stays stable across locales.
-export function categoryFromUrn(urn: string | undefined): string {
-  if (!urn) return '';
-  const parts = urn.split(':');
-  // parts[0]='urn', [1]='miot-spec-v2', [2]='device', [3]='<category>'
-  return parts[3] ?? '';
-}
-
 export function deviceCommand(): Command {
   const cmd = new Command('device').description('Device read operations');
   // Set expectations without making a firmware-global impossibility claim:
@@ -122,19 +115,6 @@ export function deviceCommand(): Command {
       const visibleDevices = includeGhost
         ? result
         : Object.fromEntries(Object.entries(result).filter(([, dev]) => !isGhost(dev)));
-      const columns: TableColumn<(typeof rows)[number]>[] = [
-        { header: 'id', get: (r) => r.id },
-        { header: 'name', get: (r) => r.name },
-        { header: 'model', get: (r) => r.model },
-        { header: 'roomName', get: (r) => r.roomName ?? '' },
-        // F22 closed in M9: category derives from urn.split(':')[3]
-        // (`light` / `sensor` / `remote-control` / ...). The Chinese
-        // label table the web UI uses is a public MIoT registry; CLI
-        // keeps the machine token for stability.
-        { header: 'category', get: (r) => categoryFromUrn(r.urn) },
-        { header: 'urn', get: (r) => r.urn ?? '' },
-        { header: 'avail', get: (r) => availabilityLabel(r) },
-      ];
       const basePayload = {
         ok: true,
         devices: visibleDevices,
@@ -144,7 +124,21 @@ export function deviceCommand(): Command {
       const jsonPayload = nextHintOptedOut(opts)
         ? basePayload
         : withNextSteps(basePayload as Record<string, unknown>, hints);
-      emitList({ jsonPayload, columns, rows }, { pretty: opts.pretty === true });
+      if (opts.pretty === true) {
+        const projection = await prepareDeviceTypeProjection(rows, true, deps.timeoutMs);
+        if (projection === undefined) throw new Error('missing device type projection');
+        process.stdout.write(
+          renderDeviceListPretty(
+            rows.map((row) => ({
+              ...row,
+              availability: availabilityLabel(row),
+            })),
+            projection,
+          ),
+        );
+      } else {
+        emit(jsonPayload, { pretty: false });
+      }
       printNextStepHintLine(hints, opts, {
         contextLabel: `device list (${rows.length} visible)`,
       });
@@ -157,13 +151,22 @@ export function deviceCommand(): Command {
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
     .option('--timeout <ms>', 'request timeout in milliseconds', '10000')
-    .option('--pretty', 'pretty-print JSON output')
+    .option(
+      '--pretty',
+      'human-readable device metadata with stable type token and zh_cn description',
+    )
     .addHelpText('after', '\nExample:\n  $ xgg device get <bluetooth-did>')
     .action(
       wrap('device.get', async (id: string, opts: DeviceOpts) => {
         const deps = makeDeps(opts);
         const result = await getDevice(id, deps);
-        emit({ ok: true, device: result }, { pretty: opts.pretty === true });
+        if (opts.pretty === true) {
+          const projection = await prepareDeviceTypeProjection([result], true, deps.timeoutMs);
+          if (projection === undefined) throw new Error('missing device type projection');
+          process.stdout.write(renderDeviceGetPretty(result, projection));
+        } else {
+          emit({ ok: true, device: result }, { pretty: false });
+        }
       }),
     );
 
