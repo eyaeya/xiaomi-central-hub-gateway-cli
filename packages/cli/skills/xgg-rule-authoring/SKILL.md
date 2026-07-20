@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-810e4cee89e7b424e294f97b302fa6f6d9f476b903d50719b73d984a0c88a882 -->
+<!-- xgg-skill-content-build: sha256-78b88cc61b62ec674c687d0d30fbaa05625e552bd94c7d96b52d137313cf347e -->
 
 # xgg 自动化编写 Skill
 
@@ -217,6 +217,13 @@ xgg rule import --from-file rule-export.json > replay.sh
 xgg rule import --from-file rule-export.json --target-id <target-id> \
   --target-name "克隆规则名" > clone.sh
 # 审阅最终 enable 行为后再执行 bash replay.sh / bash clone.sh
+```
+
+生成脚本把 `XGG` 严格当作一个可执行文件路径（默认 `xgg`）；绝不能把 `XGG="node ..."` 或 `XGG="pnpm exec ..."` 当成命令字符串。要验证 npm 尚未包含的当前源码，先 `pnpm build`，再用 `XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js"` 指定构建入口；可用 `NODE_BIN="/absolute/path/to/node"` 指定 Node。脚本把两者组成 Bash argv array，路径中的空格不会拆词，也不使用 `eval`。例如：
+
+```bash
+XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js" \
+  NODE_BIN="/absolute/path/to/node" bash replay.sh
 ```
 
 `rule import` 自身只做离线文本转换，stdout 是 shell，不代表已写入。脚本先只读预检已捕获的本地变量；若导出包含本地变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 同时生效）。clone 保留 `--expect-absent`，先创建禁用空壳，再准备 `R<target-id>` 变量。所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，禁用源保持禁用。脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg/API writer 并发修改目标；staging 后失败会留下禁用 partial graph，用逐写快照检查或恢复。重放后总是 `validate --spec-aware → lint --strict → view/readback`；只有用户授权时才触发并读日志。

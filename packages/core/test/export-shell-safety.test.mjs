@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -124,6 +124,74 @@ appendFileSync(process.env.XGG_CAPTURE, JSON.stringify(process.argv.slice(2)) + 
     '--base-url',
     baseUrl,
   ]);
+});
+
+test('shell replay invokes a source checkout as two quoted argv elements', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'xgg-source-entry-'));
+  t.after(() => rm(root, { force: true, recursive: true }));
+
+  const runtimeDir = join(root, 'runtime with spaces');
+  const sourceDir = join(root, 'source checkout with spaces');
+  const nodeBin = join(runtimeDir, 'node executable');
+  const sourceEntry = join(sourceDir, 'dist', 'cli entry.js');
+  const capture = join(root, 'source-calls.jsonl');
+  await mkdir(runtimeDir, { recursive: true });
+  await mkdir(join(sourceDir, 'dist'), { recursive: true });
+  await symlink(process.execPath, nodeBin);
+  await writeFile(join(sourceDir, 'package.json'), JSON.stringify({ type: 'module' }));
+  await writeFile(
+    sourceEntry,
+    `import { appendFileSync } from 'node:fs';
+appendFileSync(process.env.XGG_CAPTURE, JSON.stringify(process.argv.slice(1)) + '\\n');
+`,
+  );
+
+  const ruleId = 'sourceReplay';
+  const bodyJson = JSON.stringify({
+    id: ruleId,
+    nodes: [],
+    cfg: { id: ruleId, enable: false },
+  });
+  const snapshotsDir = join(root, 'snapshots with spaces');
+  const script = renderExportedAsShell(
+    {
+      ruleId,
+      ruleName: 'source checkout replay',
+      enable: false,
+      commands: [{ kind: 'rule-set-body', bodyJson, description: 'source checkout shell' }],
+      warnings: [],
+    },
+    { snapshotsDir },
+  );
+
+  assert.match(script, /XGG_ARGV=\("\$\{NODE_BIN:-node\}" "\$XGG_NODE_ENTRY"\)/);
+  assert.match(script, /"\$\{XGG_ARGV\[@\]\}" rule set --body/);
+  assert.doesNotMatch(script, /(^|[;\s])eval(?:[;\s]|$)/m);
+
+  const result = spawnSync('bash', ['-c', script], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      TMPDIR: root,
+      XGG: 'this multi-word value must not run',
+      XGG_NODE_ENTRY: sourceEntry,
+      NODE_BIN: nodeBin,
+      XGG_CAPTURE: capture,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+
+  const calls = (await readFile(capture, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], sourceEntry);
+  assert.deepEqual(calls[0].slice(1, 4), ['rule', 'set', '--body']);
+  assert.equal(calls[0][5], '--allow-cfg-overwrite');
+  assert.equal(calls[0][6], '--snapshots-dir');
+  assert.equal(calls[0][7], snapshotsDir);
+  await assert.rejects(access(calls[0][4]), { code: 'ENOENT' });
 });
 
 test('shell replay stages disabled before graph assembly and only restores exported enabled state last', () => {

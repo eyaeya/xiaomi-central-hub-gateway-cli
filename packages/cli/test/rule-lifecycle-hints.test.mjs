@@ -365,7 +365,7 @@ test('export advertises the accepted import file option and import stays at the 
   assert.equal(imported.status, 0, imported.stderr);
   assert.equal(imported.signal, null);
   assert.match(imported.stdout, /^#!\/usr\/bin\/env bash\n/);
-  assert.match(imported.stdout, /"\$XGG" rule set --body/);
+  assert.match(imported.stdout, /"\$\{XGG_ARGV\[@\]\}" rule set --body/);
   assert.equal(imported.stderr, '');
   assert.doesNotMatch(imported.stdout, /next →|rule validate/);
   assert.equal(
