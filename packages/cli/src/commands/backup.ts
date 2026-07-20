@@ -643,7 +643,7 @@ export function backupCommand(): Command {
         .option('--auto-backup-limit <n>', 'optional automatic backup retention limit')
         .addHelpText(
           'after',
-          '\nExample:\n  $ xgg backup config set --from fds --auto-backup true --snapshots-dir ./snapshots/',
+          '\nExample:\n  $ xgg backup config set --from fds --auto-backup true --auto-backup-limit <N> --snapshots-dir ./snapshots/',
         ),
     ),
   ).action(
