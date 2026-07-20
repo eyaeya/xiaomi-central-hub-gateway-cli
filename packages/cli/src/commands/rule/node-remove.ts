@@ -17,6 +17,8 @@ interface NodeRemoveOpts extends RuleOpts {
   snapshot?: boolean;
   snapshotsDir?: string;
   refreshHint?: boolean;
+  // F66f/#173 — opt out of the incremental online variable existence/type sweep.
+  varCheck?: boolean;
 }
 
 export function attachNodeRemove(cmd: Command): void {
@@ -29,6 +31,10 @@ export function attachNodeRemove(cmd: Command): void {
     .requiredOption('--node-id <id>', 'target node id')
     .option('--cascade-edges', 'also remove edges that point at the deleted node')
     .option('--no-snapshot', 'skip the pre-write dump snapshot')
+    .option(
+      '--no-var-check',
+      'skip the incremental online variable existence/type sweep (raw probes / cleanup of broken graphs)',
+    )
     .option('--snapshots-dir <path>', 'directory for pre-write snapshots (env: XGG_SNAPSHOTS_DIR)')
     .option('--base-url <url>', 'gateway base URL')
     .option('--session-file <path>', 'session file path')
@@ -62,6 +68,7 @@ export function attachNodeRemove(cmd: Command): void {
                 ruleId: opts.ruleId,
                 nodeId: opts.nodeId,
                 ...(opts.cascadeEdges === true && { cascadeEdges: true }),
+                varCheck: opts.varCheck !== false,
               },
               deps,
             );

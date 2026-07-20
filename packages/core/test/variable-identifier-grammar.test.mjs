@@ -13,6 +13,35 @@ import {
 import { VariableCreateRequest } from '../dist/schemas/variable.js';
 
 const position = { x: 0, y: 0, width: 712, height: 220, exprHeight: 30 };
+const baseUrl = 'http://gateway.invalid';
+const agentStartedAt = '2026-07-19T00:00:00.000Z';
+
+function variableExportDeps(globalVariables) {
+  return {
+    baseUrl,
+    store: {
+      read: async () => ({
+        host: baseUrl,
+        pid: 1,
+        socketPath: '/tmp/xgg-variable-identifier-unused.sock',
+        agentStartedAt,
+        agentVersion: '0.1.4',
+        lastValidatedAt: agentStartedAt,
+      }),
+    },
+    ipcClient: () => ({
+      request: async (method, params) => {
+        if (method === '$ping') return { host: baseUrl, agentStartedAt };
+        if (method === '/api/getVarList') {
+          assert.deepEqual(params, { scope: 'global' });
+          return structuredClone(globalVariables);
+        }
+        throw new Error(`unexpected RPC: ${method}`);
+      },
+      close: () => {},
+    }),
+  };
+}
 
 function createRequest(scope, id) {
   return {
@@ -203,7 +232,10 @@ test('varSet export reparses digit-leading IDs without changing elements', async
         },
       ],
     },
-    { baseUrl: 'http://gateway.invalid', store: {} },
+    variableExportDeps({
+      123: { type: 'string', value: '', userData: { name: 'target' } },
+      789: { type: 'number', value: 0, userData: { name: 'operand' } },
+    }),
   );
 
   const nodeAdd = exported.commands.find(

@@ -290,7 +290,7 @@ const typedMutators = [
   {
     name: 'removeNode',
     operation: 'rule.node.remove',
-    invoke: (deps) => removeNode({ ruleId, nodeId: 'target' }, deps),
+    invoke: (deps) => removeNode({ ruleId, nodeId: 'target', varCheck: false }, deps),
   },
   {
     name: 'addEdge',

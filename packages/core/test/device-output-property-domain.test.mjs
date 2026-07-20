@@ -30,6 +30,7 @@ const properties = [
     'value-list': [{ value: 7, description: 'vendor text metadata' }],
   }),
   property(8, 'readonly-level', 'uint8', { access: ['read'], 'value-range': [0, 10, 1] }),
+  property(9, 'free-label', 'string'),
 ];
 
 const spec = specWith(properties);
@@ -259,11 +260,9 @@ test('property authoring rejects malformed numeric ranges for literals and varia
   }
 });
 
-test('property variables retain exact native dtype and range metadata', async () => {
+test('number property variables retain exact native dtype/range and literal-only targets reject refs', async () => {
   const gateway = createGateway();
   await addProperty(gateway, 'ratio', '$global.targetRatio');
-  await addProperty(gateway, 'enabled', '$global.targetEnabled');
-  await addProperty(gateway, 'label', '$global.targetLabel');
 
   assert.deepEqual(
     gateway.state.nodes.map((node) => node.props),
@@ -279,17 +278,22 @@ test('property variables retain exact native dtype and range metadata', async ()
         max: 2,
         step: 0.25,
       },
-      { did, siid: 2, piid: 6, scope: 'global', id: 'targetEnabled', dtype: 'boolean' },
-      { did, siid: 2, piid: 7, scope: 'global', id: 'targetLabel', dtype: 'string' },
     ],
   );
   for (const node of gateway.state.nodes) {
     assert.deepEqual(await validateNode(node), []);
   }
-  await assert.rejects(
-    addProperty(createGateway(), 'mode', '$global.targetMode'),
-    (error) => error?.code === 'CONFIG' && /declares no value-range/i.test(error.message),
-  );
+  for (const [name, ref, message] of [
+    ['enabled', '$global.targetEnabled', /boolean.*literal-only/i],
+    ['label', '$global.targetLabel', /value-list.*literal-only/i],
+    ['mode', '$global.targetMode', /value-list.*literal-only/i],
+  ]) {
+    await assert.rejects(
+      addProperty(createGateway(), name, ref),
+      (error) => error?.code === 'CONFIG' && message.test(error.message),
+      name,
+    );
+  }
 });
 
 test('spec-aware persisted property writes enforce property capability, native type, and domain', async () => {
@@ -344,7 +348,7 @@ test('spec-aware persisted property variables enforce dtype, identifiers, and ex
     { name: 'range', props: { ...base, max: 1 }, message: /range metadata.*\[0, 2, 0.25\]/i },
     {
       name: 'nonnumeric metadata',
-      props: { ...base, piid: 7, dtype: 'string' },
+      props: { ...base, piid: 9, dtype: 'string' },
       message: /must not carry numeric range metadata/i,
     },
     {

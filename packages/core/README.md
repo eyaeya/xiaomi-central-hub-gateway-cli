@@ -74,11 +74,15 @@ const specAwareIssues = await validateGraph({
 });
 ```
 
-`getDeviceSpec` 会复核 property 卡的 notify/read/write access、dtype/domain 与 action input 契约。若调用方还有目标网关设备清单，可同时注入 `getDevice(did)`，对 `deviceInput` / `deviceInputSetVar` property/event push source追加实例级 `pushAvailable` 诊断；没有该回调时不得把离线结果表述成已证明 push 可用。`AddNodeShortcut.allowNoPush: true` 仅是本次 typed add 的 transient runtime-probe intent，不持久化、不绕过任何 property access；后续带 `getDevice` 的 `validateGraph` 会继续如实报告 no-push。preload 也只控制启用时首次查询/评估，不改变 notify/read 资格。
+在线变量校验通过 `listAvailVars` 显式注入清单；每项必须保留完整的 `{ scope, id, type: 'number' | 'string' }`。校验器按精确 scope/id 判断存在性，并在所有可判定的引用点核对实际类型。省略 callback 时仍执行合法 scope 和本地图结构检查，但不会假装知道变量是否存在或是什么类型。`exportRuleFromView(..., strictRoundtrip=true)` 会读取源网关规则内与 global 变量的实际类型，在生成任何 staging 脚本前拒绝路径化 mismatch 或缺失 global；permissive export 保留 warning。
+
+`getDeviceSpec` 会复核 property 卡的 notify/read/write access、dtype/domain 与 action input 契约。若调用方还有目标网关设备清单，可同时注入 `getDevice(did)`，对 `deviceInput` / `deviceInputSetVar` property/event push source 追加实例级 `pushAvailable` 诊断；没有该回调时不得把离线结果表述成已证明 push 可用。`AddNodeShortcut.allowNoPush: true` 仅是本次 typed add 的 transient runtime-probe intent，不持久化、不绕过任何 property access；后续带 `getDevice` 的 `validateGraph` 会继续如实报告 no-push。preload 也只控制启用时首次查询/评估，不改变 notify/read 资格。
 
 spec registry 的 404 会返回 warning，表示该 URN 的外部检查被跳过；网络/超时/5xx 或 schema 失败会返回独立 error issue。两者都不会中止图遍历，因此同一次结果仍包含已经发现的本地问题。`validateGraphOrThrow` 会在收集完整 issue 列表后，按既有契约对第一个 error 抛出 `ConfigError`。
 
-注入 spec 后，`deviceOutput` property-write 会核对属性存在性与 write access、literal 的 MIoT 原生类型和 value-list/value-range/step，以及变量 dtype/有效 range metadata；action input 继续使用同一 literal/变量基础契约，并额外检查 `action.in` 与 `props.ins` 的完整逐索引映射。
+注入 spec 后，`deviceOutput` property-write 会核对属性存在性与 write access、literal 的 MIoT 原生类型和 value-list/value-range/step，以及 variable ref 的实际类型、dtype 与有效 range metadata；action input 继续使用同一 literal/变量基础契约，并额外检查 `action.in` 与 `props.ins` 的完整逐索引映射。
+
+`deviceOutput` typed variable ref 只支持不含 `value-list` 字段的 string 目标，或不含该字段且带有效 value-range 的 number 目标。boolean 与任何存在 `value-list` 字段的目标（包括空数组）按固定 UI 的 literal-only 路径处理；spec-aware validation 会诊断 persisted legacy ref，strict export 与 `enableRule` 会 fail closed。默认 enable 只对实际存在的 output ref 做聚焦 spec 证明，404、网络/超时或无效 spec 都阻止 enable，且不会查询或扩大校验到无关旧设备节点；显式传入 `EnableRuleOptions.getDeviceSpec` 时仍保留全图 spec-aware 行为。
 
 ## DATA 响应大小限制
 

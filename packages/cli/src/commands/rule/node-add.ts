@@ -303,7 +303,7 @@ interface NodeAddOpts extends RuleOpts {
   snapshot?: boolean;
   snapshotsDir?: string;
   validate?: boolean;
-  // F66f (2026-05-31) — opt out of the incremental var-existence sweep.
+  // F66f/#173 — opt out of the incremental online variable existence/type sweep.
   // Default ON; pass --no-var-check for raw probes / restore flows.
   varCheck?: boolean;
   deviceDid?: string;
@@ -400,7 +400,7 @@ export function attachNodeAdd(cmd: Command): void {
     .option('--no-validate', 'skip the web-UI save-button validator (NOT recommended)')
     .option(
       '--no-var-check',
-      'skip the F66f incremental var-existence sweep (only meaningful with --validate; useful for raw probes where var refs are about to be materialised by the same batch)',
+      'skip the incremental online variable existence/type sweep (only meaningful with --validate; useful for raw probes where var refs are about to be materialised by the same batch)',
     )
     .option('--snapshots-dir <path>', 'directory for pre-write snapshots (env: XGG_SNAPSHOTS_DIR)')
     .option('--base-url <url>', 'gateway base URL')

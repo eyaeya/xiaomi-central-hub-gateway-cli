@@ -102,7 +102,17 @@ function createGateway({ pushAvailable = true, id = 'rule174' } = {}) {
         if (method === '/api/getDevList') {
           return { devList: { [did]: fakeDevice(pushAvailable) } };
         }
-        if (method === '/api/getVarList') return {};
+        if (method === '/api/getVarList') {
+          return params.scope === 'global'
+            ? {
+                captured: {
+                  type: 'number',
+                  value: 0,
+                  userData: { name: 'Captured' },
+                },
+              }
+            : {};
+        }
         if (method === '/api/getGraphList') return [structuredClone(state.summary)];
         if (method === '/api/getGraph') return { id, nodes: structuredClone(state.nodes) };
         if (method === '/api/setGraph') {

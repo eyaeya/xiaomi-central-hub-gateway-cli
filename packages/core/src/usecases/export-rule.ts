@@ -1,5 +1,5 @@
 import { getDevice } from '../resources/devices.js';
-import type { AvailableVariable, ResourceDeps } from '../resources/index.js';
+import type { ResourceDeps } from '../resources/index.js';
 import {
   type RuleView,
   type VarSetExprElement,
@@ -168,7 +168,7 @@ export async function exportRuleFromView(
 ): Promise<ExportedRule> {
   const commands: ExportedCommand[] = [];
   const nodeWarnings: string[] = [];
-  const variablePlan = await prepareVariablePlan(view, deps);
+  const variablePlan = await prepareVariablePlan(view, deps, strictRoundtrip);
 
   // Always build the source-id representation first. applyRename() is the
   // single rename/remap funnel for both live export --target-id and the
@@ -325,8 +325,15 @@ export async function exportRuleFromView(
   return rename === undefined ? exported : applyRename(exported, rename);
 }
 
-interface VariableReference extends AvailableVariable {
+interface VariableReference {
+  scope: string;
+  id: string;
   paths: string[];
+  expectations: Array<{
+    path: string;
+    type: 'number' | 'string' | 'boolean';
+    usage: 'generic' | 'device-capture' | 'device-output';
+  }>;
 }
 
 interface VariablePlan {
@@ -336,7 +343,50 @@ interface VariablePlan {
   warnings: string[];
 }
 
-async function prepareVariablePlan(view: RuleView, deps: ResourceDeps): Promise<VariablePlan> {
+function variableTypeContractMessage(
+  ref: VariableReference,
+  actualType: 'number' | 'string',
+): string | null {
+  const mismatches = ref.expectations.filter((expected) => expected.type !== actualType);
+  if (mismatches.length === 0) return null;
+  return `variable ${ref.scope}.${ref.id} is stored as "${actualType}", but ${mismatches
+    .map(({ path, type, usage }) => {
+      if (type !== 'boolean') return `${path} requires "${type}"`;
+      if (usage === 'device-capture') {
+        return `${path} declares unsupported device-capture dtype "boolean"; gateway variables support only "number" and "string", so capture boolean state into a number variable with canonical dtype "number" (0/1)`;
+      }
+      if (usage === 'device-output') {
+        return `${path} declares unsupported deviceOutput variable dtype "boolean"; gateway variables support only "number" and "string". For a number/string target, use its native dtype; for an actual boolean target, the canonical UI is literal-only, so branch a number 0/1 state and route the branches to literal false/true outputs`;
+      }
+      return `${path} declares unsupported variable type "boolean"; gateway variables support only "number" and "string" (model boolean state as number 0/1)`;
+    })
+    .join(', ')}`;
+}
+
+function checkExportVariableType(
+  ref: VariableReference,
+  actualType: 'number' | 'string',
+  strictRoundtrip: boolean,
+  warnings: string[],
+): void {
+  const message = variableTypeContractMessage(ref, actualType);
+  if (message === null) return;
+  if (strictRoundtrip) {
+    throw new ConfigError(`strict round-trip cannot preserve ${message}`, {
+      scope: ref.scope,
+      id: ref.id,
+      actualType,
+      expectations: ref.expectations,
+    });
+  }
+  warnings.push(`${message}; typed replay will reject unless the graph or variable is repaired`);
+}
+
+async function prepareVariablePlan(
+  view: RuleView,
+  deps: ResourceDeps,
+  strictRoundtrip: boolean,
+): Promise<VariablePlan> {
   const sourceScope = `R${view.id}`;
   const references = collectVariableReferences(view.nodes);
   const unknown = references.filter((ref) => ref.scope !== sourceScope && ref.scope !== 'global');
@@ -351,13 +401,12 @@ async function prepareVariablePlan(view: RuleView, deps: ResourceDeps): Promise<
     );
   }
 
-  const externalVariables = references
-    .filter((ref) => ref.scope === 'global')
-    .map((ref) => ({ scope: 'global' as const, id: ref.id }));
-  const warnings = externalVariables.map(
-    ({ scope, id }) =>
-      `external variable dependency ${scope}.${id} is not recreated; it must already exist with a compatible type/value before replay`,
-  );
+  const globalReferences = references.filter((ref) => ref.scope === 'global');
+  const externalVariables = globalReferences.map((ref) => ({
+    scope: 'global' as const,
+    id: ref.id,
+  }));
+  const warnings: string[] = [];
   const dependencyCommands: ExportedCommand[] = externalVariables.map(({ scope, id }) => ({
     kind: 'external-variable-dependency',
     scope,
@@ -365,27 +414,26 @@ async function prepareVariablePlan(view: RuleView, deps: ResourceDeps): Promise<
   }));
 
   const localReferences = references.filter((ref) => ref.scope === sourceScope);
-  if (localReferences.length === 0) {
-    return { dependencyCommands, createCommands: [], externalVariables, warnings };
-  }
-  if (!isValidVariableScopeName(sourceScope)) {
+  if (localReferences.length > 0 && !isValidVariableScopeName(sourceScope)) {
     throw new ConfigError(
       `rule-local variable scope "${sourceScope}" cannot be recreated because gateway variable scopes must be alphanumeric`,
       { ruleId: view.id, scope: sourceScope },
     );
   }
 
-  let sourceVariables: Awaited<ReturnType<typeof listVariables>>;
-  try {
-    sourceVariables = await listVariables(sourceScope, deps);
-  } catch (error) {
-    if (isMissingScopeError(error)) {
-      throw new ConfigError(
-        `rule ${view.id} references local variables but source scope "${sourceScope}" does not exist`,
-        { ruleId: view.id, scope: sourceScope, variables: localReferences.map((ref) => ref.id) },
-      );
+  let sourceVariables: Awaited<ReturnType<typeof listVariables>> = {};
+  if (localReferences.length > 0) {
+    try {
+      sourceVariables = await listVariables(sourceScope, deps);
+    } catch (error) {
+      if (isMissingScopeError(error)) {
+        throw new ConfigError(
+          `rule ${view.id} references local variables but source scope "${sourceScope}" does not exist`,
+          { ruleId: view.id, scope: sourceScope, variables: localReferences.map((ref) => ref.id) },
+        );
+      }
+      throw error;
     }
-    throw error;
   }
 
   const createCommands: ExportedCommand[] = [];
@@ -406,6 +454,7 @@ async function prepareVariablePlan(view: RuleView, deps: ResourceDeps): Promise<
         { scope: sourceScope, id: ref.id, type: entry.type, valueType: typeof entry.value },
       );
     }
+    checkExportVariableType(ref, entry.type, strictRoundtrip, warnings);
     createCommands.push({
       kind: 'variable-create',
       scope: sourceScope,
@@ -416,20 +465,61 @@ async function prepareVariablePlan(view: RuleView, deps: ResourceDeps): Promise<
     });
   }
 
+  let globalVariables: Awaited<ReturnType<typeof listVariables>> = {};
+  if (globalReferences.length > 0) {
+    try {
+      globalVariables = await listVariables('global', deps);
+    } catch (error) {
+      if (!isMissingScopeError(error)) throw error;
+    }
+  }
+  for (const ref of globalReferences) {
+    const entry = Object.hasOwn(globalVariables, ref.id) ? globalVariables[ref.id] : undefined;
+    if (entry === undefined) {
+      const message = `external variable dependency global.${ref.id} is missing on the source gateway at ${ref.paths.join(', ')}`;
+      if (strictRoundtrip) {
+        throw new ConfigError(
+          `strict round-trip cannot preserve ${message}; refusing to emit a replay that cannot pass its variable gate`,
+          { scope: 'global', id: ref.id, paths: ref.paths },
+        );
+      }
+      warnings.push(
+        `${message}; it is not recreated and must exist with a compatible type/value before replay`,
+      );
+      continue;
+    }
+    checkExportVariableType(ref, entry.type, strictRoundtrip, warnings);
+    warnings.push(
+      `external variable dependency global.${ref.id} is not recreated; source type is "${entry.type}" and the replay target must provide a compatible type/value`,
+    );
+  }
+
   return { dependencyCommands, createCommands, externalVariables, warnings };
 }
 
 function collectVariableReferences(nodes: readonly unknown[]): VariableReference[] {
   const refs = new Map<string, VariableReference>();
-  const add = (candidate: unknown, path: string): void => {
+  const add = (
+    candidate: unknown,
+    path: string,
+    expectedType?: 'number' | 'string' | 'boolean',
+    usage: 'generic' | 'device-capture' | 'device-output' = 'generic',
+  ): void => {
     if (!isRecord(candidate)) return;
     const { scope, id } = candidate;
     if (typeof scope !== 'string' || typeof id !== 'string') return;
     const key = `${scope}\u0000${id}`;
     const prior = refs.get(key);
-    if (prior === undefined) refs.set(key, { scope, id, paths: [path] });
-    else prior.paths.push(path);
+    const expectation = expectedType === undefined ? [] : [{ path, type: expectedType, usage }];
+    if (prior === undefined) refs.set(key, { scope, id, paths: [path], expectations: expectation });
+    else {
+      prior.paths.push(path);
+      prior.expectations.push(...expectation);
+    }
   };
+
+  const declaredType = (value: unknown): 'number' | 'string' | 'boolean' | undefined =>
+    value === 'number' || value === 'string' || value === 'boolean' ? value : undefined;
 
   for (const rawNode of nodes) {
     if (!isRecord(rawNode) || typeof rawNode.type !== 'string') continue;
@@ -438,35 +528,49 @@ function collectVariableReferences(nodes: readonly unknown[]): VariableReference
     switch (rawNode.type) {
       case 'varChange':
       case 'varGet':
+        add(props, `${nodePath}.props`, declaredType(props.varType));
+        break;
       case 'varSetNumber':
-      case 'varSetString':
-        add(props, `${nodePath}.props`);
+      case 'varSetString': {
+        add(props, `${nodePath}.props`, rawNode.type === 'varSetNumber' ? 'number' : 'string');
         if (rawNode.type === 'varSetNumber' || rawNode.type === 'varSetString') {
           const elements = Array.isArray(props.elements) ? props.elements : [];
           for (const [index, element] of elements.entries()) {
             if (isRecord(element) && element.type === 'var') {
-              add(element, `${nodePath}.props.elements[${index}]`);
+              add(
+                element,
+                `${nodePath}.props.elements[${index}]`,
+                rawNode.type === 'varSetNumber' ? 'number' : undefined,
+              );
             }
           }
         }
         break;
+      }
       case 'deviceInputSetVar': {
-        add(props, `${nodePath}.props`);
+        add(props, `${nodePath}.props`, declaredType(props.dtype), 'device-capture');
         const args = Array.isArray(props.arguments) ? props.arguments : [];
         for (const [index, arg] of args.entries()) {
-          add(arg, `${nodePath}.props.arguments[${index}]`);
+          add(
+            arg,
+            `${nodePath}.props.arguments[${index}]`,
+            isRecord(arg) ? declaredType(arg.dtype) : undefined,
+            'device-capture',
+          );
         }
         break;
       }
       case 'deviceGetSetVar':
-        add(props, `${nodePath}.props`);
+        add(props, `${nodePath}.props`, declaredType(props.dtype), 'device-capture');
         break;
       case 'deviceOutput': {
-        if (isDeviceOutputVariableRef(props)) add(props, `${nodePath}.props`);
+        if (isDeviceOutputVariableRef(props)) {
+          add(props, `${nodePath}.props`, declaredType(props.dtype), 'device-output');
+        }
         const ins = Array.isArray(props.ins) ? props.ins : [];
         for (const [index, arg] of ins.entries()) {
           if (isRecord(arg) && isDeviceOutputVariableRef(arg)) {
-            add(arg, `${nodePath}.props.ins[${index}]`);
+            add(arg, `${nodePath}.props.ins[${index}]`, declaredType(arg.dtype), 'device-output');
           }
         }
         break;
@@ -1256,14 +1360,14 @@ async function renderDeviceOutput(
     )) {
       warnings.push(`deviceOutput node ${n.id}: ${contractIssue.message} (${contractIssue.path})`);
     }
-    const propertyName = findPropertyName(spec, Number(props.siid), Number(props.piid));
-    if (propertyName === null) {
+    const propertyDetails = findPropertyDetails(spec, Number(props.siid), Number(props.piid));
+    if (propertyDetails === null) {
       flags.push({
         name: '--device-property',
         value: `<UNKNOWN_PROPERTY_siid${props.siid}_piid${props.piid}>`,
       });
     } else {
-      flags.push({ name: '--device-property', value: propertyName });
+      flags.push({ name: '--device-property', value: propertyDetails.propertyName });
     }
     if (props.value !== undefined) {
       const literal = String(props.value);
@@ -2075,7 +2179,7 @@ function collectCommandVariableReferences(
   const add = (scope: string, id: string, path: string): void => {
     const key = `${scope}\u0000${id}`;
     const prior = refs.get(key);
-    if (prior === undefined) refs.set(key, { scope, id, paths: [path] });
+    if (prior === undefined) refs.set(key, { scope, id, paths: [path], expectations: [] });
     else prior.paths.push(path);
   };
 

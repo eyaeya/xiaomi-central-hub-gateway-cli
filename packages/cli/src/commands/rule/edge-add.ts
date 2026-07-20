@@ -24,7 +24,7 @@ interface EdgeAddOpts extends RuleOpts, EdgeEndpointOpts {
   snapshotsDir?: string;
   refreshHint?: boolean;
   nextHint?: boolean;
-  // F66f (2026-05-31) — opt out of the incremental var-existence sweep.
+  // F66f/#173 — opt out of the incremental online variable existence/type sweep.
   varCheck?: boolean;
 }
 
@@ -42,7 +42,10 @@ export function attachEdgeAdd(cmd: Command): void {
     .option('--to-node-id <id>', 'lossless target node id (requires all split endpoint flags)')
     .option('--to-pin <pin>', 'lossless target pin (requires all split endpoint flags)')
     .option('--no-snapshot', 'skip the pre-write dump snapshot')
-    .option('--no-var-check', 'skip the F66f incremental var-existence sweep (raw probes only)')
+    .option(
+      '--no-var-check',
+      'skip the incremental online variable existence/type sweep (raw probes only)',
+    )
     .option('--snapshots-dir <path>', 'directory for pre-write snapshots (env: XGG_SNAPSHOTS_DIR)')
     .option('--base-url <url>', 'gateway base URL')
     .option('--session-file <path>', 'session file path')

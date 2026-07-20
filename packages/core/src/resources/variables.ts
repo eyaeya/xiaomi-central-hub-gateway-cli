@@ -62,8 +62,11 @@ export function isMissingScopeError(error: unknown): error is GatewayError {
 }
 
 // F23 (2026-05-30): the UI save() flow calls `varTool.listAvailVars(graphId)`.
-// Preserve each local-rule/global variable's exact scope and id so a same-named
-// variable in the other scope cannot satisfy the graph's existence check.
+// Preserve each local-rule/global variable's exact scope, id, and stored type
+// so a same-named variable in the other scope cannot satisfy the graph's
+// existence/type check. The pinned UI selector carries the same `type` field
+// through its inventory and disables entries that do not match its requested
+// varType.
 // Missing scopes are tolerated — neither `R<graphId>` nor `global` is required
 // to exist (a rule with no local vars / a fresh gateway with no globals still
 // lints cleanly).
@@ -75,7 +78,9 @@ export async function listAvailVarsForRule(
   for (const scope of [`R${ruleId}`, 'global']) {
     try {
       const map = await listVariables(scope, deps);
-      for (const id of Object.keys(map)) variables.push({ scope, id });
+      for (const [id, entry] of Object.entries(map)) {
+        variables.push({ scope, id, type: entry.type });
+      }
     } catch (e) {
       // Scope doesn't exist (gateway throws on unknown scope); skip silently.
       if (!isMissingScopeError(e)) throw e;

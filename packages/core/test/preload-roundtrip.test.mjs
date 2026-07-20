@@ -97,6 +97,13 @@ function createGateway() {
         if (method === '/api/getDevList') return { devList: { [did]: device } };
         if (method === '/api/getGraphList') return [structuredClone(state.summary)];
         if (method === '/api/getGraph') return { id: ruleId, nodes: structuredClone(state.nodes) };
+        if (method === '/api/getVarList' && params.scope === 'global') {
+          return Object.fromEntries(
+            ['captured0', 'captured1', 'captured2', 'observed0', 'observed1', 'observed2'].map(
+              (id) => [id, { type: 'number', value: 0, userData: { name: id } }],
+            ),
+          );
+        }
         if (method === '/api/setGraph') {
           state.summary = structuredClone(params.cfg);
           state.nodes = structuredClone(params.nodes);

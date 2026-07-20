@@ -11,6 +11,7 @@ import {
   createRule,
   enableRule,
   listAvailVarsForRule,
+  removeNode,
   updateNode,
   upsertGraph,
   validateGraph,
@@ -250,8 +251,8 @@ async function validate(nodes, available, id = ruleId) {
 }
 
 test('variable existence is keyed by exact scope and id', async () => {
-  const globalOnly = [{ scope: 'global', id: 'same' }];
-  const localOnly = [{ scope: localScope, id: 'same' }];
+  const globalOnly = [{ scope: 'global', id: 'same', type: 'number' }];
+  const localOnly = [{ scope: localScope, id: 'same', type: 'number' }];
   const both = [...localOnly, ...globalOnly];
 
   assert.match(
@@ -272,13 +273,20 @@ test('variable existence is keyed by exact scope and id', async () => {
   );
 
   const thirdParty = variableErrors(
-    await validate([varChange('thirdParty')], [{ scope: 'thirdParty', id: 'same' }]),
+    await validate(
+      [varChange('thirdParty')],
+      [{ scope: 'thirdParty', id: 'same', type: 'number' }],
+    ),
   );
   assert.match(thirdParty[0].message, /卡片变量有误/);
   assert.match(thirdParty[0].message, /global.*R1/);
 
   const changedRule = variableErrors(
-    await validate([varChange(localScope)], [{ scope: localScope, id: 'same' }], '2'),
+    await validate(
+      [varChange(localScope)],
+      [{ scope: localScope, id: 'same', type: 'number' }],
+      '2',
+    ),
   );
   assert.match(changedRule[0].message, /卡片变量有误/);
   assert.match(changedRule[0].message, /R2/);
@@ -286,10 +294,16 @@ test('variable existence is keyed by exact scope and id', async () => {
 
 test('every modeled variable-reference location uses the scoped lookup', async () => {
   const crossScopeOnly = [
-    { scope: 'global', id: 'same' },
-    { scope: 'global', id: 'target' },
+    { scope: 'global', id: 'same', type: 'number' },
+    { scope: 'global', id: 'target', type: 'number' },
+    { scope: 'global', id: 'text', type: 'string' },
+    { scope: 'global', id: 'textTarget', type: 'string' },
   ];
-  const exact = [...crossScopeOnly, { scope: localScope, id: 'same' }];
+  const exact = [
+    ...crossScopeOnly,
+    { scope: localScope, id: 'same', type: 'number' },
+    { scope: localScope, id: 'text', type: 'string' },
+  ];
   const cases = [
     { name: 'varChange props', node: varChange(localScope), path: 'nodes[0].props' },
     { name: 'varGet props', node: varGet(localScope), path: 'nodes[0].props' },
@@ -308,12 +322,13 @@ test('every modeled variable-reference location uses the scoped lookup', async (
     },
     {
       name: 'varSetString target',
-      node: varSet('varSetString', localScope, 'same', [{ type: 'const', value: 'ok' }]),
+      node: varSet('varSetString', localScope, 'text', [{ type: 'const', value: 'ok' }]),
       path: 'nodes[0].props',
+      id: 'text',
     },
     {
       name: 'varSetString element',
-      node: varSet('varSetString', 'global', 'target', [
+      node: varSet('varSetString', 'global', 'textTarget', [
         { type: 'var', scope: localScope, id: 'same' },
       ]),
       path: 'nodes[0].props.elements[0]',
@@ -345,13 +360,123 @@ test('every modeled variable-reference location uses the scoped lookup', async (
     },
   ];
 
-  for (const { name, node, path } of cases) {
+  for (const { name, node, path, id = 'same' } of cases) {
     const missing = variableErrors(await validate([node], crossScopeOnly));
     assert.equal(missing.length, 1, name);
     assert.equal(missing[0].path, path, name);
-    assert.match(missing[0].message, /卡片变量丢失: R1\.same/, name);
+    assert.match(missing[0].message, new RegExp(`卡片变量丢失: R1\\.${id}`), name);
     assert.deepEqual(variableErrors(await validate([node], exact)), [], name);
   }
+});
+
+test('every determinable variable-reference type is checked at its exact path', async () => {
+  const cases = [
+    {
+      name: 'varChange props.varType',
+      node: varChange('global', 'wrong'),
+      expected: 'number',
+      actual: 'string',
+      path: 'nodes[0].props.varType',
+    },
+    {
+      name: 'varGet props.varType',
+      node: varGet('global', 'wrong'),
+      expected: 'number',
+      actual: 'string',
+      path: 'nodes[0].props.varType',
+    },
+    {
+      name: 'varSetNumber target',
+      node: varSet('varSetNumber', 'global', 'wrong', [{ type: 'const', value: '1' }]),
+      expected: 'number',
+      actual: 'string',
+      path: 'nodes[0].props',
+    },
+    {
+      name: 'varSetNumber operand',
+      node: varSet('varSetNumber', 'global', 'targetNumber', [
+        { type: 'var', scope: 'global', id: 'wrong' },
+        { type: 'const', value: ' + 1' },
+      ]),
+      expected: 'number',
+      actual: 'string',
+      path: 'nodes[0].props.elements[0]',
+      extra: [{ scope: 'global', id: 'targetNumber', type: 'number' }],
+    },
+    {
+      name: 'varSetString target',
+      node: varSet('varSetString', localScope, 'wrong', [{ type: 'const', value: 'ok' }]),
+      expected: 'string',
+      actual: 'number',
+      path: 'nodes[0].props',
+      scope: localScope,
+    },
+    {
+      name: 'deviceInputSetVar property target',
+      node: deviceInputSetVarProperty('global', 'wrong'),
+      expected: 'number',
+      actual: 'string',
+      path: 'nodes[0].props.dtype',
+    },
+    {
+      name: 'deviceInputSetVar event target',
+      node: deviceInputSetVarEvent('global', 'wrong'),
+      expected: 'number',
+      actual: 'string',
+      path: 'nodes[0].props.arguments[0].dtype',
+    },
+    {
+      name: 'deviceGetSetVar target',
+      node: deviceGetSetVar('global', 'wrong'),
+      expected: 'number',
+      actual: 'string',
+      path: 'nodes[0].props.dtype',
+    },
+    {
+      name: 'deviceOutput property ref',
+      node: deviceOutputProperty('global', 'wrong'),
+      expected: 'number',
+      actual: 'string',
+      path: 'nodes[0].props.dtype',
+    },
+    {
+      name: 'deviceOutput action ref',
+      node: deviceOutputAction('global', 'wrong'),
+      expected: 'number',
+      actual: 'string',
+      path: 'nodes[0].props.ins[0].dtype',
+    },
+  ];
+
+  for (const { name, node, expected, actual, path, scope = 'global', extra = [] } of cases) {
+    const available = [{ scope, id: 'wrong', type: actual }, ...extra];
+    const mismatches = variableErrors(await validate([node], available)).filter((entry) =>
+      entry.message.includes('类型不匹配'),
+    );
+    assert.equal(mismatches.length, 1, name);
+    assert.equal(mismatches[0].path, path, name);
+    assert.match(mismatches[0].message, new RegExp(`stored as "${actual}"`), name);
+    assert.match(mismatches[0].message, new RegExp(`requires "${expected}"`), name);
+
+    const compatible = available.map((entry) =>
+      entry.id === 'wrong' ? { ...entry, type: expected } : entry,
+    );
+    assert.deepEqual(variableErrors(await validate([node], compatible)), [], name);
+  }
+});
+
+test('varSetString operands conservatively accept both number and string variables', async () => {
+  const node = varSet('varSetString', 'global', 'targetString', [
+    { type: 'var', scope: 'global', id: 'numberOperand' },
+    { type: 'const', value: ':' },
+    { type: 'var', scope: localScope, id: 'stringOperand' },
+  ]);
+  const available = [
+    { scope: 'global', id: 'targetString', type: 'string' },
+    { scope: 'global', id: 'numberOperand', type: 'number' },
+    { scope: localScope, id: 'stringOperand', type: 'string' },
+  ];
+  assert.deepEqual(variableErrors(await validate([node], available)), []);
 });
 
 test('available-variable listing preserves scope for same-named variables', async () => {
@@ -365,9 +490,9 @@ test('available-variable listing preserves scope for same-named variables', asyn
   });
 
   assert.deepEqual(await listAvailVarsForRule(ruleId, deps), [
-    { scope: localScope, id: 'same' },
-    { scope: 'global', id: 'same' },
-    { scope: 'global', id: 'other' },
+    { scope: localScope, id: 'same', type: 'number' },
+    { scope: 'global', id: 'same', type: 'number' },
+    { scope: 'global', id: 'other', type: 'number' },
   ]);
   assert.deepEqual(
     calls.map((call) => call.params.scope),
@@ -382,7 +507,9 @@ test('only the two known missing-scope messages are treated as an empty scope', 
       if (params.scope === localScope) throw new GatewayError(message, {});
       return { same: variableEntry };
     });
-    assert.deepEqual(await listAvailVarsForRule(ruleId, deps), [{ scope: 'global', id: 'same' }]);
+    assert.deepEqual(await listAvailVarsForRule(ruleId, deps), [
+      { scope: 'global', id: 'same', type: 'number' },
+    ]);
   }
 
   const errors = [
@@ -424,19 +551,19 @@ test('rule scope bootstrap shares the two known missing-scope classifications', 
   );
 });
 
-function writeGateDeps(nodes) {
+function writeGateDeps(nodes, globalEntry = variableEntry) {
   return fakeDeps((method, params) => {
     if (method === '/api/getGraphList') return [ruleSummary()];
     if (method === '/api/getGraph') return { id: ruleId, nodes: structuredClone(nodes) };
     if (method === '/api/getVarList') {
-      return params.scope === 'global' ? { same: variableEntry } : {};
+      return params.scope === 'global' ? { same: globalEntry } : {};
     }
     if (method === '/api/setGraph' || method === '/api/changeGraphConfig') return null;
     throw new Error(`unexpected RPC: ${method}`);
   });
 }
 
-test('set, node update, edge add, and enable reject the exact missing scope before writes', async () => {
+test('set, node update/remove, edge add, and enable reject the exact missing scope before writes', async () => {
   const ref = varChange(localScope);
   const cases = [
     {
@@ -449,6 +576,11 @@ test('set, node update, edge add, and enable reject the exact missing scope befo
       nodes: [ref],
       run: (deps) =>
         updateNode({ ruleId, nodeId: ref.id, patch: { cfg: { name: 'patched' } } }, deps),
+    },
+    {
+      name: 'node remove',
+      nodes: [ref, delay()],
+      run: (deps) => removeNode({ ruleId, nodeId: 'wait' }, deps),
     },
     {
       name: 'edge add',
@@ -483,4 +615,55 @@ test('set, node update, edge add, and enable reject the exact missing scope befo
       name,
     );
   }
+});
+
+test('incremental writes enforce type by default and preserve the explicit var-check opt-out', async () => {
+  const ref = varChange('global');
+  const { deps, calls } = writeGateDeps([ref], {
+    ...variableEntry,
+    type: 'string',
+  });
+  const input = {
+    ruleId,
+    nodeId: ref.id,
+    patch: { cfg: { name: 'patched' } },
+  };
+
+  await assert.rejects(
+    updateNode(input, deps),
+    (error) =>
+      error?.code === 'CONFIG' &&
+      error.message.includes('卡片变量类型不匹配') &&
+      error.message.includes('stored as "string"') &&
+      error.message.includes('requires "number"'),
+  );
+  assert.equal(
+    calls.some((call) => call.method === '/api/setGraph'),
+    false,
+  );
+
+  await updateNode({ ...input, varCheck: false }, deps);
+  assert.equal(calls.filter((call) => call.method === '/api/setGraph').length, 1);
+});
+
+test('node removal checks remaining variable types and keeps an explicit cleanup opt-out', async () => {
+  const ref = varChange('global');
+  const nodes = [ref, delay()];
+  const { deps, calls } = writeGateDeps(nodes, { ...variableEntry, type: 'string' });
+
+  await assert.rejects(
+    removeNode({ ruleId, nodeId: 'wait' }, deps),
+    (error) =>
+      error?.code === 'CONFIG' &&
+      error.message.includes('卡片变量类型不匹配') &&
+      error.message.includes('stored as "string"') &&
+      error.message.includes('requires "number"'),
+  );
+  assert.equal(
+    calls.some((call) => call.method === '/api/setGraph'),
+    false,
+  );
+
+  await removeNode({ ruleId, nodeId: 'wait', varCheck: false }, deps);
+  assert.equal(calls.filter((call) => call.method === '/api/setGraph').length, 1);
 });
