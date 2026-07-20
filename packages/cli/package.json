@@ -38,6 +38,7 @@
   "dependencies": {
     "@eyaeya/xgg-core": "workspace:^",
     "cli-table3": "^0.6.5",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "string-width": "^4.2.3"
   }
 }

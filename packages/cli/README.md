@@ -64,6 +64,8 @@ xgg rule lint --rule-id <rule-id> --strict
 
 复杂分支、条件或循环可用 `xgg rule trace <rule-id>` 查看按步累积的当前图 node/edge 状态；`--node` / `--edge` / `--watch` 可筛 watchpoint，`--since` / `--until` / `--start-step` / `--end-step` / `--max-steps` 可限定范围，`--next-from` 可导航到下一次变化，`--pretty` 输出紧凑时间线。默认 JSON 含日志分页停止原因、未解析行计数、扫描/选择边界、Bundle 语义丢弃与相对当前图的拓扑漂移，但不回显可能属于其他规则的未解析原文。分页按旧块到新块、块内原序重建且保留合法重复行。节点 info 按 Bundle 逐类型转译；`deviceGet` 按唯一 URN 复用公共 MIoT spec 缓存，notify 属性优先实例 value-list、再用 Bundle 内置 bool 标签，未知值或查询失败时回退 raw，并只报告失败 URN/count、不暴露 DID；设备 multiLanguage/catalog normalization 暂未复刻。trace 是客户端从有界保留日志和当前规则图派生的投影，不是新网关 RPC、设备实时真值或完整执行证明。
 
+`xgg rule view <rule-id> --pretty` 用稳定、有界的 JSON 型摘要展示每个节点的 `inputs`、`props` 与输出拓扑，便于快速审查；字符串带 JSON 引号，number/boolean/null 保持原生类型，数组/对象结构明确，嵌套标量数组保留前若干实际值，省略时会标出数量。表格使用固定列宽并按终端显示宽度换行或截断，中文、组合字符和 emoji 不会按 JavaScript 字符数误切；用于后续命令的 `nodeId` 与精确节点 `type` 始终无损多行显示，不加省略号。机器处理、编辑重放、读取未知或被摘要省略的字段时，必须改用不带 `--pretty` 的默认无损 JSON。
+
 目标化编辑和规则生命周期不需要整图重写：
 
 ```bash
