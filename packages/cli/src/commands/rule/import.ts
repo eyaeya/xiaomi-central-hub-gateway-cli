@@ -75,8 +75,11 @@ Notes:
     path and NODE_BIN optionally selects one Node executable path. They become
     two separately quoted argv elements; the script uses no eval or unquoted
     word splitting.
-  - Replay preflights captured local variables. Its first target-graph write is
-    the exported empty shell with cfg overwrite and enable=false. When captured
+  - Replay first asserts every global dependency exists with its exported
+    number|string type, then preflights captured local variables. Global checks
+    compare neither value nor display name and never create or modify globals.
+    Its first target-graph write is the exported empty shell with cfg overwrite
+    and enable=false. When captured
     local variables exist, same-id prepares them with compatibility guards
     before that graph write; a clone keeps its expect-absent guard and prepares
     remapped local variables only after the disabled empty target exists.
@@ -91,8 +94,10 @@ Notes:
     created with expect-absent semantics before local variables are prepared,
     so an existing rule id (including one which appears during preflight) is
     never overwritten. Concurrent variable changes can still stop replay
-    because the gateway has no cross-variable transaction. global variables
-    remain declared external dependencies and must exist.
+    because the gateway has no cross-variable transaction. A variable can also
+    drift after preflight. global variables remain typed external dependencies;
+    historical untyped global JSON fails closed and must be re-exported, while
+    old JSON with no global dependencies remains compatible.
   - --target-id must differ from the exported rule id. Omit it for same-ID
     replay. --target-name is applied to both a clone and an existing same-ID
     target by the staged cfg overwrite.

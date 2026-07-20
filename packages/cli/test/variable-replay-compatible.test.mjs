@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { GatewayError, createIpcServer } from '@eyaeya/xgg-core';
+import { GatewayError, NotFoundError, createIpcServer } from '@eyaeya/xgg-core';
 import { buildProgram } from '../dist/program.js';
 
 const baseUrl = 'http://gateway.invalid';
@@ -218,6 +218,131 @@ test('variable create --if-compatible keeps an exact value and rejects mismatche
       ['/api/getVarScopeList', 'read'],
       ['/api/createVar', 'write'],
       ['/api/getVarList', 'read'],
+    ],
+  );
+});
+
+test('variable get-config --expect-type is a read-only assertion and rejects invalid input before IPC', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'xgg-variable-type-assert-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const socketPath = join(root, 'agent.sock');
+  const sessionFile = join(root, 'session.json');
+  await writeFile(
+    sessionFile,
+    JSON.stringify({
+      version: 2,
+      sessions: {
+        [baseUrl]: {
+          host: baseUrl,
+          pid: process.pid,
+          socketPath,
+          agentStartedAt: startedAt,
+          agentVersion: '0.1.4',
+          lastValidatedAt: startedAt,
+        },
+      },
+    }),
+  );
+  const calls = [];
+  const deniedErrors = {
+    permission: new GatewayError('Permission does not exist', {}),
+    scoped: new GatewayError('Scope R1 does not exist because access was denied', {}),
+    invalidScope: new GatewayError('Invalid scope: permission denied', {}),
+  };
+  const server = await createIpcServer({
+    path: socketPath,
+    handler: async ({ method, params, kind }) => {
+      if (method === '$ping') return { host: baseUrl, agentStartedAt: startedAt };
+      calls.push({ method, params, kind });
+      if (method === '/api/getVarConfig') {
+        if (params.id === 'missing') throw new GatewayError('Variable not found', {});
+        if (params.id === 'missingTyped') throw new NotFoundError('typed resource missing');
+        if (params.id === 'permission') throw deniedErrors.permission;
+        if (params.id === 'scoped') throw deniedErrors.scoped;
+        if (params.id === 'invalidScope') throw deniedErrors.invalidScope;
+        return { type: params.id === 'label' ? 'string' : 'number', userData: { name: params.id } };
+      }
+      throw new Error(`unexpected RPC: ${method}`);
+    },
+  });
+  t.after(() => server.close());
+
+  const args = (id, type) => [
+    'node',
+    'xgg',
+    'variable',
+    'get-config',
+    '--scope',
+    'global',
+    '--id',
+    id,
+    '--expect-type',
+    type,
+    '--base-url',
+    baseUrl,
+    '--session-file',
+    sessionFile,
+  ];
+  for (const invalid of [
+    args('bad-id', 'number'),
+    args('count', 'boolean'),
+    (() => {
+      const value = args('count', 'number');
+      value[value.indexOf('--scope') + 1] = 'bad scope';
+      return value;
+    })(),
+  ]) {
+    await assert.rejects(buildProgram().parseAsync(invalid), (error) => error?.code === 'CONFIG');
+  }
+  assert.equal(calls.length, 0);
+
+  const matched = await captureStdout(() => buildProgram().parseAsync(args('count', 'number')));
+  assert.deepEqual(JSON.parse(matched), {
+    ok: true,
+    scope: 'global',
+    id: 'count',
+    config: { type: 'number', userData: { name: 'count' } },
+    expectedType: 'number',
+    matched: true,
+  });
+  await assert.rejects(
+    buildProgram().parseAsync(args('label', 'number')),
+    (error) =>
+      error?.code === 'CONFIG' &&
+      error.details?.expectedType === 'number' &&
+      error.details?.actualType === 'string',
+  );
+  await assert.rejects(
+    buildProgram().parseAsync(args('missing', 'string')),
+    (error) =>
+      error?.code === 'CONFIG' &&
+      error.details?.expectedType === 'string' &&
+      error.details?.id === 'missing',
+  );
+  await assert.rejects(
+    buildProgram().parseAsync(args('missingTyped', 'number')),
+    (error) => error?.code === 'CONFIG' && error.details?.id === 'missingTyped',
+  );
+  for (const [id, expectedError] of Object.entries(deniedErrors)) {
+    await assert.rejects(
+      buildProgram().parseAsync(args(id, 'number')),
+      (error) =>
+        error instanceof GatewayError &&
+        error.code === 'GATEWAY' &&
+        error.message === expectedError.message,
+      id,
+    );
+  }
+  assert.deepEqual(
+    calls.map((call) => [call.method, call.kind, call.params.id]),
+    [
+      ['/api/getVarConfig', 'read', 'count'],
+      ['/api/getVarConfig', 'read', 'label'],
+      ['/api/getVarConfig', 'read', 'missing'],
+      ['/api/getVarConfig', 'read', 'missingTyped'],
+      ['/api/getVarConfig', 'read', 'permission'],
+      ['/api/getVarConfig', 'read', 'scoped'],
+      ['/api/getVarConfig', 'read', 'invalidScope'],
     ],
   );
 });

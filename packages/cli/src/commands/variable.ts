@@ -190,6 +190,7 @@ export function variableCommand(): Command {
   interface SingleGetterOpts extends VariableOpts {
     scope: string;
     id: string;
+    expectType?: string;
   }
 
   cmd
@@ -197,17 +198,74 @@ export function variableCommand(): Command {
     .description('Read a single variable config (gateway /api/getVarConfig)')
     .requiredOption('--scope <name>', 'scope name')
     .requiredOption('--id <id>', 'variable id')
+    .option(
+      '--expect-type <type>',
+      'read-only replay assertion: require the variable to exist with type number|string',
+    )
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
     .option('--timeout <ms>', 'request timeout in milliseconds', '10000')
     .option('--pretty', 'pretty-print JSON output')
-    .addHelpText('after', '\nExample:\n  $ xgg variable get-config --scope global --id mode')
+    .addHelpText(
+      'after',
+      '\nExamples:\n  $ xgg variable get-config --scope global --id mode\n  $ xgg variable get-config --scope global --id mode --expect-type string\n\n--expect-type is a read-only existence/type assertion for replay preflight. It never compares value or display name and never creates or modifies a variable.',
+    )
     .action(
       wrap('variable.get-config', async (opts: SingleGetterOpts) => {
+        if (!isValidVariableIdentifier(opts.scope)) {
+          throw new ConfigError(`--scope "${opts.scope}" ${VARIABLE_IDENTIFIER_CONSTRAINT}`, {
+            flag: '--scope',
+            scope: opts.scope,
+          });
+        }
+        if (!isValidVariableIdentifier(opts.id)) {
+          throw new ConfigError(`--id "${opts.id}" ${VARIABLE_IDENTIFIER_CONSTRAINT}`, {
+            flag: '--id',
+            id: opts.id,
+          });
+        }
+        if (
+          opts.expectType !== undefined &&
+          opts.expectType !== 'number' &&
+          opts.expectType !== 'string'
+        ) {
+          throw new ConfigError(`--expect-type must be number|string, got "${opts.expectType}"`, {
+            flag: '--expect-type',
+            expectedType: opts.expectType,
+          });
+        }
         const deps = makeDeps(opts);
-        const config = await getVariableConfig(opts.scope, opts.id, deps);
+        let config: Awaited<ReturnType<typeof getVariableConfig>>;
+        try {
+          config = await getVariableConfig(opts.scope, opts.id, deps);
+        } catch (error) {
+          if (opts.expectType !== undefined && isMissingVariableAssertionError(error)) {
+            throw new ConfigError(
+              `required replay dependency ${opts.scope}.${opts.id} does not exist`,
+              { scope: opts.scope, id: opts.id, expectedType: opts.expectType },
+            );
+          }
+          throw error;
+        }
+        if (opts.expectType !== undefined && config.type !== opts.expectType) {
+          throw new ConfigError(
+            `required replay dependency ${opts.scope}.${opts.id} has type "${config.type}", expected "${opts.expectType}"`,
+            {
+              scope: opts.scope,
+              id: opts.id,
+              expectedType: opts.expectType,
+              actualType: config.type,
+            },
+          );
+        }
         emit(
-          { ok: true, scope: opts.scope, id: opts.id, config },
+          {
+            ok: true,
+            scope: opts.scope,
+            id: opts.id,
+            config,
+            ...(opts.expectType !== undefined && { expectedType: opts.expectType, matched: true }),
+          },
           { pretty: opts.pretty === true },
         );
       }),
@@ -704,6 +762,23 @@ type ReplayVariableEntry = Awaited<ReturnType<typeof listVariables>>[string];
 
 function isVariableAlreadyExistsError(error: unknown): error is GatewayError {
   return error instanceof GatewayError && /already exists|duplicate/i.test(error.message);
+}
+
+function isMissingVariableAssertionError(error: unknown): error is GatewayError | NotFoundError {
+  const knownGatewayMissingMessages = [
+    /^Variable not found$/i,
+    /^Variable \S+ not found$/i,
+    /^Variable does not exist$/i,
+    /^Variable \S+ does not exist$/i,
+    /^Unknown variable$/i,
+    /^Invalid scope$/i,
+    /^Scope \S+ does not exist$/i,
+  ];
+  return (
+    error instanceof NotFoundError ||
+    (error instanceof GatewayError &&
+      knownGatewayMissingMessages.some((pattern) => pattern.test(error.message.trim())))
+  );
 }
 
 async function readExistingVariableForReplay(

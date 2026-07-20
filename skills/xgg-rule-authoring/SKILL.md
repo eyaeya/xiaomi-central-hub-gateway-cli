@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-78b88cc61b62ec674c687d0d30fbaa05625e552bd94c7d96b52d137313cf347e -->
+<!-- xgg-skill-content-build: sha256-ed5cdd008b0f035bcbc808fdbd31d5bc89144025e3ffdb76dc279865d24eb46d -->
 
 # xgg 自动化编写 Skill
 
@@ -226,11 +226,11 @@ XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js" \
   NODE_BIN="/absolute/path/to/node" bash replay.sh
 ```
 
-`rule import` 自身只做离线文本转换，stdout 是 shell，不代表已写入。脚本先只读预检已捕获的本地变量；若导出包含本地变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 同时生效）。clone 保留 `--expect-absent`，先创建禁用空壳，再准备 `R<target-id>` 变量。所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，禁用源保持禁用。脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg/API writer 并发修改目标；staging 后失败会留下禁用 partial graph，用逐写快照检查或恢复。重放后总是 `validate --spec-aware → lint --strict → view/readback`；只有用户授权时才触发并读日志。
+`rule import` 自身只做离线文本转换，stdout 是 shell，不代表已写入。脚本先用 `variable get-config --expect-type` 只读断言全部 `global` 依赖存在且类型匹配；global 不比较值/显示名，也绝不创建或修改。通过后才预检已捕获的本地变量（本地兼容性会核对类型、值和显示名）；若导出包含本地变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 同时生效）。clone 保留 `--expect-absent`，先创建禁用空壳，再准备 `R<target-id>` 变量。旧 JSON 没有 global 依赖仍兼容；声明 untyped global 的旧 JSON 会在渲染前 fail closed，必须用当前版本重新导出。所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，禁用源保持禁用。脚本是逐命令事务，不是 replay-wide lease：预检后变量仍可能并发漂移，执行期间禁止网页画布、其他 xgg/API writer 并发修改目标；staging 后失败会留下禁用 partial graph，用逐写快照检查或恢复。重放后总是 `validate --spec-aware → lint --strict → view/readback`；只有用户授权时才触发并读日志。
 
 - 对当前 spec 有效的已建模节点，完整 typed `include` / `between`、`preload`、`simplified`、原生设备写入参数、`nop` Delta/背景/几何与可由 DSL 无损表示的表达式可在 strict 模式往返；property/action literal 的原生 JSON 类型由 MIoT format 决定，只有数值 format 应用数值 value-list/range/step。strict export 会在 staging 前读取源网关 local/global 变量并按引用路径拒绝实际类型不匹配或缺失 global，同时核对 property 存在性/write access、literal/变量 metadata、action input 索引，以及 boolean/value-list output ref、access mismatch 与 no-push source。permissive export 必须明确 warning；只有 no-push probe 会补回 transient `--allow-no-push`，不能把不匹配语义表述成已证明可重放的能力。
 - `varSetNumber` / `varSetString` elements 若存在 DSL 歧义边界，任何 export 模式都会在输出前失败，不依赖 `--strict-roundtrip`；先给表达式增加显式分隔符。
-- clone 只把 `R<source-id>` 改为 `R<target-id>`，预检本地变量计划后以 expect-absent 预留目标；`global` 是外部依赖，不创建、不改写。
+- clone 只把 `R<source-id>` 改为 `R<target-id>`；先断言全部 `global` 的存在性/类型，再预检本地变量计划并以 expect-absent 预留目标。`global` 不创建、不改写。
 - 未建模的未来节点导出为完整 opaque `--cfg` 结构，可同 ID 无损重放。因为 CLI 无法安全发现/改写 opaque payload 内的规则本地引用，带 opaque 节点时拒绝 `--target-id` clone。
 - `--strict-roundtrip` 拒绝已建模节点的语义损失 warning；lossless opaque same-id fallback 是例外，并会给出信息性 warning。
 
@@ -254,7 +254,7 @@ XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js" \
 ```bash
 xgg variable list --pretty
 xgg variable get <scope> --pretty
-xgg variable get-config --scope global --id <id>
+xgg variable get-config --scope global --id <id> --expect-type <number|string>
 xgg variable get-value --scope global --id <id>
 xgg variable create --scope global --id <id> --type number --value 0 --name "<显示名>"
 xgg variable set-value --scope global --id <id> --value 1
@@ -275,7 +275,7 @@ xgg variable watch --follow                       # 持续观察变量变化（N
   - 其他任意串，或 `R<另一个/不存在的规则id>`：**ghost data**——网关可能存下，但当前规则不可见，网页也不会把它当作可用变量。不要用。
 - **scope 识别：** `rule node add --rule-id <id>` 把且只把 `global` 与当前规则的 `R<id>` 当作已知 scope；变量写命令会读取在线规则清单，确认 `R<id>` 确实对应现存规则。合法的本规则 scope 不需要 `--allow-unknown-scope`。跨规则、不存在或自定义 scope 会告警，并在严格规则校验中失败；`--allow-unknown-scope` 只用于明确的 raw/ghost-data 实验，不能让该 scope 变成规则可见。
 - **`set-value` 改值会核对类型：** `--type` 与变量已存类型不符直接退出 `5`(要改类型加 `--force-type`;不给 `--type` 则自动用已存类型)。删除用 `variable delete --scope <s> --id <id>`(或 `--all` 删整个 scope);`variable watch --follow --max-events <N>` 跟 N 条变化后退出。
-- **配置和值分开：** `get-config` 读取单变量配置；`set-config` 只更新显示名，不改类型或当前值，并按写命令执行 snapshot guard。
+- **配置和值分开：** `get-config` 读取单变量配置；加 `--expect-type number|string` 时只读断言变量存在且类型匹配，missing/mismatch 非零退出，不比较值或显示名。`set-config` 只更新显示名，不改类型或当前值，并按写命令执行 snapshot guard。
 - **变量 `--value` 不是统一 JSON 解析：** `number` 使用数值转换；`string` 原样保存 argv 文本。`--value Seed` 保存 `Seed`，`--value '"Seed"'` 会把双引号也保存为数据。只有确实需要引号字符时才在字符串参数中写 JSON 风格引号。
 - 若用户明确说「不要用变量」，就别 `variable create`、别 `varChange/varGet/varSet*`。优先用 `deviceGet` 读真实设备状态；设备无可读状态时再问是否允许用 `register` 这种图内状态卡片。
 

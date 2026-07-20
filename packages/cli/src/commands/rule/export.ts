@@ -102,20 +102,25 @@ Limitations:
     variable/constant boundary would be absorbed or rejected; add an explicit
     separator in the source expression or use rule view JSON round-trip.
   - Rule-local variables are captured with their current value and display
-    name. Every replay first preflights the complete variable plan read-only.
-    Same-id then prepares captured variables with compatibility guards before
+    name. Every replay first asserts all global dependencies' existence and
+    number|string type read-only, then preflights the complete local-variable
+    plan. It never compares a global's value/name and never creates or modifies
+    one. Same-id then prepares captured variables with compatibility guards before
     its first target-graph write. A --target-id clone instead writes the
     disabled empty target with create-only/expect-absent semantics before any
     variable write, then prepares the remapped R<target-id> variables. Thus an
     existing clone target, including one which appears during preflight, aborts
     without changing its graph or variables. Each variable create repeats its
     compatibility check. The gateway has no cross-variable transaction, so a
-    concurrent variable change can still stop replay; per-write snapshots are
-    the recovery path.
+    concurrent variable change after preflight can still stop replay because
+    the gateway has no replay-wide transaction; per-write snapshots are the
+    recovery path.
     --target-id must differ from the source id.
-  - global variables are explicit external dependencies: export lists them in
-    JSON/warnings but never creates or modifies them. Any non-global scope
-    other than R<source-id> is rejected instead of guessed.
+  - global variables are explicit typed external dependencies: replay verifies
+    existence and type before any target write, but never creates or modifies
+    them. Historical JSON with an untyped global fails closed and must be
+    re-exported; old JSON with no globals remains compatible. Any non-global
+    scope other than R<source-id> is rejected instead of guessed.
   - All five modeled device-backed node families (deviceInput, deviceGet,
     deviceOutput, deviceInputSetVar, deviceGetSetVar) require the source gateway
     to expose the referenced DID/spec so ids can be reversed to typed names.

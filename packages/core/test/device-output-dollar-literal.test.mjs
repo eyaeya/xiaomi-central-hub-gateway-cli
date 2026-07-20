@@ -259,11 +259,15 @@ test('export, clone, shell rendering, and shortcut replay preserve dollar-prefix
   assert.equal(flagValue(nodeCommand(exported, 'number'), '--value'), '7');
   assert.equal(flagValue(nodeCommand(exported, 'boolean'), '--value'), 'true');
   assert.equal(flagValue(nodeCommand(exported, 'variable'), '--value'), '$global.realVar');
-  assert.deepEqual(exported.externalVariables, [{ scope: 'global', id: 'realVar' }]);
+  assert.deepEqual(exported.externalVariables, [
+    { scope: 'global', id: 'realVar', expectedType: 'string' },
+  ]);
 
   const cloned = applyRename(exported, { targetId: '456' });
   assert.equal(flagValue(nodeCommand(cloned, 'literal-qualified'), '--value'), '$$global.literal');
-  assert.deepEqual(cloned.externalVariables, [{ scope: 'global', id: 'realVar' }]);
+  assert.deepEqual(cloned.externalVariables, [
+    { scope: 'global', id: 'realVar', expectedType: 'string' },
+  ]);
   assert.equal(
     cloned.commands.some((command) => command.kind === 'variable-create'),
     false,
