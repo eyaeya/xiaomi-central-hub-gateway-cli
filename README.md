@@ -143,7 +143,8 @@ cp -R "$CLI_PKG/skills/xgg-rule-authoring/." ~/.claude/skills/xgg-rule-authoring
 mkdir -p ~/.agents/skills/xgg-rule-authoring
 cp -R "$CLI_PKG/skills/xgg-rule-authoring/." ~/.agents/skills/xgg-rule-authoring/
 
-# 仓库/包内/已安装副本应显示同一个正文 build 标记；不同就重新同步
+# 正文 build 标记内嵌除标记行外完整 SKILL.md UTF-8 字节的 SHA-256；正文改动但未更新标记会使测试失败
+# 仓库/包内/已安装副本应显示同一个标记；不同就重新同步
 grep '^<!-- xgg-skill-content-build:' \
   "$CLI_PKG/skills/xgg-rule-authoring/SKILL.md" \
   ~/.agents/skills/xgg-rule-authoring/SKILL.md
