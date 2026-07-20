@@ -288,6 +288,15 @@ xgg rule import --from-file rule-export.json --target-id <new-rule-id> > clone.s
 # 审阅最终 enable 行为后再执行 bash replay.sh / bash clone.sh
 ```
 
+生成脚本把 `XGG` 严格当作**一个可执行文件路径**（默认 `xgg`），不能写成 `XGG="node ..."` 或 `XGG="pnpm exec ..."` 这样的多词命令。需要重放尚未发布到 npm 的当前源码时，先 `pnpm build`，再把 Node 与构建入口作为两个独立参数传入；两条路径即使含空格也不会被拆词：
+
+```bash
+XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js" \
+  NODE_BIN="/absolute/path/to/node" bash replay.sh
+```
+
+脚本用 Bash argv array 直接执行，不使用 `eval` 或未加引号的 word splitting。`NODE_BIN` 可省略并默认使用 PATH 上的 `node`，`XGG_NODE_ENTRY` 应指向绝对的构建后入口。
+
 脚本先只读预检已捕获的规则内变量；若导出包含规则内变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 也在这里生效）。clone 保留 `--expect-absent`，先成功创建禁用空壳，再准备 `R<target-id>` 变量。此后所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，源规则禁用时保持禁用。same-ID 重放会替换目标图，而且整段脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg 进程或 API 客户端并发修改目标；staging 后失败会留下禁用的 partial graph，用逐写快照检查或恢复。
 
 对当前 spec 有效、已建模的节点，完整 typed `include` / `between`、`preload`、`simplified`、`nop`、设备写入参数与规则内变量可在 `--strict-roundtrip` 下往返。strict export 会先核对持久化 property-write 的属性存在性/写权限、原生 literal/数值域和变量 metadata，并核对 `deviceOutput.props.ins` 与 `action.in` 的逐索引对应、PIID/short-name 唯一性及同类输入契约；它还会读取源网关 local/global 变量的实际类型，按每个引用路径拒绝类型不匹配或缺失的 global 依赖，避免重放在 staging 后才失败。任何 typed replay 无法复现的设备写入或其他语义损失 warning 都会拒绝导出。permissive export 会保留明确 warning，并用索引语义、唯一占位 key 及无原型参数字典避免乱序、重复 key 或 `__proto__` 造成静默丢值。未来新增但当前 CLI 尚未建模的节点会导出成 opaque `--cfg` 结构，允许同 ID 无损重放并给出信息性 warning；CLI 无法安全发现其中的规则内引用，因此带 opaque 节点的导出会拒绝 `--target-id` 克隆。

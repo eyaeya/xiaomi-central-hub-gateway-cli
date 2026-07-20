@@ -2406,9 +2406,11 @@ function assertValidCloneVariableReference(scope: string, id: string, path: stri
 
 /**
  * Render the structured commands as a runnable bash script. The script
- * assumes `xgg` is on PATH; for the dev worktree the user can swap to
- * `pnpm exec tsx packages/cli/src/cli.ts` via a one-line `XGG=...` envar
- * substitution at the top.
+ * uses `XGG` as exactly one executable argv element (default: `xgg`). For a
+ * source checkout, `XGG_NODE_ENTRY` selects a built JavaScript entrypoint and
+ * `NODE_BIN` optionally selects the Node executable; the generated Bash argv
+ * array invokes those as two separately quoted elements without eval or word
+ * splitting.
  */
 export function renderExportedAsShell(
   exported: ExportedRule,
@@ -2419,9 +2421,23 @@ export function renderExportedAsShell(
   lines.push(
     ...renderShellComment(`Recreates rule "${exported.ruleName}" (id ${exported.ruleId}).`),
   );
-  lines.push(...renderShellComment('Adjust XGG, BASE_URL and SNAPSHOTS_DIR for your environment.'));
+  lines.push(
+    ...renderShellComment(
+      'XGG is one executable path (default: xgg); never put a multi-word command in XGG.',
+    ),
+  );
+  lines.push(
+    ...renderShellComment(
+      'For a source checkout, set XGG_NODE_ENTRY to the built dist/cli.js path and optionally set NODE_BIN to one Node executable path.',
+    ),
+  );
+  lines.push(...renderShellComment('Adjust BASE_URL and SNAPSHOTS_DIR for your environment.'));
   lines.push('');
-  lines.push('XGG="${XGG:-xgg}"');
+  lines.push('if [[ -n "${XGG_NODE_ENTRY:-}" ]]; then');
+  lines.push('  XGG_ARGV=("${NODE_BIN:-node}" "$XGG_NODE_ENTRY")');
+  lines.push('else');
+  lines.push('  XGG_ARGV=("${XGG:-xgg}")');
+  lines.push('fi');
   if (opts.baseUrl) lines.push(`BASE_URL=${shellQuote(opts.baseUrl)}`);
   else lines.push('BASE_URL="${BASE_URL:-http://192.168.x.x:8086}"');
   if (opts.snapshotsDir) lines.push(`SNAPSHOTS_DIR=${shellQuote(opts.snapshotsDir)}`);
@@ -2479,7 +2495,7 @@ export function renderExportedAsShell(
         lines.push(cmd.bodyJson);
         lines.push(delimiter);
         lines.push(
-          `"$XGG" rule set --body "$RULE_BODY_FILE"${cmd.expectAbsent === true ? ' --expect-absent' : ''} --allow-cfg-overwrite --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
+          `"\${XGG_ARGV[@]}" rule set --body "$RULE_BODY_FILE"${cmd.expectAbsent === true ? ' --expect-absent' : ''} --allow-cfg-overwrite --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
         );
         lines.push('');
         // A create-only clone must run the guarded rule create before any
@@ -2493,7 +2509,7 @@ export function renderExportedAsShell(
         lines.push(...renderShellComment(cmd.comment));
         const flagsStr = renderFlagsForShell(nodeAddReplayFlags(cmd));
         lines.push(
-          `"$XGG" rule node add --rule-id ${ruleId} ${flagsStr} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
+          `"\${XGG_ARGV[@]}" rule node add --rule-id ${ruleId} ${flagsStr} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
         );
         lines.push('');
         break;
@@ -2514,14 +2530,14 @@ export function renderExportedAsShell(
             ? `--from-node-id ${shellQuote(structured.from.nodeId)} --from-pin ${shellQuote(structured.from.pin)} --to-node-id ${shellQuote(structured.to.nodeId)} --to-pin ${shellQuote(structured.to.pin)}`
             : `--from ${shellQuote(cmd.from)} --to ${shellQuote(cmd.to)}`;
         lines.push(
-          `"$XGG" rule edge add --rule-id ${ruleId} ${endpointFlags} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
+          `"\${XGG_ARGV[@]}" rule edge add --rule-id ${ruleId} ${endpointFlags} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
         );
         break;
       }
       case 'rule-enable':
         lines.push('');
         lines.push(
-          `"$XGG" rule enable ${ruleId} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
+          `"\${XGG_ARGV[@]}" rule enable ${ruleId} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`,
         );
         break;
       case 'warning':
@@ -2584,7 +2600,7 @@ function renderVariableCreateInvocation(
   command: Extract<ExportedCommand, { kind: 'variable-create' }>,
   checkOnly: boolean,
 ): string {
-  return `"$XGG" variable create --scope ${shellQuote(command.scope)} --id ${shellQuote(command.id)} --type ${shellQuote(command.type)} --value ${shellQuote(String(command.value))} --name ${shellQuote(command.userData.name)} --if-compatible${checkOnly ? ' --check-only --allow-unknown-scope' : ''} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`;
+  return `"\${XGG_ARGV[@]}" variable create --scope ${shellQuote(command.scope)} --id ${shellQuote(command.id)} --type ${shellQuote(command.type)} --value ${shellQuote(String(command.value))} --name ${shellQuote(command.userData.name)} --if-compatible${checkOnly ? ' --check-only --allow-unknown-scope' : ''} --snapshots-dir "$SNAPSHOTS_DIR" --base-url "$BASE_URL"`;
 }
 
 function renderFlagsForShell(flags: ExportFlag[]): string {

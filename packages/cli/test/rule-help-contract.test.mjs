@@ -34,6 +34,11 @@ test('export and import help cover all five modeled device families', () => {
   for (const text of [exportHelp, importHelp]) {
     assert.match(text, /All five modeled device-backed node families/);
     assert.match(text, /deviceGetSetVar/);
+    assert.match(text, /XGG as (?:exactly )?one executable path/);
+    assert.match(text, /XGG_NODE_ENTRY/);
+    assert.match(text, /NODE_BIN/);
+    assert.match(text, /no eval or unquoted word splitting/);
+    assert.doesNotMatch(text, /XGG="pnpm exec/);
   }
   assert.match(importHelp, /first target-graph write is the exported empty shell/);
   assert.match(importHelp, /cfg overwrite and enable=false/);

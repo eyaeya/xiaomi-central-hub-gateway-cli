@@ -100,6 +100,15 @@ xgg rule import --from-file rule-export.json --target-id <new-rule-id> > clone.s
 # 审阅最终 enable 行为后再执行 bash replay.sh / bash clone.sh
 ```
 
+生成脚本把 `XGG` 严格当作一个可执行文件路径（默认 `xgg`），不能放入 `node ...` / `pnpm exec ...` 多词命令。需要重放当前源码时先 `pnpm build`，再安全地把 Node 与入口作为两个 argv 元素传入：
+
+```bash
+XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js" \
+  NODE_BIN="/absolute/path/to/node" bash replay.sh
+```
+
+脚本使用 Bash argv array，不使用 `eval` 或未加引号的拆词；含空格路径保持为单个参数。`NODE_BIN` 可省略并默认使用 PATH 上的 `node`。
+
 脚本先只读预检已捕获的本地变量；若导出包含本地变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 target-graph write 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 同时生效）。clone 保留 `--expect-absent`，先建禁用空壳，再准备目标规则变量。node/edge 全程在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，源规则禁用时保持禁用。脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页、其他 xgg 或 API writer 并发修改目标；staging 后失败会留下禁用 partial graph，用逐写快照恢复。未知未来节点会以 opaque `--cfg` 仅支持同 ID 重放；因无法安全重写其内部引用，含 opaque 节点的 export 不允许 `--target-id` 克隆。
 
 设备扩展与官方格式本地备份：

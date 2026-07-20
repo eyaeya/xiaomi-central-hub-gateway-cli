@@ -59,9 +59,12 @@ Examples:
       # programmatic consumption (e.g. AI agents that want to learn
       # from existing user-built rules).
 
-  $ XGG="pnpm exec tsx packages/cli/src/cli.ts" BASE_URL="http://192.168.x.x:8086" \\
-      SNAPSHOTS_DIR="./snapshots" bash replay.sh
-      # Review first; execution env belongs on bash, not the render command.
+  $ XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js" \\
+      NODE_BIN="/absolute/path/to/node" SNAPSHOTS_DIR="./snapshots" \\
+      bash replay.sh
+      # Built source checkout: Node and its entrypoint stay separate argv
+      # elements. The exported gateway URL is already embedded; edit the
+      # reviewed script or render JSON with rule import --base-url to change it.
 
   $ xgg rule export 1779888258312 --target-id 9999999999999
       # Clone the rule under a new id; name becomes "[Cloned] <orig>".
@@ -74,6 +77,11 @@ Examples:
       # Clone with an explicit name.
 
 Limitations:
+  - Generated Bash treats XGG as exactly one executable path (default: xgg),
+    never as a command string. For a built source checkout, set the absolute
+    XGG_NODE_ENTRY=.../packages/cli/dist/cli.js path and optionally NODE_BIN
+    to one Node executable path. The script uses a Bash argv array, so spaces
+    remain inside each path and no eval or unquoted word splitting is used.
   - Same-id replay is deliberately destructive: its first guarded graph write
     replaces the target cfg/body with the exported empty shell and enable=false.
     Nodes and edges are then rebuilt while disabled; an enabled export appends

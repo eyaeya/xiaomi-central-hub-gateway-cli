@@ -56,6 +56,11 @@ Examples:
         --target-id 9999999999999 --target-name "按钮播报-备份" > clone.sh
       # Render a clone with an explicit new name, then review before execution.
 
+  $ XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js" \\
+      NODE_BIN="/absolute/path/to/node" bash replay.sh
+      # Replay with the exact built source checkout, even when paths contain
+      # spaces. Never place a multi-word command in XGG.
+
 Notes:
   - The JSON file must be the output of \`xgg rule export <id> --format json\`.
   - Re-emit is purely a text transformation; no gateway access is needed
@@ -65,6 +70,11 @@ Notes:
     not prove that the script was executed. After replay, run validate, strict
     lint and graph/enable readback. For an enabled source these checks happen
     after the script has restored enable as its final command.
+  - Generated Bash treats XGG as one executable path (default: xgg). For a
+    built source checkout, XGG_NODE_ENTRY selects the absolute dist/cli.js
+    path and NODE_BIN optionally selects one Node executable path. They become
+    two separately quoted argv elements; the script uses no eval or unquoted
+    word splitting.
   - Replay preflights captured local variables. Its first target-graph write is
     the exported empty shell with cfg overwrite and enable=false. When captured
     local variables exist, same-id prepares them with compatibility guards
