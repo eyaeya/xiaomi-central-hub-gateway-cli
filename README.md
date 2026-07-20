@@ -219,7 +219,7 @@ xgg rule lint --rule-id <rule-id> --strict
 
 要点：
 
-- 先跑 `xgg device spec <did> --pretty`，按输出中的用途选择能力：事件与 notify 属性用于 `deviceInput` / `deviceInputSetVar`，read 属性用于 `deviceGet` / `deviceGetSetVar`，write 属性与 action 用于 `deviceOutput`；不要凭设备名猜字段。
+- 先跑 `xgg device spec <did> --pretty`，按输出中的用途选择能力：事件与 notify 属性用于 `deviceInput` / `deviceInputSetVar`，read 属性用于 `deviceGet` / `deviceGetSetVar`，write 属性与 action 用于 `deviceOutput`；typed 创建会在写图前硬检对应的 `notify` / `read` / `write` access，不要凭设备名猜字段。两类 push source 还要求设备 `pushAvailable=true`；只有明确在目标网关做运行时探针时才加 `--allow-no-push`。该 flag 只放行本次 typed node-add 的设备级 push gate，不持久化、不绕过任何 property access，也不证明目标固件会发出事件；随后在线 `validate --spec-aware` 仍会如实诊断该 no-push 节点。含 access mismatch 或 no-push source 的 strict export 会在生成重放脚本前拒绝；permissive export 对 no-push source 会明确 warning 并补回 transient `--allow-no-push`，不会把它伪装成持久能力。
 - CLI 与 Core SDK 的 typed `rule node add` 显式 `--id` 只能使用非空 ASCII 字母数字 `[A-Za-z0-9]+`；省略时会生成满足该约束的 ID。旧图中的其他 ID 不会被静默改名，`rule validate` / `rule lint` 会逐节点列出告警及受影响的 edge 引用；`rule export` 会显式加入 `--allow-legacy-id`，旧 JSON export 也会在 render/import 时仅对 modeled typed 节点补齐该 replay intent。含 `:` 的旧 ID 由导出脚本使用 `--from-node-id/--from-pin/--to-node-id/--to-pin` 分离传递，避免 `NID:pin` 歧义。所有兼容 intent 都会拒绝新建、raw 与已兼容 ID；未来/opaque 卡片仍走保留完整 tuple 的 raw `--cfg` 路径。
 - `deviceInput` 的 `--device-property` 属性模式和 `--device-event` 事件模式二选一，不能混用。事件参数比较只用 `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--op`、`--threshold`、`--threshold2`、`--property-value`、`--property-include`、`--force-out-of-range` 只属于属性模式，event 模式传入时会在读取 session/spec、快照或写网关前拒绝。
 - `deviceOutput --value '$scope.id'` 表示变量引用；字符串字面值若以 `$` 开头，需要把第一个 `$` 写两次，例如 `--value '$$hello'` 实际写入 `$hello`。`rule export` 会自动添加这一层转义。数值 property-write 严格解析完整十进制/scientific token：float/double 必须有限，整数必须是精确 safe integer，并服从非空 value-list 与有效 value-range/step。
@@ -263,7 +263,7 @@ xgg rule node add --rule-id <rule-id> --type deviceInput \
 
 `deviceInput` / `deviceGet` 的数值属性，以及 number 型 `varChange` / `varGet`，使用 `--op between` 时必须同时显式传 `--threshold <lower>` 与 `--threshold2 <upper>`。省略任一边界都会在 session、spec、快照和写图之前被拒绝；不会再把省略的下界静默解释为 `0`。显式 `--threshold 0` 合法，非-between 标量比较仍保留历史默认 `0`。
 
-`--preload` / `--no-preload` 适用于 `deviceInput`、`deviceInputSetVar` 的属性模式和 `varChange`，默认是官方新卡片行为 `false`；`deviceGet` 由输入事件主动查询，不支持 `preload`。旧图若在 `deviceGet.props` 中带该字段，普通导出会警告，`--strict-roundtrip` 会拒绝，避免重放时静默丢字段。`--simplified true|false` 是执行卡的 UI 紧凑状态。导出会保留受支持节点上的显式值。动作调用的 `--params` 依据 MIoT action input format 保留 number / boolean / string 原生类型，也支持动态变量：
+`--preload` / `--no-preload` 适用于 `deviceInput`、`deviceInputSetVar` 的属性模式和 `varChange`，默认是官方新卡片行为 `false`；它只控制启用时是否先查询/评估一次，不会制造缺失的 `notify`/`read` 能力，也不会改变后续 push 路径。`deviceGet` 由输入事件主动查询，不支持 `preload`。旧图若在 `deviceGet.props` 中带该字段，普通导出会警告，`--strict-roundtrip` 会拒绝，避免重放时静默丢字段。`--simplified true|false` 是执行卡的 UI 紧凑状态。导出会保留受支持节点上的显式值。动作调用的 `--params` 依据 MIoT action input format 保留 number / boolean / string 原生类型，也支持动态变量：
 
 ```bash
 xgg rule node add --rule-id <rule-id> --type deviceOutput \
@@ -332,14 +332,14 @@ xgg rule validate --body candidate.json
 jq '.' candidate.json | xgg rule validate --stdin
 ```
 
-需要额外核对设备 property/event 参数与 dtype，或 `deviceOutput` 的 property-write / `action.in`/`props.ins` 输入契约时，显式加 `--spec-aware`；设备写入图的主验收流程必须使用它。property-write 检查覆盖属性存在性、write access、literal 原生类型/统一数值域及变量 dtype/有效 range metadata；action 检查另覆盖 missing/extra/duplicate PIID、逐索引顺序和重复 short-name。该选项会访问公网 MIoT spec registry；404 会作为 warning 告知该 URN 的 spec 检查已跳过，超时、5xx 或无效 spec 会作为独立 error issue 返回，同时保留同一次运行已发现的本地结构/表达式问题：
+需要额外核对设备 property/event 参数与 dtype、各 property 卡所需的 `notify` / `read` / `write` access，以及 `deviceOutput` 的 property-write 或 `action.in`/`props.ins` 输入契约时，显式加 `--spec-aware`；设备卡图的主验收流程必须使用它。property-write 检查覆盖属性存在性、write access、literal 原生类型/统一数值域及变量 dtype/有效 range metadata；action 检查另覆盖 missing/extra/duplicate PIID、逐索引顺序和重复 short-name。该选项会访问公网 MIoT spec registry；`--rule-id` 模式还会读取一次当前设备清单，对 property/event push source 报路径化 `pushAvailable` 诊断。离线 `--body` / `--stdin` 没有设备实例清单，不能证明 push 可用。registry 404 会作为 warning 告知该 URN 的 spec 检查已跳过，超时、5xx 或无效 spec 会作为独立 error issue 返回，同时保留同一次运行已发现的本地结构/表达式问题：
 
 ```bash
 xgg rule validate --body candidate.json --spec-aware
 xgg rule validate --rule-id <rule-id> --spec-aware
 ```
 
-`--rule-id` 模式本身会从已登录 daemon 读取网关规则与可用变量；是否访问公网 spec 仍只由 `--spec-aware` 决定。
+`--rule-id` 模式本身会从已登录 daemon 读取网关规则与可用变量；是否访问公网 spec、以及是否追加 live `pushAvailable` 复核，仍只由 `--spec-aware` 决定。`--allow-no-push` waiver 不写入图，因此探针节点在这里仍会得到 no-push error；这是有意保留的事实诊断，不代表之前的单次 probe flag 被扩大成持久能力声明。
 
 ## 常用命令
 

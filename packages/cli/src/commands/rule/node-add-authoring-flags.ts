@@ -122,7 +122,13 @@ const VARIABLE_TARGET: readonly AuthoringOption[] = ['varScope', 'varId', 'allow
 const MODELED_SHORTCUT_ALLOWLIST = {
   deviceInput: {
     property: device(...PROPERTY_COMPARISON, 'allowNoPush', 'preload'),
-    event: device('deviceEvent', 'eventFilter', 'eventFilterInclude', 'eventFilterBetween'),
+    event: device(
+      'deviceEvent',
+      'eventFilter',
+      'eventFilterInclude',
+      'eventFilterBetween',
+      'allowNoPush',
+    ),
   },
   deviceGet: {
     property: device(...PROPERTY_COMPARISON),
@@ -133,8 +139,8 @@ const MODELED_SHORTCUT_ALLOWLIST = {
     property: device('deviceProperty', 'value', 'allowUnknownScope'),
   },
   deviceInputSetVar: {
-    property: device('deviceProperty', ...VARIABLE_TARGET, 'preload'),
-    event: device('deviceEvent', 'eventArgVar', ...VARIABLE_TARGET),
+    property: device('deviceProperty', ...VARIABLE_TARGET, 'preload', 'allowNoPush'),
+    event: device('deviceEvent', 'eventArgVar', ...VARIABLE_TARGET, 'allowNoPush'),
   },
   deviceGetSetVar: {
     property: device('deviceProperty', ...VARIABLE_TARGET),

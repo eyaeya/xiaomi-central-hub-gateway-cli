@@ -295,7 +295,7 @@ test('property variables retain exact native dtype and range metadata', async ()
 test('spec-aware persisted property writes enforce property capability, native type, and domain', async () => {
   const cases = [
     { name: 'missing', props: { piid: 99 }, message: /property siid=2 piid=99 not found/i },
-    { name: 'read-only', props: { piid: 8 }, message: /not writable/i },
+    { name: 'read-only', props: { piid: 8 }, message: /requires MIoT access "write"/i },
     { name: 'number type', props: { value: '4' }, message: /native JSON number/i },
     { name: 'boolean type', props: { piid: 6, value: 7 }, message: /native JSON boolean/i },
     { name: 'string type', props: { piid: 7, value: 7 }, message: /native JSON string/i },

@@ -1,5 +1,6 @@
 import { MiotSpecFetchError } from '../http-client.js';
 import type { DeviceSpec, MiotProperty } from '../schemas/device-spec.js';
+import type { Device } from '../schemas/device.js';
 import {
   findDuplicateMiotActionInputPiids,
   findMiotActionInputParamCollisions,
@@ -19,6 +20,12 @@ import { NodeUnion } from '../schemas/nodes/index.js';
 import { isValidVariableIdentifier } from '../schemas/variable-identifier.js';
 import type { AvailableVariable } from '../schemas/variable.js';
 import { ConfigError, NotFoundError, XggError } from '../transport/errors.js';
+import {
+  type DevicePropertyCardType,
+  devicePropertyAccessCapabilityMessage,
+  devicePushCapabilityMessage,
+  isDevicePushSourceCard,
+} from './device-card-capabilities.js';
 import { duplicateNodeIdIssues, findDuplicateNodeIds } from './graph-invariants.js';
 import type { LintIssue } from './lint-graph.js';
 import { checkNodeStrict } from './typed-schemas.js';
@@ -36,6 +43,13 @@ export interface ValidateGraphInput {
    * its network/cache/fixture policy explicitly.
    */
   getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
+  /**
+   * Optional live inventory lookup for device-level capability checks. This is
+   * intentionally separate from the public MIoT spec callback: offline graph
+   * bodies can prove property access from a spec, but only a target gateway can
+   * report the selected device instance's pushAvailable state.
+   */
+  getDevice?: (did: string) => Promise<Pick<Device, 'pushAvailable'>>;
   /**
    * Transient authoring intent for nodes whose numeric operands deliberately
    * exceed (or do not align to) the current MIoT value-range. The set is never
@@ -420,13 +434,9 @@ export function checkDeviceOutputPropertyWriteContract(
 
   const issues: LintIssue[] = [];
   const context = `property write piid=${props.piid}`;
-  if (!property.access.includes('write')) {
-    issues.push(
-      issue(
-        path,
-        `卡片配置有误: ${context} is not writable; MIoT access=[${property.access.join(', ')}]`,
-      ),
-    );
+  const capabilityMessage = devicePropertyAccessCapabilityMessage('deviceOutput', property);
+  if (capabilityMessage !== null) {
+    issues.push(issue(`${path}.piid`, `卡片能力不匹配: ${capabilityMessage}`));
   }
   issues.push(
     ...(isVarValueShape(props)
@@ -1038,6 +1048,9 @@ async function checkAgainstSpec(
 
   const isDeviceOutputAction = node.type === 'deviceOutput' && Number.isInteger(props.aiid);
   const isDeviceOutputProperty = node.type === 'deviceOutput' && Number.isInteger(props.piid);
+  if (node.type === 'deviceOutput' && !isDeviceOutputAction && !isDeviceOutputProperty) {
+    return issues;
+  }
 
   // F66e-2 (2026-05-31): deviceInputSetVar event-mode runs a per-arg dtype
   // check against the spec; defer to a dedicated helper because the dtype
@@ -1114,11 +1127,17 @@ async function checkAgainstSpec(
   if (property === undefined) {
     issues.push(
       issue(
-        base,
+        `${base}.piid`,
         `卡片配置有误: property siid=${props.siid} piid=${props.piid} not found in ${node.cfg.urn}`,
       ),
     );
     return issues;
+  }
+
+  const cardType = node.type as DevicePropertyCardType;
+  const capabilityMessage = devicePropertyAccessCapabilityMessage(cardType, property);
+  if (capabilityMessage !== null) {
+    issues.push(issue(`${base}.piid`, `卡片能力不匹配: ${capabilityMessage}`));
   }
 
   // deviceInput / deviceGet get NO dtype↔format check. The gateway's web UI save
@@ -1144,6 +1163,42 @@ async function checkAgainstSpec(
   }
 
   return issues;
+}
+
+async function checkAgainstDeviceInventory(
+  node: Record<string, unknown>,
+  idx: number,
+  deviceForDid: (did: string) => Promise<Pick<Device, 'pushAvailable'>>,
+): Promise<LintIssue[]> {
+  const type = String(node.type);
+  if (!isDevicePushSourceCard(type) || !isRecord(node.props)) return [];
+  const props = node.props;
+  if (!Number.isInteger(props.piid) && !Number.isInteger(props.eiid)) return [];
+  if (typeof props.did !== 'string' || props.did.length === 0) return [];
+
+  let device: Pick<Device, 'pushAvailable'>;
+  try {
+    device = await deviceForDid(props.did);
+  } catch (error) {
+    if (error instanceof NotFoundError) {
+      return [
+        issue(
+          `nodes[${idx}].props.did`,
+          `卡片能力不匹配: device ${props.did} is absent from the current gateway inventory; push availability cannot be verified`,
+        ),
+      ];
+    }
+    throw error;
+  }
+  const message = devicePushCapabilityMessage(type, props.did, device.pushAvailable);
+  return message === null
+    ? []
+    : [
+        issue(
+          `nodes[${idx}].props.did`,
+          `卡片能力不匹配: ${message}. --allow-no-push is a transient typed node-add probe override; it is not persisted and does not make this validation pass.`,
+        ),
+      ];
 }
 
 // F66e-2 (2026-05-31): port the spec-driven `ka(t.dtype) !== n.dtype` branch
@@ -1229,6 +1284,20 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
     };
   }
 
+  let deviceForDid: ((did: string) => Promise<Pick<Device, 'pushAvailable'>>) | undefined;
+  const getDevice = input.getDevice;
+  if (getDevice !== undefined) {
+    const deviceCache = new Map<string, Promise<Pick<Device, 'pushAvailable'>>>();
+    deviceForDid = (did: string) => {
+      let cached = deviceCache.get(did);
+      if (cached === undefined) {
+        cached = getDevice(did);
+        deviceCache.set(did, cached);
+      }
+      return cached;
+    };
+  }
+
   // F23 — fetch the available-vars list once for the whole graph if a
   // callback is provided. Keep the two legal scopes separate so global.foo
   // cannot stand in for R<ruleId>.foo (or vice versa).
@@ -1294,6 +1363,9 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
           typeof node.id === 'string' && input.forceOutOfRangeNodeIds?.has(node.id) === true,
         )),
       );
+    }
+    if (deviceForDid !== undefined) {
+      issues.push(...(await checkAgainstDeviceInventory(node, idx, deviceForDid)));
     }
   }
 

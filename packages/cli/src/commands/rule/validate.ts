@@ -2,10 +2,12 @@ import {
   type AvailableVariable,
   ConfigError,
   type LintIssue,
+  NotFoundError,
   editorNodeIdCompatibilityIssues,
   getDeviceSpec,
   getRule,
   listAvailVarsForRule,
+  listDevices,
   validateGraph,
 } from '@eyaeya/xgg-core';
 import type { Command } from 'commander';
@@ -82,7 +84,7 @@ export function attachValidate(cmd: Command): void {
     .option('--stdin', 'offline: read graph JSON from stdin')
     .option(
       '--spec-aware',
-      'query the public MIoT spec registry for property/event dtype, property-write, and ordered action input contract checks (external network I/O)',
+      'check MIoT property access/dtype, property-write, and action input contracts; --rule-id also checks live device push availability',
     )
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
@@ -105,8 +107,11 @@ Exit codes:
 Local input contract:
   --body/--stdin perform deterministic local validation only: no session, daemon, or spec fetch.
   --spec-aware explicitly enables public MIoT registry I/O for any input mode,
-  including deviceOutput property-write and action.in / props.ins contracts (native types, numeric domains, and variable metadata).
-  --rule-id always reads the gateway graph and available variables from the daemon.`,
+  including per-card notify/read/write access plus deviceOutput property-write and action.in / props.ins contracts
+  (native types, numeric domains, and variable metadata).
+  --rule-id always reads the gateway graph and available variables from the daemon;
+  with --spec-aware it also checks each push-source device's live pushAvailable flag.
+  Offline --body/--stdin cannot prove device-instance push availability.`,
     )
     .action(
       wrap('rule.validate', async (opts: ValidateOpts) => {
@@ -129,6 +134,9 @@ Local input contract:
 
         let graph: GraphForValidator;
         let listAvailVars: ((ruleId: string) => Promise<AvailableVariable[]>) | undefined;
+        let getDeviceForValidation:
+          | ((did: string) => Promise<{ pushAvailable: boolean }>)
+          | undefined;
         if (opts.body !== undefined) {
           graph = parseGraphValue(await readJsonInput(opts.body, '--body'), opts.body);
         } else if (opts.stdin === true) {
@@ -139,6 +147,15 @@ Local input contract:
           const ruleResp = await getRule(opts.ruleId as string, deps);
           graph = { id: ruleResp.id, nodes: ruleResp.nodes };
           listAvailVars = (ruleId: string) => listAvailVarsForRule(ruleId, deps);
+          let inventory: ReturnType<typeof listDevices> | undefined;
+          getDeviceForValidation = async (did: string) => {
+            inventory ??= listDevices(deps);
+            const device = (await inventory)[did];
+            if (device === undefined) {
+              throw new NotFoundError(`device not found: ${did}`, { id: did });
+            }
+            return device;
+          };
         }
 
         const issues = await validateGraph({
@@ -147,6 +164,8 @@ Local input contract:
           ...(opts.specAware === true && {
             getDeviceSpec: (urn: string) => getDeviceSpec(urn, { timeoutMs }),
           }),
+          ...(opts.specAware === true &&
+            getDeviceForValidation !== undefined && { getDevice: getDeviceForValidation }),
         });
         if (Array.isArray(graph.nodes)) {
           issues.push(...editorNodeIdCompatibilityIssues(graph.nodes));

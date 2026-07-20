@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-ac5b250d0d086595eb00077fb8858e06fb7050cf94e7078715464c1018fca9ed -->
+<!-- xgg-skill-content-build: sha256-2fd1c59818a6ac91c468bd8ff389b7923a2942f21364ae454f969c7e075521a7 -->
 
 # xgg 自动化编写 Skill
 
@@ -185,7 +185,7 @@ xgg rule lint --rule-id <rid> --strict                          # 边拓扑 + pi
 
 | 层 | 命令 | 抓什么 | 写入时是否自动跑 |
 |---|---|---|---|
-| 卡片配置 + 变量存在/scope | `rule validate`（dry-run，不写）；设备写入加 `--spec-aware` | 卡片字段非法、`卡片变量丢失`、`卡片变量有误`；`--spec-aware` 还核对 property-write 的属性/write access/原生 literal/统一数值域/变量 metadata，以及 action input 的逐索引 PIID、重复 short-name 和同类输入契约。离线 `--body/--stdin` 不读网关变量清单，在线 `--rule-id` 才判断变量是否存在 | `rule set` / `rule enable` 默认跑本地校验；完整设备 spec 契约仍以显式 `--spec-aware` 为准。node/edge/layout 默认接在线 var check；raw opt-out 只供明确探测或修复 |
+| 卡片配置 + 变量存在/scope | `rule validate`（dry-run，不写）；设备卡加 `--spec-aware` | 卡片字段非法、`卡片变量丢失`、`卡片变量有误`；`--spec-aware` 还核对 property 的 notify/read/write access、property-write 原生 literal/统一数值域/变量 metadata，以及 action input 契约；在线 `--rule-id` 再检查变量与设备 push，离线 body/stdin 没有设备实例证据 | `rule set` / `rule enable` 默认跑本地校验；完整设备契约仍以显式 `--spec-aware` 为准。node/edge/layout 默认接在线 var check；raw opt-out 只供明确探测或修复 |
 | 边拓扑 + pin 颜色 | `rule lint`；`--strict` 再叠加保存键级检查 | 非法/断开的 endpoint、空边、重复边、fan-in > 1、event→state cross-color，以及缺失必需输入。普通 lint 对缺失的 `condition.trigger`、`eventSequence.input1/input2`、`logicAnd` 每个声明输入报 warning，strict 升为 error；`condition.condition` 刻意可选，未接时网关把它当 false。合法的同节点反馈只报 warning | `rule set` 跑 full lint；`rule enable` 跑 full lint + reachability；`edge add` 对新边做 pin/duplicate/fan-in/cross-color 检查。`node add/update/remove`、`edge remove`、layout 跳过 full-graph lint（schema/var 检查各自不同）；import 本身只渲染，重放脚本再走 set/node/edge 写路径。每批修改后都手动跑 strict lint |
 | 按 pin + 状态真假聚合的有向可达性（never-fires sink） | `rule lint --strict`（读时报）；`rule enable` 写时硬拦 | `卡片不可达`：无法按目标卡必需输入与真假语义驱动动作卡（`deviceOutput`/`varSetNumber`/`varSetString`/`deviceGetSetVar`）。`eventSequence` 要全部事件输入；`condition.met` 要 trigger + may-true，`unmet` 要 trigger + may-false（未接状态即 false）；`statusLast` 只接受 may-true；`logicAnd`/`logicOr`/`logicNot` 传播真假；`signalOr` 任一路事件即可。`timeRange` 是独立的窗口进入事件源并同时提供状态；`loop.stop`/`onlyNTimes.zero` 不能单独向下游传播 | **仅 `rule enable` 硬拦**；`rule set` 不跑可达性（增量编写允许卡片悬空待连线），`rule validate` 也不报，要用 `rule lint --strict` 提前看到 |
 
@@ -198,7 +198,7 @@ xgg rule lint --rule-id <rid> --strict                          # 边拓扑 + pi
 优先级从高到低：
 
 1. **设备参数：** 先跑 `xgg device spec <did> --pretty`；头部的稳定 `deviceType` 与中文 `deviceTypeDescription` 和 `device list/get --pretty` 同源，`device-information` 仅是元数据，不会列为可自动化能力。
-   - **事件/状态更新：** 从 Events 或 Notify properties 选择 `deviceInput` / `deviceInputSetVar`；property/event 模式严格二选一。event 模式只用 `--event-filter*` 比较事件参数，不能混入 `--op`、`--threshold*`、`--property-*` 或 `--force-out-of-range`。
+   - **事件/状态更新：** 从 Events 或 Notify properties 选择 `deviceInput` / `deviceInputSetVar`；property/event 模式严格二选一，typed 创建会硬检 notify 与设备 push。`--allow-no-push` 只放行本次目标网关运行时 probe，不持久化、不绕过 notify/read/write、不证明会发出；在线 spec-aware 仍诊断 no-push。strict export 对 access mismatch / no-push source 会拒绝，permissive export 对 no-push source 明确 warning 并补回 transient flag。event 模式只用 `--event-filter*` 比较事件参数，不能混入 `--op`、`--threshold*`、`--property-*` 或 `--force-out-of-range`。
    - **当前状态查询：** 从 Readable properties 选择 `deviceGet` / `deviceGetSetVar`。
    - **写入/动作执行：** 从 Writable properties 或 Actions 选择 `deviceOutput`。`action.out` 只是 MIoT 元数据，不能绑定到 `deviceOutput`，也不是规则图 output pin；action inputs 才是参数契约。
    - 每个用途内部仍按标准/`Proprietary/vendor` 分组；property 保留完整 URN、raw format、UI dtype、value-list/range，action input 与 event argument 按 PIID 解析。品类只按 `device-template → raw token`，不得回退产品名；其他中文语义按 best-effort 的 Bundle 顺序：值标签 `multiLanguage → normalization → raw`，service/property/event 名称 `multiLanguage → template → raw`，action 名称 `multiLanguage → raw → template`，action input 属性名 `multiLanguage → raw`；目录失败会明示 fallback。跨 service 重复 short-name 不会合并，按对应 `siid` 加 `--device-siid` 消歧；长行以 120 个终端显示列按 grapheme 完整换行，中文、组合字符、emoji 和长 URN 不截断。省略 `--pretty` 时仍是 raw spec 紧凑 JSON envelope，且不请求语义目录。
@@ -350,7 +350,7 @@ xgg variable get-value --scope global --id snap
 xgg rule logs <rid> --tail 20
 ```
 
-持续接收属性 notify 则改用 property-mode `deviceInputSetVar`，然后 `xgg variable watch --follow`；按 bundle/UI 语义，`--preload` 会在规则启用时先查询/评估一次当前值，`--no-preload` 只跳过这次初始动作，后续 notify/change 路径不变。该时序仍须在目标固件用日志或变量读数验证；同时先看 spec 的 `pushAvailable`。
+持续接收属性 notify 则改用 property-mode `deviceInputSetVar`，然后 `xgg variable watch --follow`；按 bundle/UI 语义，`--preload` 会在规则启用时先查询/评估一次当前值，`--no-preload` 只跳过这次初始动作，后续 notify/change 路径不变。preload 不会制造缺失的 notify/read 或 push 能力；该时序仍须在目标固件用日志或变量读数验证。
 
 审计 bundle 发现已知或疑似 RPC、且 typed 命令尚未覆盖时，可把 `xgg api <method> --kind read --params ...` 当作低层探针。对已知或可能修改状态的方法必须明确 `--kind write`，启用 Agent mode/快照目录并遵守 mutation guard；绝不能为了绕过保护把 write-capable 方法标成 read。它是有边界的协议探索入口，不是日常属性读取承诺。
 
@@ -465,7 +465,7 @@ xgg backup create --from fds --file-name "<名字>" --wait   # 轮询进度到 1
 | `float property only supports --op gt\|lt\|between` | **连续** float 属性不支持 gte/lte/eq/ne（带 value-list 的枚举 float 会自动按 `int` 处理，可用 eq/ne） | 改 `gt/lt/between`，或换思路（如 `logicNot` 取反表达 `≤`）；若该属性其实是枚举（有 value-list）本错误不该出现，复查 `xgg device spec` |
 | `cannot write a number variable to ...: the MIoT property declares no value-range` | 把 `number` 变量写进没有 `value-range` 的设备属性/动作入参 | 改用字面 `--value <数值>`，或换一个 `device spec` 里声明了 `value-range` 的属性；boolean/string 变量不受限 |
 | bool 属性比较不触发 | bool 只能 `eq`，threshold 必须 0/1 | `--op eq --threshold 1`(真) 或 `0`(假) |
-| 设备属性触发不触发 | 设备 `pushAvailable=false`，property notify 收不到 | 改用 `deviceGet` 在事件到来时主动读 |
+| typed push source 因 `pushAvailable=false` 被拒 | 设备实例不提供 push；property notify/event 都不能据此承诺会发出 | 优先改用 `deviceGet` 主动读；仅做目标网关运行时探针才加 transient `--allow-no-push`，之后用日志验收 |
 | 目标设备命令超时 `-9999` | ghost device 或设备不可达 | 换非 ghost 设备，查 `device list` 的可用性 |
 | `varSetNumber` 表达式语法非法（写入被拒，exit 5） | 写错函数名/括号/参数 | 看回显的具体 kind+表达式串；或 `rule expr-check '<表达式>'` 单验一条；无参函数记得带括号 |
 | `varSetNumber` 语法合法但算错（运行期数值不对） | 取值/逻辑问题（语法已过本地校验） | 看 `rule logs` 的 eval 结果 |

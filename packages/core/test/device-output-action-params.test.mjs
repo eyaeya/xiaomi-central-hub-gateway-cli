@@ -581,7 +581,7 @@ test('spec-aware validation checks action variable dtype and exact numeric range
   }
 });
 
-test('spec-aware validation accepts a valid property-write deviceOutput node', async () => {
+test('spec-aware validation accepts a writable property that satisfies its numeric-domain contract', async () => {
   assert.deepEqual(await validateNodes([propertyWriteNode()]), []);
 });
 
