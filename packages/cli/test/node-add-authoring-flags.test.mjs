@@ -3,7 +3,9 @@ import test from 'node:test';
 
 import { ConfigError } from '@eyaeya/xgg-core';
 import {
+  NODE_ADD_AUTHORING_FLAG_NAMES,
   NODE_ADD_AUTHORING_OPTION_ATTRIBUTES,
+  assertExclusivePreloadSpellings,
   assertNodeAddAuthoringFlagUsage,
 } from '../dist/commands/rule/node-add-authoring-flags.js';
 import { buildProgram } from '../dist/program.js';
@@ -228,6 +230,35 @@ const ROUTES = [
   },
 ];
 
+const MODELED_TYPES = [
+  'deviceInput',
+  'deviceGet',
+  'deviceOutput',
+  'deviceInputSetVar',
+  'deviceGetSetVar',
+  'alarmClock',
+  'timeRange',
+  'delay',
+  'statusLast',
+  'condition',
+  'loop',
+  'onlyNTimes',
+  'counter',
+  'signalOr',
+  'logicOr',
+  'logicAnd',
+  'logicNot',
+  'onLoad',
+  'register',
+  'eventSequence',
+  'modeSwitch',
+  'varChange',
+  'varGet',
+  'varSetNumber',
+  'varSetString',
+  'nop',
+];
+
 const SENTINEL = {
   cfg: '{}',
   id: 'node-id',
@@ -293,6 +324,15 @@ test('Commander node-add options stay partitioned into authoring and operational
   assert.ok(add);
   const registered = [...new Set(add.options.map((option) => option.attributeName()))].sort();
   assert.deepEqual(registered, [...AUTHORING_FIELDS, ...OPERATIONAL_FIELDS].sort());
+
+  const authoringAttributes = new Set(AUTHORING_FIELDS);
+  const registeredAuthoringFlags = add.options
+    .filter((option) => authoringAttributes.has(option.attributeName()))
+    .map((option) => option.long);
+  assert.deepEqual(
+    [...NODE_ADD_AUTHORING_FLAG_NAMES].sort(),
+    [...new Set(registeredAuthoringFlags)].sort(),
+  );
 });
 
 test('all 32 modeled shortcut routes accept exactly their consumed authoring fields', () => {
@@ -321,6 +361,43 @@ test('all 32 modeled shortcut routes accept exactly their consumed authoring fie
       }
     }
   }
+});
+
+test('route matrix labels are unique and cover all 26 modeled node types', () => {
+  const labels = ROUTES.map(({ label }) => label);
+  assert.equal(new Set(labels).size, labels.length);
+  assert.equal(MODELED_TYPES.length, 26);
+  assert.equal(new Set(MODELED_TYPES).size, MODELED_TYPES.length);
+  assert.deepEqual(
+    [...new Set(ROUTES.map(({ base }) => base.type))].sort(),
+    [...MODELED_TYPES].sort(),
+  );
+});
+
+test('fallback modes preserve downstream selector and variable-type diagnostics', () => {
+  assert.doesNotThrow(() =>
+    assertNodeAddAuthoringFlagUsage({ type: 'deviceOutput', deviceDid: 'did' }),
+  );
+  for (const type of ['varChange', 'varGet']) {
+    assert.doesNotThrow(() =>
+      assertNodeAddAuthoringFlagUsage({
+        type,
+        varType: 'boolean',
+        threshold: SENTINEL.threshold,
+        varValue: SENTINEL.varValue,
+      }),
+    );
+  }
+
+  assert.throws(
+    () =>
+      assertNodeAddAuthoringFlagUsage({
+        type: 'deviceOutput',
+        deviceDid: 'did',
+        duration: SENTINEL.duration,
+      }),
+    (error) => error instanceof ConfigError,
+  );
 });
 
 test('raw routes accept only cfg/id and empty repeatable defaults are not supplied flags', () => {
@@ -436,4 +513,15 @@ test('mode mutex errors are local, actionable, and never echo option values', ()
         !error.message.includes(secret),
     );
   }
+});
+
+test('contradictory preload spellings are rejected before their shared value is collapsed', () => {
+  assert.doesNotThrow(() => assertExclusivePreloadSpellings({ preload: true, noPreload: false }));
+  assert.doesNotThrow(() => assertExclusivePreloadSpellings({ preload: false, noPreload: true }));
+  assert.throws(
+    () => assertExclusivePreloadSpellings({ preload: true, noPreload: true }),
+    (error) =>
+      error instanceof ConfigError &&
+      /--preload and --no-preload are mutually exclusive/.test(error.message),
+  );
 });

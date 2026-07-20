@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ConfigError } from '@eyaeya/xgg-core';
+import { ConfigError, assertExplicitBetweenBounds } from '@eyaeya/xgg-core';
 import { buildProgram } from '../dist/program.js';
 
 function nodeAddCommand(program) {
@@ -78,6 +78,53 @@ test('CLI rejects mixed deviceInput modes and event-mode property comparisons be
     await assert.rejects(
       buildProgram().parseAsync([...prefix, ...args]),
       (error) => error instanceof ConfigError && message.test(error.message),
+    );
+  }
+});
+
+test('CLI rejects scalar device threshold2 before session while variable replay retains v2', async (t) => {
+  const previousAgentMode = process.env.XGG_AGENT_MODE;
+  process.env.XGG_AGENT_MODE = '1';
+  t.after(() => {
+    if (previousAgentMode === undefined) Reflect.deleteProperty(process.env, 'XGG_AGENT_MODE');
+    else process.env.XGG_AGENT_MODE = previousAgentMode;
+  });
+
+  for (const type of ['deviceInput', 'deviceGet']) {
+    for (const op of [undefined, 'eq']) {
+      await assert.rejects(
+        buildProgram().parseAsync([
+          'node',
+          'xgg',
+          'rule',
+          'node',
+          'add',
+          '--rule-id',
+          'rule-1',
+          '--type',
+          type,
+          '--device-did',
+          'did-1',
+          '--device-property',
+          'value',
+          ...(op === undefined ? [] : ['--op', op]),
+          '--threshold',
+          '1',
+          '--threshold2',
+          '2',
+          '--no-snapshot',
+        ]),
+        (error) =>
+          error instanceof ConfigError &&
+          /--threshold2 only applies to --op between/.test(error.message),
+        `${type}: ${String(op)}`,
+      );
+    }
+  }
+
+  for (const type of ['varChange', 'varGet']) {
+    assert.doesNotThrow(() =>
+      assertExplicitBetweenBounds({ type, op: 'eq', threshold: 1, threshold2: 2 }),
     );
   }
 });
@@ -170,6 +217,50 @@ test('node-add exposes explicit preload true/false without hiding omission', () 
   assert.match(help, /--no-preload/);
   assert.match(help, /official new-card default/);
   assert.match(help, /historical eager deviceInput behavior/);
+});
+
+test('node-add rejects contradictory preload spellings in either order before session access', async (t) => {
+  const previousAgentMode = process.env.XGG_AGENT_MODE;
+  process.env.XGG_AGENT_MODE = '1';
+  t.after(() => {
+    if (previousAgentMode === undefined) Reflect.deleteProperty(process.env, 'XGG_AGENT_MODE');
+    else process.env.XGG_AGENT_MODE = previousAgentMode;
+  });
+
+  for (const spellings of [
+    ['--preload', '--no-preload'],
+    ['--no-preload', '--preload'],
+  ]) {
+    await assert.rejects(
+      buildProgram().parseAsync([
+        'node',
+        'xgg',
+        'rule',
+        'node',
+        'add',
+        '--rule-id',
+        'rule-1',
+        '--type',
+        'varChange',
+        '--var-scope',
+        'global',
+        '--var-id',
+        'mode',
+        '--var-type',
+        'number',
+        '--op',
+        'eq',
+        '--threshold',
+        '1',
+        ...spellings,
+        '--no-snapshot',
+      ]),
+      (error) =>
+        error instanceof ConfigError &&
+        /--preload and --no-preload are mutually exclusive/.test(error.message),
+      spellings.join(' '),
+    );
+  }
 });
 
 test('numeric thresholds reject parseFloat-style trailing junk before command action', () => {

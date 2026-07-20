@@ -1649,7 +1649,9 @@ const EXPLICIT_BETWEEN_BOUND_TYPES = new Set(['deviceInput', 'deviceGet', 'varCh
  * `between` is the only shortcut comparison whose historical scalar default
  * would fabricate a caller-omitted operand. Keep that default for every
  * non-between operator, but require both range endpoints before any session,
- * spec, mutation lease, or graph access.
+ * spec, mutation lease, or graph access. Device property comparisons also
+ * reject a second bound unless `between` is selected; variable comparisons
+ * deliberately retain v2 on scalar operators for lossless legacy replay.
  *
  * Exported so CLI adapters can enforce the same Core contract before their
  * own snapshot workflow begins.
@@ -1660,6 +1662,16 @@ export function assertExplicitBetweenBounds(shortcut: {
   threshold?: number;
   threshold2?: number;
 }): void {
+  if (
+    (shortcut.type === 'deviceInput' || shortcut.type === 'deviceGet') &&
+    shortcut.threshold2 !== undefined &&
+    shortcut.op !== 'between'
+  ) {
+    throw new ConfigError(
+      `${shortcut.type} --threshold2 only applies to --op between; scalar property comparisons have no v2 operand.`,
+      { type: shortcut.type, op: shortcut.op },
+    );
+  }
   if (!EXPLICIT_BETWEEN_BOUND_TYPES.has(shortcut.type) || shortcut.op !== 'between') return;
   if (shortcut.threshold !== undefined && shortcut.threshold2 !== undefined) return;
   throw new ConfigError(

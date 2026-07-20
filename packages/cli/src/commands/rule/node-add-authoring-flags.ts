@@ -72,6 +72,26 @@ export const NODE_ADD_AUTHORING_OPTION_ATTRIBUTES: readonly string[] = Object.fr
   Object.keys(AUTHORING_FLAG),
 );
 
+/** Long flag names derived from the same registry for docs/Skill coverage checks. */
+export const NODE_ADD_AUTHORING_FLAG_NAMES: readonly string[] = Object.freeze(
+  Object.values(AUTHORING_FLAG).flatMap((label) => label.split('/')),
+);
+
+/**
+ * Commander stores --preload and --no-preload in the same boolean property,
+ * so the final option bag cannot reveal that both spellings occurred. The CLI
+ * adapter records those two events and calls this before any other preflight.
+ */
+export function assertExclusivePreloadSpellings(input: {
+  preload: boolean;
+  noPreload: boolean;
+}): void {
+  if (!input.preload || !input.noPreload) return;
+  throw new ConfigError(
+    '--preload and --no-preload are mutually exclusive; choose exactly one explicit preload state',
+  );
+}
+
 const executable = (...specific: AuthoringOption[]): readonly AuthoringOption[] => [
   'id',
   'pos',
