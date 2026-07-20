@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-db66c826b90c383777fd0e0db593c3c4c0d05ad895ca84e2dda3cda40877a683 -->
+<!-- xgg-skill-content-build: sha256-9ac9113ddca53ac01e74475dda41c15bcdf59eda2e3f310e715852cdd9ba5cc0 -->
 
 # xgg 自动化编写 Skill
 
@@ -59,7 +59,7 @@ xgg rule logs <rule-id> --tail 20          # 复看日志确认修复
 
 node/edge/layout/set 写入默认保留 live `enable`，所以已启用规则的多步修改可能立即生效，不能把最后的 `rule enable` 当成生效边界。先用 `rule view` 记录状态；会改变执行路径时，在授权下先 disable 并 readback，或离线构造/校验后用单次原子 `rule set`。验证后只按原状态和用户意图恢复。
 
-`rule trace` 把当前图 node/edge watchpoint 与已解析日志重建为累计帧，规则启用项会清空累计状态。用 `--node` / `--edge` / `--watch` 聚焦，时间/step flags 限界，`--next-from` 导航；默认 JSON 必须读取 `completeness.fetch/parse/selection/topology/semantic`。未解析日志只返回计数、不返回可能属于其他规则的原文；合法重复行保留，跨页按旧块到新块且保持块内顺序。节点 info 和已知 pin value 按 Bundle 转译/过滤，失败计入 semantic drift；`deviceGet` 按唯一 URN 复用公共 spec 与语义目录缓存，仅对 notify 属性按 `multiLanguage → normalization → raw` 投影 value label，bool 标签也来自同一 shared projector。spec / projector 失败和逐目录 fallback 会写入 semantic metadata，未知值仍为 raw，只公开 URN、不含 DID。它明确是有界保留日志在**当前图**上的客户端投影；拓扑漂移、语义丢弃、未解析行、分页边界和网关保留窗口都使其不能证明完整执行，更不是设备实时真值。
+`rule trace` 把当前图 node/edge watchpoint 与已解析日志重建为累计帧，规则启用项会清空累计状态。用 `--node` / `--edge` / `--watch` 聚焦，时间/step flags 限界，`--next-from` 导航；默认 JSON 必须读取 `completeness.fetch/parse/selection/topology/semantic`。`--max-blocks <N>` 控制从网关源 `getLog` 扫描多少个保留日志块（默认 8）；`--max-steps <N>` 只裁剪扫描、投影后返回的最新 N 帧，不能扩大源扫描。若 `completeness.fetch.boundedByMaxBlocks=true`，或 `completeness.fetch.stopReason=max-blocks`，可增大 `--max-blocks <N>` 扫描更宽的保留日志；但仍不能越过网关保留窗口或证明执行完整。未解析日志只返回计数、不返回可能属于其他规则的原文；合法重复行保留，跨页按旧块到新块且保持块内顺序。节点 info 和已知 pin value 按 Bundle 转译/过滤，失败计入 semantic drift；`deviceGet` 按唯一 URN 复用公共 spec 与语义目录缓存，仅对 notify 属性按 `multiLanguage → normalization → raw` 投影 value label，bool 标签也来自同一 shared projector。spec / projector 失败和逐目录 fallback 会写入 semantic metadata，未知值仍为 raw，只公开 URN、不含 DID。它明确是有界保留日志在**当前图**上的客户端投影；拓扑漂移、语义丢弃、未解析行、分页边界和网关保留窗口都使其不能证明完整执行，更不是设备实时真值。
 
 优先做目标化变更，避免调用者手工构造整图 JSON：
 

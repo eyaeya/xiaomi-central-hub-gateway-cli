@@ -46,9 +46,9 @@ export function attachTrace(cmd: Command): void {
     .option('--end-step <N>', 'inclusive absolute calculator step')
     .option(
       '--max-steps <N>',
-      `return at most the newest N selected frames (default ${DEFAULT_MAX_STEPS})`,
+      `after fetching, keep at most the newest N selected frames; does not widen the source scan (default ${DEFAULT_MAX_STEPS})`,
     )
-    .option('--max-blocks <N>', `max getLog blocks to fetch (default ${DEFAULT_MAX_BLOCKS})`)
+    .option('--max-blocks <N>', `source getLog blocks to scan (default ${DEFAULT_MAX_BLOCKS})`)
     .option('--node <id>', 'trace one current-graph node watchpoint (repeatable)', collect, [])
     .option(
       '--edge <src.pin->dst.pin>',
@@ -75,11 +75,19 @@ Examples:
   $ xgg rule trace 1779888258312 --node n-condition --node n-action --pretty
   $ xgg rule trace 1779888258312 --edge 'n-loop.output->n-loop.stop' --since 2026-07-20T00:00:00Z
   $ xgg rule trace 1779888258312 --watch 'node:n-action' --next-from 10
+  $ xgg rule trace 1779888258312 --max-blocks 32 --max-steps 100 --pretty
 
 Boundary: this is a client-derived projection of bounded retained log blocks onto
 the current rule graph. It is not a gateway execution RPC, real-time device truth,
 or proof that an execution is complete. JSON always includes pagination, parse,
-selection, and current-graph/topology-drift metadata.`,
+selection, and current-graph/topology-drift metadata.
+
+Source-scan bounds: --max-blocks controls the retained gateway getLog blocks fetched
+(default 8). --max-steps only truncates frames after that scan and cannot widen it.
+If completeness.fetch.boundedByMaxBlocks=true or
+completeness.fetch.stopReason=max-blocks, raise --max-blocks <N> to scan more retained
+log blocks. Gateway retention remains the outer limit, so a larger scan still cannot
+prove complete execution.`,
     )
     .action(
       wrap('rule.trace', async (id: string, rawOpts: OptionValues) => {

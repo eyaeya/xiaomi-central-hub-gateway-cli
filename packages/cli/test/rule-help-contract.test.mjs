@@ -94,3 +94,17 @@ test('device replacement help makes ghost targets diagnostic-only and rechecks e
   assert.match(replace, /fresh device inventory rejects a target that is or became a ghost/);
   assert.match(replace, /before setGraph/);
 });
+
+test('rule trace help separates source block scanning from frame truncation', () => {
+  const trace = help(['rule', 'trace']);
+
+  assert.match(trace, /--max-blocks <N> source getLog blocks to scan \(default 8\)/);
+  assert.match(trace, /--max-steps <N> after fetching, keep at most the newest N selected frames/);
+  assert.match(trace, /--max-steps only truncates frames after that scan and cannot widen it/);
+  assert.match(trace, /completeness\.fetch\.boundedByMaxBlocks=true/);
+  assert.match(trace, /completeness\.fetch\.stopReason=max-blocks/);
+  assert.match(trace, /raise --max-blocks <N> to scan more retained log blocks/);
+  assert.match(trace, /Gateway retention remains the outer limit/);
+  assert.match(trace, /a larger scan still cannot prove complete execution/);
+  assert.match(trace, /--max-blocks 32 --max-steps 100 --pretty/);
+});
