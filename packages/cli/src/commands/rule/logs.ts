@@ -51,7 +51,10 @@ export function attachLogs(cmd: Command): void {
       `polling interval for --follow (default ${DEFAULT_FOLLOW_INTERVAL_MS})`,
     )
     .option('--max-blocks <N>', 'max getLog blocks to fetch per poll (default 8)')
-    .option('--json', 'emit raw parsed JSON array instead of the table')
+    .option(
+      '--json',
+      'emit one JSON envelope; --follow then emits each new entry as one NDJSON line',
+    )
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
     .option('--timeout <ms>', 'request timeout in milliseconds', '10000')
@@ -66,11 +69,13 @@ Examples:
   $ xgg rule logs 1779888258312 --since 2026-05-27T12:00:00Z
   $ xgg rule logs 1779888258312 --follow --interval-ms 1500
 
-Note: this shows the gateway's RAW log rows, best-effort parsed and filtered only
-by rule id / time / level. It deliberately does NOT replicate the web UI's log
-VIEW, which additionally filters rows by node connection type, renders per-node
-Chinese info, and silently drops rows it cannot strictly parse. The raw payload
-is more useful for debugging a rule; expect richer/looser output than the web log panel.`,
+Note: this shows successfully parsed entries from a bounded gateway log fetch,
+then filters by rule id / time / level and applies --tail. It does not expose
+unparsed rows, cursor wrap, or scan completeness, and is bounded by --max-blocks,
+gateway retention, and the tail limit. Empty output alone does not prove that a
+rule never triggered. The web UI applies its own filtering and rendering, so the
+two views need not match row for row. With --follow --json, the first line is the
+initial envelope and each later line is one newly observed entry.`,
     )
     .action(
       wrap('rule.logs', async (id: string, opts: LogsOpts) => {

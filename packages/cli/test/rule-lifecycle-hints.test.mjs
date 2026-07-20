@@ -304,6 +304,24 @@ test('validation and lint issue summaries have no loop or enable hints', () => {
   }
 });
 
+test('runtime observation hints keep bounded logs as positive but non-exclusive evidence', () => {
+  const enableHints = buildNextSteps('rule.enable', { id: 'r' }, {});
+  assert.equal(enableHints.length, 2);
+  for (const hint of enableHints) {
+    assert.match(hint.why, /matching parsed `rule logs` entries provide positive evidence/);
+    assert.match(hint.why, /bounded log view is not the only verification/);
+    assert.doesNotMatch(hint.why, /is the only verification/);
+  }
+
+  const emptyLogHints = buildNextSteps('rule.logs', { ruleId: 'r', entries: [] }, {});
+  assert.equal(emptyLogHints.length, 2);
+  for (const hint of emptyLogHints) {
+    assert.match(hint.why, /bounded pull returned no matching parsed log entries/);
+    assert.match(hint.why, /does not prove whether the rule fired/);
+    assert.doesNotMatch(hint.why, /rule has not fired/);
+  }
+});
+
 test('set hints cannot bypass the strict lint funnel and render-only import has no live hint', () => {
   const result = { id: 'r', ruleId: 'r' };
   const setHints = buildNextSteps('rule.set', result, {});
