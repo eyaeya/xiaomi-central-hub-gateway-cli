@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: 2026-07-20-action-input-index-domain-v4-replacement-ghost-eligibility-v1 -->
+<!-- xgg-skill-content-build: sha256-1ac2c85e89c500556b96aa0380bf6fb7c290e8c8cabf451ca62ed43ebb884b89 -->
 
 # xgg 自动化编写 Skill
 
@@ -17,7 +17,7 @@ description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Editio
 2. **安全实机探针：** 已验证未接状态的 `condition` 走 `unmet`、同节点 `loop.output → loop.stop` 有限反馈，以及 `timeRange` 在窗口进入时发出事件并提供独立状态；探针只使用临时规则/变量，不驱动物理设备。
 3. **目标网关验收：** property/event/action、物理触发、分区型号、设备替换和备份恢复依赖具体设备与固件，必须按 `spec → validate --spec-aware → lint → trigger/log/readback` 重新验证。不要把离线测试或单一网关探针表述成“全部实机验证”。
 
-正文 build 标记可用于识别同为 npm `0.1.4` 但内容过期的安装副本：`grep '^<!-- xgg-skill-content-build:' <SKILL.md>`。仓库与 npm 包内镜像还应做字节级对比。
+正文 build 标记内嵌除该标记行及其换行外完整 `SKILL.md` UTF-8 字节的 SHA-256，测试会校验正文与摘要绑定；它可用于识别 npm 版本号相同但内容过期的安装副本：`grep '^<!-- xgg-skill-content-build:' <SKILL.md>`。仓库与 npm 包内镜像还应做字节级对比，`references/` 则必须依赖完整目录递归比较。
 
 ## 使用场景（Agent 可承担的任务）
 

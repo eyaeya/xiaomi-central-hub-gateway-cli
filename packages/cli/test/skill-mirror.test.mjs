@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -36,9 +37,22 @@ test('published and repository xgg-rule-authoring Skill directories are byte-ide
   }
 });
 
-test('Skill entrypoint has a content build marker and minimal frontmatter', async () => {
+test('Skill entrypoint has a content-bound build marker and minimal frontmatter', async () => {
   const skill = await readFile(path.join(repositoryDir, 'SKILL.md'), 'utf8');
-  assert.match(skill, /^<!-- xgg-skill-content-build: [a-zA-Z0-9._-]+ -->$/m);
+  const markerLines = skill
+    .split('\n')
+    .filter((line) => line.startsWith('<!-- xgg-skill-content-build:'));
+  assert.equal(markerLines.length, 1, 'SKILL.md must contain exactly one build marker');
+  const markerLine = markerLines[0];
+  const marker = /^<!-- xgg-skill-content-build: sha256-([0-9a-f]{64}) -->$/.exec(markerLine);
+  assert.ok(marker, 'Skill build marker must contain a lowercase SHA-256');
+  const markerWithLf = `${markerLine}\n`;
+  const markerOffset = skill.indexOf(markerWithLf);
+  assert.notEqual(markerOffset, -1, 'Skill build marker must end with LF');
+  const contentWithoutMarker =
+    skill.slice(0, markerOffset) + skill.slice(markerOffset + markerWithLf.length);
+  const contentDigest = createHash('sha256').update(contentWithoutMarker).digest('hex');
+  assert.equal(marker[1], contentDigest, 'Skill build marker is stale for the current body');
 
   const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(skill);
   assert.ok(frontmatter, 'SKILL.md must start with YAML frontmatter');
