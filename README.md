@@ -386,6 +386,7 @@ xgg backup local-export --output ./gateway-rules.bak
 xgg backup local-import --input ./gateway-rules.bak --dry-run
 xgg backup local-import --input ./gateway-rules.bak --confirm-replace-all --snapshots-dir <dir>
 xgg backup progress --from fds --progress-id <id>
+xgg backup cloud-export --from fds --did <did> --ts <ts> --file-name <name> --output ./history.bak --snapshots-dir <dir>
 xgg backup generate --from fds --did <did> --ts <ts> --file-name <name>
 xgg backup load --from fds --did <did> --ts <ts> --file-name <name> --snapshots-dir <dir>
 xgg backup delete --from fds --did <did> --ts <ts> --file-name <name> --snapshots-dir <dir>
@@ -413,6 +414,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 - `rule export/import --target-id` 克隆时只把源规则的 `R<source-id>` 迁移为 `R<target-id>`。脚本先只读预检完整变量计划，再以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备规则内变量；已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前失败，绝不覆盖。兼容的已有变量会保留，类型/值/显示名冲突也会在首次写前失败。`global` 始终是明确的外部依赖，不会被创建或改写。
 - 在已审计 bundle 的调用面与当前 `xgg` 已建模接口中，未发现“客户端随时读取任意设备实时属性”的通用 RPC。需要观测实时值时，用 `deviceInputSetVar`（变化推送）或 `deviceGetSetVar`（由规则事件触发读取）写入变量，再用 `xgg variable watch --follow` 观察；不要把这个结论外推为所有固件都绝无其他私有接口。
 - `backup local-import` 同时接受完整 version-2 `.bak` 与官方旧版 rules-only 数组；旧版没有变量，解码后规范化为 `variables: {}`。`--confirm-replace-all` 会先删除当前全部规则和变量，再仅重建备份包含的内容，因此导入旧版文件不会保留或重建任何变量。固定先跑 `--dry-run` 并核对 `createVariables` 等计数；应用路径必须有 rollback snapshot，且不应在未授权的家庭网关上做恢复试验。
+- 从历史云备份取得可移植文件时优先用 `backup cloud-export`：它会在同一 mutation lease 内自动 download、确认进度并 generate，再于 lease 释放后原子发布官方 envelope 的 `.bak`，stdout 不包含完整规则/变量。低层 `backup generate` 只适合明确知道同一备份已在网关缓存中的高级流程。
 - `xgg api` 是低层逃生口，不建议把它作为常规自动化编辑路径。read 是普通/未知方法的默认 intent；当前已知写接口必须显式传 `--kind write`，并进入与 typed 写命令相同的 Agent guard、完整写前 rollback snapshot 与 `NOT_CONFIRMED` 超时分类。未知的新接口仍可显式选择 read 或 write，JSON 输出会回显最终 `kind`。
 
 ## GitHub 与 npm 内容边界

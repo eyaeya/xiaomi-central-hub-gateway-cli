@@ -85,16 +85,18 @@ export async function createBackup(
   );
 }
 
+async function requestBackupDownloadWithinWorkflow(
+  input: BackupTargetInput,
+  deps: ResourceDeps,
+): Promise<unknown> {
+  return callBackup(deps, '/api/downloadBackup', targetRequest(input, 'BackupDownload'), 'write');
+}
+
 async function downloadBackupWithinWorkflow(
   input: BackupTargetInput,
   deps: ResourceDeps,
 ): Promise<BackupOperationResponse> {
-  const raw = await callBackup(
-    deps,
-    '/api/downloadBackup',
-    targetRequest(input, 'BackupDownload'),
-    'write',
-  );
+  const raw = await requestBackupDownloadWithinWorkflow(input, deps);
   return parseOrThrow(BackupOperationResponse, raw, 'BackupDownloadResponse');
 }
 
@@ -117,6 +119,94 @@ export async function generateBackup(
 ): Promise<BackupContent> {
   const raw = await callBackup(deps, '/api/generateBackup', targetRequest(input, 'BackupGenerate'));
   return parseOrThrow(BackupContent, raw, 'BackupGenerateResponse');
+}
+
+export interface BackupGenerateCompletion {
+  downloadResult: BackupOperationResponse;
+  downloadProgress: BackupProgressResponse;
+  content: BackupContent;
+}
+
+/**
+ * Reproduce the production Bundle's historical export prerequisite: materialize
+ * the selected cloud file in gateway cache and confirm completion before
+ * asking the gateway to generate its portable payload. The whole sequence owns
+ * one mutation workflow lease.
+ */
+export async function downloadAndGenerateBackup(
+  input: BackupTargetInput,
+  deps: ResourceDeps,
+  opts: WaitForBackupOptions = {},
+): Promise<BackupGenerateCompletion> {
+  targetRequest(input, 'BackupCloudExport');
+  assertBackupPollOptions(opts);
+  return withResourceMutationWorkflow(deps, 'backup.cloud-export', async () => {
+    const { result, progress } = await ensureBackupDownloadedWithinWorkflow(
+      input,
+      deps,
+      opts,
+      'backup.cloud-export.download',
+    );
+    const content = await generateBackup(input, deps);
+    return { downloadResult: result, downloadProgress: progress, content };
+  });
+}
+
+async function ensureBackupDownloadedWithinWorkflow(
+  input: BackupTargetInput,
+  deps: ResourceDeps,
+  opts: WaitForBackupOptions,
+  operation: string,
+): Promise<{ result: BackupOperationResponse; progress: BackupProgressResponse }> {
+  const raw = await requestBackupDownloadWithinWorkflow(input, deps);
+  let result: BackupOperationResponse;
+  try {
+    result = parseOrThrow(BackupOperationResponse, raw, 'BackupDownloadResponse');
+  } catch (error) {
+    throw notConfirmedAfterAcknowledgement(
+      error,
+      'backup download was acknowledged but its response could not be interpreted; cache completion is not confirmed',
+      {
+        operation,
+        phase: 'ack-parse',
+        from: input.from,
+        hint: 'log out, log in again, and inspect backup state before retrying',
+      },
+    );
+  }
+
+  const progressId = extractBackupProgressId(result);
+  if (progressId === 0 || isExactEmptyObject(result)) {
+    return { result, progress: { progress: 100 } };
+  }
+  if (progressId === null) {
+    throw new NotConfirmedError(
+      'backup download was accepted without enough progress metadata to confirm cache completion',
+      {
+        operation,
+        from: input.from,
+        hint: 'log out, log in again, and inspect backup state before retrying',
+      },
+    );
+  }
+
+  let progress: BackupProgressResponse;
+  try {
+    progress = await waitForBackupProgress({ from: input.from, progressId, operation }, deps, opts);
+  } catch (error) {
+    throw notConfirmedAfterAcknowledgement(
+      error,
+      'backup download was acknowledged but cache completion could not be confirmed',
+      {
+        operation,
+        phase: 'progress-confirmation',
+        from: input.from,
+        progressId,
+        hint: 'log out, log in again, and inspect backup state before retrying',
+      },
+    );
+  }
+  return { result, progress };
 }
 
 async function loadBackupWithinWorkflow(
@@ -275,6 +365,15 @@ export function extractBackupProgressId(resp: unknown): number | null {
 
 function isBackupProgressId(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function isExactEmptyObject(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  );
 }
 
 export interface LoadBackupOptions {

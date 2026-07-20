@@ -22,6 +22,7 @@ import {
   deleteGraph,
   deleteVariable,
   disableRule,
+  downloadAndGenerateBackup,
   downloadBackup,
   enableRule,
   harvestBaseline,
@@ -365,6 +366,21 @@ const typedMutators = [
     invoke: (deps) => downloadBackup({ from: 'fds', backup }, deps),
   },
   {
+    name: 'downloadAndGenerateBackup',
+    operation: 'backup.cloud-export',
+    respond: (method) => {
+      if (method === '/api/generateBackup') {
+        return { version: 2, rules: [], variables: {} };
+      }
+      return defaultResponse(method);
+    },
+    invoke: (deps) =>
+      downloadAndGenerateBackup({ from: 'fds', backup }, deps, {
+        pollIntervalMs: 1,
+        pollTimeoutMs: 100,
+      }),
+  },
+  {
     name: 'loadBackup',
     operation: 'backup.load',
     invoke: (deps) =>
@@ -382,7 +398,7 @@ const typedMutators = [
   },
 ];
 
-test('all 23 public typed resource mutators are explicitly inventoried', async () => {
+test('all 24 public typed resource mutators are explicitly inventoried', async () => {
   const files = ['rules.ts', 'variables.ts', 'backup.ts'];
   const source = (
     await Promise.all(
@@ -400,7 +416,7 @@ test('all 23 public typed resource mutators are explicitly inventoried', async (
   ].sort();
   const expected = typedMutators.map((entry) => entry.name).sort();
   assert.deepEqual(discovered, expected);
-  assert.equal(expected.length, 23);
+  assert.equal(expected.length, 24);
   for (const entry of typedMutators) {
     assert.match(
       source,
@@ -412,7 +428,7 @@ test('all 23 public typed resource mutators are explicitly inventoried', async (
   }
 });
 
-test('all 23 public typed mutators acquire once and lease every live read/write', async () => {
+test('all 24 public typed mutators acquire once and lease every live read/write', async () => {
   for (const entry of typedMutators) {
     const fixture = workflowFixture(entry.respond);
     await entry.invoke(fixture.deps);
@@ -932,7 +948,7 @@ test('harvestBaseline waits for download cache completion before generate', asyn
     }
     if (request.method === '/api/generateBackup') {
       trace.push('generate');
-      return { version: 1, rules: [], variables: {} };
+      return { version: 2, rules: [], variables: {} };
     }
     throw new Error(`unexpected method ${request.method}`);
   });
@@ -964,7 +980,7 @@ test('harvestBaseline waits for download cache completion before generate', asyn
     }
     if (request.method === '/api/generateBackup') {
       syncTrace.push('generate');
-      return { version: 1, rules: [], variables: {} };
+      return { version: 2, rules: [], variables: {} };
     }
     throw new Error(`unexpected method ${request.method}`);
   });

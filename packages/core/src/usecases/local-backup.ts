@@ -1,5 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { link, mkdir, open, rename, unlink } from 'node:fs/promises';
+import { link, lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import {
   DEFAULT_MAX_INNER_COMPRESSED_BYTES,
@@ -11,6 +11,7 @@ import type { ResourceDeps } from '../resources/index.js';
 import { getRule, listRules } from '../resources/rules.js';
 import { listScopes, listVariables } from '../resources/variables.js';
 import {
+  BackupContent,
   LegacyLocalBackupPayload,
   type LocalBackupPayload,
   LocalBackupPayload as LocalBackupPayloadSchema,
@@ -37,6 +38,14 @@ export interface LocalBackupExportResult {
   bytes: number;
   rules: number;
   variables: number;
+}
+
+export interface GeneratedBackupFileResult {
+  file: string;
+  bytes: number;
+  format: 'legacy-rules-array' | 'v2';
+  version?: 2;
+  rules: number;
 }
 
 export interface LocalBackupRulePlanEntry {
@@ -98,9 +107,81 @@ export interface LocalBackupImportResult {
 /** Encode the official local-backup envelope: deflate frame followed by SHA-256. */
 export function encodeLocalBackup(input: LocalBackupPayload): Buffer {
   const payload = parseOrThrow(LocalBackupPayloadSchema, input, 'LocalBackupPayload');
+  return encodeOfficialBackupEnvelope(payload);
+}
+
+/** Encode a gateway-generated historical backup in the same official envelope. */
+export function encodeGeneratedBackup(input: BackupContent): Buffer {
+  const payload = parseOrThrow(BackupContent, input, 'BackupContent');
+  if (Array.isArray(payload)) {
+    // Preserve the exact legacy payload in the official envelope, but first
+    // prove that our importer can normalize and restore it safely.
+    parseOrThrow(
+      LocalBackupPayloadSchema,
+      {
+        version: 2,
+        rules: payload.map((rule) => ({
+          ...rule,
+          id: rule.id ?? rule.cfg.id,
+        })),
+        variables: {},
+      },
+      'LegacyBackupContent',
+    );
+  }
+  return encodeOfficialBackupEnvelope(payload);
+}
+
+function encodeOfficialBackupEnvelope(payload: unknown): Buffer {
   const envelope = packInnerJson(payload);
   const digest = createHash('sha256').update(envelope).digest();
   return Buffer.concat([envelope, digest]);
+}
+
+/** Fail before gateway access when a non-overwrite cloud export already exists. */
+export async function assertBackupOutputAvailable(
+  outputPath: string,
+  overwrite = false,
+): Promise<string> {
+  const target = resolve(outputPath);
+  let info: Awaited<ReturnType<typeof lstat>>;
+  try {
+    info = await lstat(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return target;
+    throw new ConfigError(`unable to inspect backup output: ${target}`, {
+      path: target,
+      fsCode: (error as NodeJS.ErrnoException).code,
+    });
+  }
+  if (overwrite && !info.isDirectory()) return target;
+  if (info.isDirectory()) {
+    throw new ConfigError(`backup output is a directory: ${target}`, { path: target });
+  }
+  throw new ConfigError(`backup output already exists: ${target}`, {
+    path: target,
+    requiredFlag: '--overwrite',
+  });
+}
+
+/** Publish already-generated cloud content without extending a gateway lease. */
+export async function publishGeneratedBackup(
+  outputPath: string,
+  input: BackupContent,
+  options: LocalBackupExportOptions = {},
+): Promise<GeneratedBackupFileResult> {
+  const payload = parseOrThrow(BackupContent, input, 'BackupContent');
+  const encoded = encodeGeneratedBackup(payload);
+  const file = await writeLocalBackupAtomically(outputPath, encoded, options.overwrite === true);
+  if (Array.isArray(payload)) {
+    return {
+      file,
+      bytes: encoded.length,
+      format: 'legacy-rules-array',
+      rules: payload.length,
+    };
+  }
+  return { file, bytes: encoded.length, format: 'v2', version: 2, rules: payload.rules.length };
 }
 
 /**

@@ -2,9 +2,11 @@ import {
   type BackupItem,
   ConfigError,
   NotConfirmedError,
+  assertBackupOutputAvailable,
   createBackup,
   createStore,
   deleteBackup,
+  downloadAndGenerateBackup,
   downloadBackup,
   dumpBeforeWrite,
   exportLocalBackup,
@@ -16,6 +18,7 @@ import {
   listBackups,
   loadBackup,
   planLocalBackupImport,
+  publishGeneratedBackup,
   readLocalBackup,
   setBackupConfig,
   validateLocalBackupPayload,
@@ -88,6 +91,11 @@ interface LocalImportOpts extends GatewayOpts {
   snapshotsDir?: string;
 }
 
+interface CloudExportOpts extends SnapshotOpts {
+  output: string;
+  overwrite?: boolean;
+}
+
 interface ParsedWaitOptions {
   enabled: boolean;
   pollIntervalMs?: number;
@@ -137,15 +145,20 @@ function addTargetOptions(cmd: Command): Command {
 // there this flag requests the terminal progress object in command output.
 // A progress_id of 0 (synchronous/local-cache hit) resolves instantly.
 function addWaitOptions(cmd: Command): Command {
+  return addPollOptions(
+    cmd.option('--wait', 'poll to 100% (load always waits; this includes progress in output)'),
+  );
+}
+
+function addPollOptions(cmd: Command): Command {
   return cmd
-    .option('--wait', 'poll to 100% (load always waits; this includes progress in output)')
     .option(
       '--poll-interval-ms <ms>',
-      'progress poll interval (default 1000; requires --wait except for load)',
+      'progress poll interval (default 1000; requires --wait except for load/cloud-export)',
     )
     .option(
       '--poll-timeout-ms <ms>',
-      'progress poll timeout (default 60000; requires --wait except for load)',
+      'progress poll timeout (default 60000; requires --wait except for load/cloud-export)',
     );
 }
 
@@ -358,6 +371,60 @@ export function backupCommand(): Command {
       ];
       emitList(
         { jsonPayload: { ok: true, backups: result }, columns, rows: result },
+        { pretty: opts.pretty === true },
+      );
+    }),
+  );
+
+  addPollOptions(
+    addSnapshotOptions(
+      addTargetOptions(
+        cmd
+          .command('cloud-export')
+          .description('Download and export a historical cloud backup as an official .bak')
+          .requiredOption('--output <path>', 'destination .bak path')
+          .option('--overwrite', 'atomically replace an existing destination')
+          .addHelpText(
+            'after',
+            '\nExample:\n  $ xgg backup cloud-export --did <DID> --ts <TS> --file-name <NAME> --output ./history.bak --snapshots-dir ./snapshots/\n\nThe command confirms download completion, generates the payload, then publishes an official SHA-256-protected .bak with mode 0600. The low-level `backup generate` remains available for an already-cached backup.',
+          ),
+      ),
+    ),
+  ).action(
+    wrap('backup.cloud-export', async (opts: CloudExportOpts) => {
+      const overwrite = opts.overwrite === true;
+      await assertBackupOutputAvailable(opts.output, overwrite);
+      const poll = parseWaitOptions(opts, true);
+      const guard = assertAgentModeOrSnapshotsDir(opts);
+      const target = backupRef(opts);
+      const deps = makeDeps(opts);
+      const { snapshot, completion } = await runMutationWorkflow(
+        'backup.cloud-export',
+        deps,
+        async () => {
+          const snapshot = await snapshotBeforeBackupWrite(guard, opts, deps, target);
+          const completion = await downloadAndGenerateBackup(
+            { from: opts.from, backup: target },
+            deps,
+            {
+              ...(poll.pollIntervalMs !== undefined && {
+                pollIntervalMs: poll.pollIntervalMs,
+              }),
+              ...(poll.pollTimeoutMs !== undefined && { pollTimeoutMs: poll.pollTimeoutMs }),
+            },
+          );
+          return { snapshot, completion };
+        },
+      );
+      const file = await publishGeneratedBackup(opts.output, completion.content, { overwrite });
+      emit(
+        {
+          ok: true,
+          snapshot,
+          downloadResult: completion.downloadResult,
+          downloadProgress: completion.downloadProgress,
+          ...file,
+        },
         { pretty: opts.pretty === true },
       );
     }),

@@ -12,6 +12,7 @@ import {
   NotConfirmedError,
   SchemaError,
   decodeLocalBackup,
+  encodeGeneratedBackup,
   encodeLocalBackup,
   exportLocalBackup,
   importLocalBackup,
@@ -181,6 +182,7 @@ test('bundle-derived fixture has the exact length-prefix, raw-deflate, and SHA-2
   assert.deepEqual(JSON.parse(json.toString('utf8')), fixture.payload);
   assert.deepEqual(decodeLocalBackup(bytes), fixture.payload);
   assert.deepEqual(decodeLocalBackup(encodeLocalBackup(fixture.payload)), fixture.payload);
+  assert.deepEqual(decodeLocalBackup(encodeGeneratedBackup(fixture.payload)), fixture.payload);
 });
 
 test('local backup accepts and normalizes the official legacy rules-only array', async () => {
@@ -204,6 +206,7 @@ test('local backup accepts and normalizes the official legacy rules-only array',
   const withMatchingId = structuredClone(legacyFixture.payload);
   withMatchingId[0].id = withMatchingId[0].cfg.id;
   assert.deepEqual(decodeLocalBackup(encodeUncheckedPayload(withMatchingId)), decoded);
+  assert.deepEqual(decodeLocalBackup(encodeGeneratedBackup(legacyFixture.payload)), decoded);
 });
 
 test('legacy local backup rejects mismatched, duplicate, and malformed rules', () => {
@@ -247,6 +250,10 @@ test('local backup rejects digest tampering, forged lengths, and invalid version
   assert.throws(
     () => encodeLocalBackup({ ...fixture.payload, version: 1 }),
     (error) => error instanceof SchemaError && error.message.includes('LocalBackupPayload'),
+  );
+  assert.throws(
+    () => encodeGeneratedBackup({ ...fixture.payload, version: 1 }),
+    (error) => error instanceof SchemaError && error.message.includes('BackupContent'),
   );
 });
 

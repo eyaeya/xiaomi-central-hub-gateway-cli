@@ -21,6 +21,7 @@ export type { DevicePartition } from './device-partitions.js';
 export {
   createBackup,
   deleteBackup,
+  downloadAndGenerateBackup,
   downloadBackup,
   extractBackupProgressId,
   generateBackup,
@@ -32,7 +33,7 @@ export {
   waitForBackupProgress,
 } from './backup.js';
 export type { LoadBackupOptions, WaitForBackupOptions } from './backup.js';
-export type { BackupLoadCompletion } from './backup.js';
+export type { BackupGenerateCompletion, BackupLoadCompletion } from './backup.js';
 export type {
   BackupConfigResponse,
   BackupCreateInput,
