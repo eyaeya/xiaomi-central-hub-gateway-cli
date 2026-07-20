@@ -523,6 +523,11 @@ test('spec-aware validation rejects non-native action literals and out-of-domain
     { name: 'number type', input: { piid: 1, value: '4' }, message: /requires a number/i },
     { name: 'boolean type', input: { piid: 2, value: 1 }, message: /requires a boolean/i },
     { name: 'string type', input: { piid: 3, value: 3 }, message: /requires a string/i },
+    {
+      name: 'empty string',
+      input: { piid: 3, value: '' },
+      message: /requires a non-empty string/i,
+    },
     { name: 'integer', input: { piid: 1, value: 1.5 }, message: /exact safe integer/i },
     { name: 'step', input: { piid: 1, value: 3 }, message: /not aligned.*step 2/i },
     { name: 'value-list', input: { piid: 4, value: 3 }, message: /not in MIoT value-list/i },
@@ -576,7 +581,7 @@ test('spec-aware validation checks action variable dtype and exact numeric range
   }
 });
 
-test('spec-aware action validation leaves property-write deviceOutput nodes unchanged', async () => {
+test('spec-aware validation accepts a valid property-write deviceOutput node', async () => {
   assert.deepEqual(await validateNodes([propertyWriteNode()]), []);
 });
 
@@ -611,6 +616,11 @@ test('strict export rejects persisted action mapping, literal, and variable cont
       name: 'literal integer',
       ins: validIns({ 1: { piid: 1, value: 1.5 } }),
       message: /exact safe integer/i,
+    },
+    {
+      name: 'literal empty string',
+      ins: validIns({ 3: { piid: 3, value: '' } }),
+      message: /requires a non-empty string/i,
     },
     {
       name: 'variable dtype',
@@ -652,13 +662,22 @@ test('strict export rejects persisted action mapping, literal, and variable cont
   }
 });
 
-test('permissive export warns before emitting an incomplete action replay', async () => {
-  const exported = await exportNodes(
+test('permissive export warns before emitting incomplete or empty-string action replay', async () => {
+  const incomplete = await exportNodes(
     [actionNode(validIns({ 1: undefined }).filter(Boolean))],
     false,
   );
   assert.equal(
-    exported.warnings.some((warning) => /missing required action input piid=1/i.test(warning)),
+    incomplete.warnings.some((warning) => /missing required action input piid=1/i.test(warning)),
+    true,
+  );
+
+  const emptyString = await exportNodes(
+    [actionNode(validIns({ 3: { piid: 3, value: '' } }))],
+    false,
+  );
+  assert.equal(
+    emptyString.warnings.some((warning) => /requires a non-empty string/i.test(warning)),
     true,
   );
 });

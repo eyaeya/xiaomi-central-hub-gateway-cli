@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-1dfac51dfb1be54008739a3203e1729059065eb4796fe47ee9396e600e243483 -->
+<!-- xgg-skill-content-build: sha256-ac5b250d0d086595eb00077fb8858e06fb7050cf94e7078715464c1018fca9ed -->
 
 # xgg 自动化编写 Skill
 
@@ -36,7 +36,7 @@ xgg rule validate --rule-id <rule-id> --spec-aware # 设备 spec + action input 
 xgg rule lint --rule-id <rule-id> --strict # 拓扑、必需输入、可达性与保存键
 ```
 
-图中含 `deviceOutput` action 时，`--spec-aware` 是启用前和重放后的硬验收项；普通 `rule validate` 不读取当前 MIoT action spec，无法发现索引、short-name 或数值域漂移。
+图中含 `deviceOutput` 时，`--spec-aware` 是启用前和重放后的硬验收项；普通 `rule validate` 不读取当前 MIoT spec，无法发现 property-write 的 write access、原生类型/数值域/变量 metadata 漂移，也无法发现 action 的索引或 short-name 漂移。
 
 只有用户授权运行时才继续 `xgg rule enable <rule-id>`；授权运行后，若 `xgg rule logs <rule-id> --tail 20` 观察到对应项，可作为运行的正向证据。未获运行授权时，则用 `rule view` 确认保持 `enable=false`。设备相关卡片务必先 `xgg device spec <did>` 查清属性 / 事件 / 动作名，不猜字段。`onLoad` 是目前已有证据、可立即 `disable → enable` 重放的独立入口；`timeRange` 也已实测为独立窗口进入事件源，但要等待 start。`varChange` 在模型中是独立源，外部 `variable set-value` 是否按预期触发仍要在目标网关看日志验证；`loop` 必须由上游事件接入 `start`。物理按钮/传感器请用户实际触发后再看日志。
 
@@ -185,11 +185,11 @@ xgg rule lint --rule-id <rid> --strict                          # 边拓扑 + pi
 
 | 层 | 命令 | 抓什么 | 写入时是否自动跑 |
 |---|---|---|---|
-| 卡片配置 + 变量存在/scope | `rule validate`（dry-run，不写）；设备 action 加 `--spec-aware` | 卡片字段非法、`卡片变量丢失`、`卡片变量有误`；`--spec-aware` 还核对 action input 的逐索引 PIID、重复 short-name、原生 literal/统一数值域和变量有效 range。离线 `--body/--stdin` 不读网关变量清单，在线 `--rule-id` 才判断变量是否存在 | `rule set` / `rule enable` 默认跑本地校验；完整 action spec 契约仍以显式 `--spec-aware` 为准。node/edge/layout 默认接在线 var check；raw opt-out 只供明确探测或修复 |
+| 卡片配置 + 变量存在/scope | `rule validate`（dry-run，不写）；设备写入加 `--spec-aware` | 卡片字段非法、`卡片变量丢失`、`卡片变量有误`；`--spec-aware` 还核对 property-write 的属性/write access/原生 literal/统一数值域/变量 metadata，以及 action input 的逐索引 PIID、重复 short-name 和同类输入契约。离线 `--body/--stdin` 不读网关变量清单，在线 `--rule-id` 才判断变量是否存在 | `rule set` / `rule enable` 默认跑本地校验；完整设备 spec 契约仍以显式 `--spec-aware` 为准。node/edge/layout 默认接在线 var check；raw opt-out 只供明确探测或修复 |
 | 边拓扑 + pin 颜色 | `rule lint`；`--strict` 再叠加保存键级检查 | 非法/断开的 endpoint、空边、重复边、fan-in > 1、event→state cross-color，以及缺失必需输入。普通 lint 对缺失的 `condition.trigger`、`eventSequence.input1/input2`、`logicAnd` 每个声明输入报 warning，strict 升为 error；`condition.condition` 刻意可选，未接时网关把它当 false。合法的同节点反馈只报 warning | `rule set` 跑 full lint；`rule enable` 跑 full lint + reachability；`edge add` 对新边做 pin/duplicate/fan-in/cross-color 检查。`node add/update/remove`、`edge remove`、layout 跳过 full-graph lint（schema/var 检查各自不同）；import 本身只渲染，重放脚本再走 set/node/edge 写路径。每批修改后都手动跑 strict lint |
 | 按 pin + 状态真假聚合的有向可达性（never-fires sink） | `rule lint --strict`（读时报）；`rule enable` 写时硬拦 | `卡片不可达`：无法按目标卡必需输入与真假语义驱动动作卡（`deviceOutput`/`varSetNumber`/`varSetString`/`deviceGetSetVar`）。`eventSequence` 要全部事件输入；`condition.met` 要 trigger + may-true，`unmet` 要 trigger + may-false（未接状态即 false）；`statusLast` 只接受 may-true；`logicAnd`/`logicOr`/`logicNot` 传播真假；`signalOr` 任一路事件即可。`timeRange` 是独立的窗口进入事件源并同时提供状态；`loop.stop`/`onlyNTimes.zero` 不能单独向下游传播 | **仅 `rule enable` 硬拦**；`rule set` 不跑可达性（增量编写允许卡片悬空待连线），`rule validate` 也不报，要用 `rule lint --strict` 提前看到 |
 
-启用前**两条都跑**看全量问题：`rule validate --rule-id <id> --spec-aware` 和 `rule lint --rule-id <id> --strict`。尤其是 `deviceOutput` action，省略 `--spec-aware` 就不会检查当前 `action.in`/`props.ins` 契约。`rule enable` 的内建预检是兜底，不是「看全问题」的替代（它的 `error.message` 只报第一个，`details.issues` 才有全部）。
+启用前**两条都跑**看全量问题：`rule validate --rule-id <id> --spec-aware` 和 `rule lint --rule-id <id> --strict`。尤其是 `deviceOutput`，省略 `--spec-aware` 就不会检查当前 property-write 或 `action.in`/`props.ins` 契约。`rule enable` 的内建预检是兜底，不是「看全问题」的替代（它的 `error.message` 只报第一个，`details.issues` 才有全部）。
 
 ## 三、如何获取卡片参数
 
@@ -221,7 +221,7 @@ xgg rule import --from-file rule-export.json --target-id <target-id> \
 
 `rule import` 自身只做离线文本转换，stdout 是 shell，不代表已写入。脚本先只读预检已捕获的本地变量；若导出包含本地变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 同时生效）。clone 保留 `--expect-absent`，先创建禁用空壳，再准备 `R<target-id>` 变量。所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，禁用源保持禁用。脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg/API writer 并发修改目标；staging 后失败会留下禁用 partial graph，用逐写快照检查或恢复。重放后总是 `validate --spec-aware → lint --strict → view/readback`；只有用户授权时才触发并读日志。
 
-- 对当前 spec 有效的已建模节点，完整 typed `include` / `between`、`preload`、`simplified`、原生 action 参数、`nop` Delta/背景/几何与可由 DSL 无损表示的表达式可在 strict 模式往返；action literal 的原生 JSON 类型由 MIoT format 决定，只有数值 format 应用数值 value-list/range/step（bool/string 即使带 numeric value-list 也不能变成 number）。strict export 会按索引核对 `props.ins[i].piid === action.in[i]`、PIID/short-name 唯一性、literal 原生类型/统一数值域和变量 dtype/有效 range，任何语义损失 warning 都会使导出拒绝。permissive export 也必须明确警告，并避免重复 key 或 `__proto__` 静默丢值。
+- 对当前 spec 有效的已建模节点，完整 typed `include` / `between`、`preload`、`simplified`、原生设备写入参数、`nop` Delta/背景/几何与可由 DSL 无损表示的表达式可在 strict 模式往返；property/action literal 的原生 JSON 类型由 MIoT format 决定，只有数值 format 应用数值 value-list/range/step（bool/string 即使带 numeric value-list 也不能变成 number）。strict export 会核对 property-write 的属性/write access/literal/变量 metadata，并按索引核对 `props.ins[i].piid === action.in[i]`、PIID/short-name 唯一性和同类输入契约；任何语义损失 warning 都会使导出拒绝。permissive export 也必须明确警告，并避免重复 key 或 `__proto__` 静默丢值。
 - `varSetNumber` / `varSetString` elements 若存在 DSL 歧义边界，任何 export 模式都会在输出前失败，不依赖 `--strict-roundtrip`；先给表达式增加显式分隔符。
 - clone 只把 `R<source-id>` 改为 `R<target-id>`，预检本地变量计划后以 expect-absent 预留目标；`global` 是外部依赖，不创建、不改写。
 - 未建模的未来节点导出为完整 opaque `--cfg` 结构，可同 ID 无损重放。因为 CLI 无法安全发现/改写 opaque payload 内的规则本地引用，带 opaque 节点时拒绝 `--target-id` clone。

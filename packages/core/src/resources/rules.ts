@@ -2439,37 +2439,7 @@ function variableRangeFields(
   return range;
 }
 
-function coercePropertyValue(raw: string, format: string): number | string | boolean {
-  if (format === 'string') return raw;
-  if (format === 'bool') {
-    // F14 REWRITTEN (2026-05-28): emit JSON boolean to match the web UI's
-    // wire shape (UI saves `value: true`/`false` for bool properties).
-    // Pre-F14 CLI emitted int `1`/`0`; the gateway accepts both at write
-    // time (F12 schema widening preserves backward-compat for old fixtures
-    // and rules) but the UI's encoding is the canonical one.
-    if (raw === '1' || raw === 'true') return true;
-    if (raw === '0' || raw === 'false') return false;
-    throw new ConfigError(`bool property requires value=true|false|0|1, got "${raw}"`, {
-      raw,
-      format,
-    });
-  }
-  if (format === 'float') {
-    const n = Number.parseFloat(raw);
-    if (Number.isNaN(n)) {
-      throw new ConfigError(`float property requires numeric value, got "${raw}"`, { raw, format });
-    }
-    return n;
-  }
-  // int / uint variants
-  const n = Number.parseInt(raw, 10);
-  if (Number.isNaN(n)) {
-    throw new ConfigError(`int property requires numeric value, got "${raw}"`, { raw, format });
-  }
-  return n;
-}
-
-type DeviceOutputActionLiteral = number | string | boolean;
+type DeviceOutputLiteral = number | string | boolean;
 
 function actionInputNumber(raw: unknown, context: string): number {
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
@@ -2494,7 +2464,7 @@ function actionInputSafeInteger(raw: unknown, format: string, context: string): 
   );
 }
 
-function validateActionInputDomain(value: number, property: MiotProperty, context: string): void {
+function validateDeviceOutputDomain(value: number, property: MiotProperty, context: string): void {
   const domainError = miotNumericOperandDomainError(property, value);
   if (domainError === null) return;
   throw new ConfigError(`${context} ${domainError}`, {
@@ -2504,11 +2474,11 @@ function validateActionInputDomain(value: number, property: MiotProperty, contex
   });
 }
 
-function coerceActionInputLiteral(
+function coerceDeviceOutputLiteral(
   raw: unknown,
   property: MiotProperty,
   context: string,
-): DeviceOutputActionLiteral {
+): DeviceOutputLiteral {
   if (property.format === 'string') {
     if (typeof raw !== 'string') {
       throw new ConfigError(`${context} requires a string value`, {
@@ -2531,11 +2501,11 @@ function coerceActionInputLiteral(
 
   // MIoT format owns the persisted JSON type. Some malformed or vendor
   // extended specs attach a numeric value-list to bool/string properties;
-  // that metadata must not coerce their action inputs into JSON numbers.
+  // that metadata must not coerce deviceOutput values into JSON numbers.
   const value = isMiotActionIntegerFormat(property.format)
     ? actionInputSafeInteger(raw, property.format, context)
     : actionInputNumber(raw, context);
-  validateActionInputDomain(value, property, context);
+  validateDeviceOutputDomain(value, property, context);
   return value;
 }
 
@@ -3125,8 +3095,7 @@ function synthesizeNodeFromShortcut(
       }
 
       const ins: Array<
-        | { piid: number; value: DeviceOutputActionLiteral }
-        | ({ piid: number } & DeviceOutputVariableRef)
+        { piid: number; value: DeviceOutputLiteral } | ({ piid: number } & DeviceOutputVariableRef)
       > = [];
       for (const { piid, property, paramKey } of actionInputs) {
         const rawValue = suppliedParams[paramKey];
@@ -3140,7 +3109,7 @@ function synthesizeNodeFromShortcut(
         else
           ins.push({
             piid,
-            value: coerceActionInputLiteral(
+            value: coerceDeviceOutputLiteral(
               rawValue,
               property,
               `action input "${paramKey}" (piid=${piid})`,
@@ -3197,7 +3166,11 @@ function synthesizeNodeFromShortcut(
           : null;
       const coerced =
         varRef === null
-          ? coercePropertyValue(escapedLiteral ?? shortcut.value, property.format)
+          ? coerceDeviceOutputLiteral(
+              escapedLiteral ?? shortcut.value,
+              property,
+              `property "${shortcut.deviceProperty}" (piid=${property.iid})`,
+            )
           : null;
       return {
         id,

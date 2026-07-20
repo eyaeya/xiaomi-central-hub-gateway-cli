@@ -129,12 +129,14 @@ function findProperty(spec: DeviceSpec, siid: number, piid: number): MiotPropert
   return service?.properties?.find((p) => p.iid === piid);
 }
 
-function checkActionLiteral(
-  input: Record<string, unknown>,
+function checkDeviceOutputLiteral(
+  container: Record<string, unknown>,
   property: MiotProperty,
   path: string,
+  context: string,
+  options: { allowLegacyBooleanNumber?: boolean } = {},
 ): LintIssue[] {
-  const value = input.value;
+  const value = container.value;
   const numeric = property.format !== 'string' && property.format !== 'bool';
 
   if (numeric) {
@@ -142,7 +144,7 @@ function checkActionLiteral(
       return [
         issue(
           `${path}.value`,
-          `卡片配置有误: action input piid=${input.piid} requires a number (native JSON number) for MIoT format ${property.format}`,
+          `卡片配置有误: ${context} requires a number (native JSON number) for MIoT format ${property.format}`,
         ),
       ];
     }
@@ -150,51 +152,53 @@ function checkActionLiteral(
       return [
         issue(
           `${path}.value`,
-          `卡片配置有误: action input piid=${input.piid} requires an exact safe integer for MIoT format ${property.format}`,
+          `卡片配置有误: ${context} requires an exact safe integer for MIoT format ${property.format}`,
         ),
       ];
     }
     const domainIssue = miotNumericOperandDomainIssue(property, value);
     return domainIssue === null
       ? []
-      : [
-          issue(
-            `${path}.value`,
-            `卡片配置有误: action input piid=${input.piid} ${domainIssue.message}`,
-          ),
-        ];
+      : [issue(`${path}.value`, `卡片配置有误: ${context} ${domainIssue.message}`)];
   }
 
   if (property.format === 'string' && typeof value !== 'string') {
     return [
-      issue(
-        `${path}.value`,
-        `卡片配置有误: action input piid=${input.piid} requires a string (native JSON string)`,
-      ),
+      issue(`${path}.value`, `卡片配置有误: ${context} requires a string (native JSON string)`),
     ];
   }
-  if (property.format === 'bool' && typeof value !== 'boolean') {
+  if (property.format === 'string' && typeof value === 'string' && value.length === 0) {
     return [
       issue(
         `${path}.value`,
-        `卡片配置有误: action input piid=${input.piid} requires a boolean (native JSON boolean)`,
+        `卡片配置有误: ${context} requires a non-empty string (native JSON string)`,
       ),
+    ];
+  }
+  if (
+    property.format === 'bool' &&
+    typeof value !== 'boolean' &&
+    !(options.allowLegacyBooleanNumber === true && (value === 0 || value === 1))
+  ) {
+    return [
+      issue(`${path}.value`, `卡片配置有误: ${context} requires a boolean (native JSON boolean)`),
     ];
   }
   return [];
 }
 
-function checkActionVariableRef(
+function checkDeviceOutputVariableRef(
   input: Record<string, unknown>,
   property: MiotProperty,
   path: string,
+  context: string,
 ): LintIssue[] {
   const issues: LintIssue[] = [];
   if (typeof input.scope !== 'string' || !isValidVariableIdentifier(input.scope)) {
     issues.push(
       issue(
         `${path}.scope`,
-        `卡片配置有误: action input piid=${input.piid} variable scope must be non-empty ASCII alphanumeric`,
+        `卡片配置有误: ${context} variable scope must be non-empty ASCII alphanumeric`,
       ),
     );
   }
@@ -202,7 +206,7 @@ function checkActionVariableRef(
     issues.push(
       issue(
         `${path}.id`,
-        `卡片配置有误: action input piid=${input.piid} variable id must be non-empty ASCII alphanumeric`,
+        `卡片配置有误: ${context} variable id must be non-empty ASCII alphanumeric`,
       ),
     );
   }
@@ -211,7 +215,7 @@ function checkActionVariableRef(
     issues.push(
       issue(
         `${path}.dtype`,
-        `卡片配置有误: action input piid=${input.piid} uses MIoT format ${property.format}, so typed replay expects variable dtype "${expectedDtype}" (got "${String(input.dtype)}")`,
+        `卡片配置有误: ${context} uses MIoT format ${property.format}, so typed replay expects variable dtype "${expectedDtype}" (got "${String(input.dtype)}")`,
       ),
     );
     return issues;
@@ -224,7 +228,7 @@ function checkActionVariableRef(
       issues.push(
         issue(
           path,
-          `卡片配置有误: action input piid=${input.piid} variable dtype "${expectedDtype}" must not carry numeric range metadata (${present.join(', ')})`,
+          `卡片配置有误: ${context} variable dtype "${expectedDtype}" must not carry numeric range metadata (${present.join(', ')})`,
         ),
       );
     }
@@ -236,14 +240,14 @@ function checkActionVariableRef(
     issues.push(
       issue(
         path,
-        `卡片配置有误: action input piid=${input.piid} cannot use a number variable because MIoT property ${property.type} declares no value-range`,
+        `卡片配置有误: ${context} cannot use a number variable because MIoT property ${property.type} declares no value-range`,
       ),
     );
     return issues;
   }
   const rangeIssue = miotNumericValueRangeIssue(property);
   if (rangeIssue !== null) {
-    issues.push(issue(path, `卡片配置有误: action input piid=${input.piid} ${rangeIssue.message}`));
+    issues.push(issue(path, `卡片配置有误: ${context} ${rangeIssue.message}`));
     return issues;
   }
   if (
@@ -254,7 +258,7 @@ function checkActionVariableRef(
     issues.push(
       issue(
         path,
-        `卡片配置有误: action input piid=${input.piid} number variable range metadata must exactly match MIoT value-range [${range.join(', ')}]`,
+        `卡片配置有误: ${context} number variable range metadata must exactly match MIoT value-range [${range.join(', ')}]`,
       ),
     );
   }
@@ -386,13 +390,51 @@ export function checkDeviceOutputActionInputContract(
     }
     if (!isRecord(input)) continue;
     const inputPath = `${path}.ins[${index}]`;
+    const context = `action input piid=${expectedPiid}`;
     issues.push(
       ...(isVarValueShape(input)
-        ? checkActionVariableRef(input, property, inputPath)
-        : checkActionLiteral(input, property, inputPath)),
+        ? checkDeviceOutputVariableRef(input, property, inputPath, context)
+        : checkDeviceOutputLiteral(input, property, inputPath, context)),
     );
   }
 
+  return issues;
+}
+
+/** Validate a persisted deviceOutput property write against its MIoT property. */
+export function checkDeviceOutputPropertyWriteContract(
+  props: Record<string, unknown>,
+  spec: DeviceSpec,
+  path: string,
+): LintIssue[] {
+  if (!Number.isInteger(props.siid) || !Number.isInteger(props.piid)) return [];
+  const property = findProperty(spec, props.siid as number, props.piid as number);
+  if (property === undefined) {
+    return [
+      issue(
+        path,
+        `卡片配置有误: property siid=${props.siid} piid=${props.piid} not found in ${spec.type}`,
+      ),
+    ];
+  }
+
+  const issues: LintIssue[] = [];
+  const context = `property write piid=${props.piid}`;
+  if (!property.access.includes('write')) {
+    issues.push(
+      issue(
+        path,
+        `卡片配置有误: ${context} is not writable; MIoT access=[${property.access.join(', ')}]`,
+      ),
+    );
+  }
+  issues.push(
+    ...(isVarValueShape(props)
+      ? checkDeviceOutputVariableRef(props, property, path, context)
+      : checkDeviceOutputLiteral(props, property, path, context, {
+          allowLegacyBooleanNumber: true,
+        })),
+  );
   return issues;
 }
 
@@ -994,11 +1036,8 @@ async function checkAgainstSpec(
   const props = node.props;
   if (!Number.isInteger(props.siid)) return issues;
 
-  // Property-write deviceOutput nodes keep their established validation
-  // behavior. The action shape is the one whose action.in contract typed
-  // replay must reconstruct from props.ins.
   const isDeviceOutputAction = node.type === 'deviceOutput' && Number.isInteger(props.aiid);
-  if (node.type === 'deviceOutput' && !isDeviceOutputAction) return issues;
+  const isDeviceOutputProperty = node.type === 'deviceOutput' && Number.isInteger(props.piid);
 
   // F66e-2 (2026-05-31): deviceInputSetVar event-mode runs a per-arg dtype
   // check against the spec; defer to a dedicated helper because the dtype
@@ -1009,6 +1048,7 @@ async function checkAgainstSpec(
   const isSetVarEvent = node.type === 'deviceInputSetVar' && isEventMode;
   if (
     !isDeviceOutputAction &&
+    !isDeviceOutputProperty &&
     !isDeviceInputEvent &&
     !isSetVarEvent &&
     !Number.isInteger(props.piid)
@@ -1053,6 +1093,10 @@ async function checkAgainstSpec(
 
   if (isDeviceOutputAction) {
     return checkDeviceOutputActionInputContract(props, spec, base);
+  }
+
+  if (isDeviceOutputProperty) {
+    return checkDeviceOutputPropertyWriteContract(props, spec, base);
   }
 
   if (isDeviceInputEvent || isSetVarEvent) {

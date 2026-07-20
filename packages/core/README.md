@@ -76,6 +76,8 @@ const specAwareIssues = await validateGraph({
 
 spec registry 的 404 会返回 warning，表示该 URN 的外部检查被跳过；网络/超时/5xx 或 schema 失败会返回独立 error issue。两者都不会中止图遍历，因此同一次结果仍包含已经发现的本地问题。`validateGraphOrThrow` 会在收集完整 issue 列表后，按既有契约对第一个 error 抛出 `ConfigError`。
 
+注入 spec 后，`deviceOutput` property-write 会核对属性存在性与 write access、literal 的 MIoT 原生类型和 value-list/value-range/step，以及变量 dtype/有效 range metadata；action input 继续使用同一 literal/变量基础契约，并额外检查 `action.in` 与 `props.ins` 的完整逐索引映射。
+
 ## DATA 响应大小限制
 
 core 在解密 DATA frame 后、同步解压前执行两层上限检查：压缩数据默认最多 16 MiB，声明及实际解压后的 UTF-8 JSON 默认最多 64 MiB。长度声明必须为正数，zlib 的 `maxOutputLength` 还会阻止实际输出越过声明值。超限或损坏的响应会作为网络/协议失败结束当前 session。
