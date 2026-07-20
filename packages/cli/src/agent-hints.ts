@@ -288,7 +288,7 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
       `xgg rule logs ${readId(r)} --tail 20`,
       `xgg rule disable ${readId(r)} && xgg rule enable ${readId(r)}`,
     ],
-    why: 'enable returns immediately but the rule may still fail at runtime; `rule logs` is the only verification. For onLoad-based rules the disable+enable cycle re-fires the trigger deterministically without physical interaction; for other trigger types the agent must ask the user to physically trigger the rule (button-press, property change, etc.) before re-polling logs',
+    why: 'enable returns immediately but the rule may still fail at runtime; matching parsed `rule logs` entries provide positive evidence, but the bounded log view is not the only verification. Combine it with controlled triggers, variable readings, or graph readback. For onLoad-based rules the disable+enable cycle re-fires the trigger deterministically without physical interaction; for other trigger types the agent must ask the user to physically trigger the rule (button-press, property change, etc.) before re-polling logs',
     lifecycle: 'validated → observed',
   },
   {
@@ -304,7 +304,7 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
       `xgg rule disable ${readRuleId(r)} && xgg rule enable ${readRuleId(r)}`,
       `xgg rule logs ${readRuleId(r)} --follow --interval-ms 1500`,
     ],
-    why: 'no log entries yet — rule has not fired. For onLoad rules the disable+enable cycle re-fires the trigger deterministically; for other trigger types ask the user to physically trigger (button-press, property change) before tailing',
+    why: 'this bounded pull returned no matching parsed log entries; that alone does not prove whether the rule fired. For onLoad rules the disable+enable cycle can re-fire the trigger deterministically; for other trigger types ask the user to physically trigger (button-press, property change), then combine any matching entries with graph readback or variable evidence',
     lifecycle: 'enabled → observed',
   },
   {

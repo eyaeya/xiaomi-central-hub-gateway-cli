@@ -29,3 +29,27 @@ test('variable watch help uses modeled set-var cards without a firmware-global c
   assert.match(result.stdout, /does not rule out firmware-private APIs/);
   assert.doesNotMatch(result.stdout, /gateway has no read-device-property RPC/i);
 });
+
+test('rule logs help bounds parsed entries without claiming raw or complete output', () => {
+  const result = spawnSync(process.execPath, [cliPath, 'rule', 'logs', '--help'], {
+    cwd: packageRoot,
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const help = result.stdout.replace(/\s+/g, ' ');
+  assert.match(help, /successfully parsed entries from a bounded gateway log fetch/);
+  assert.match(help, /Empty output alone does not prove that a rule never triggered/);
+  assert.match(help, /does not expose unparsed rows, cursor wrap, or scan completeness/);
+  assert.match(
+    help,
+    /emit one JSON envelope; --follow then emits each new entry as one NDJSON line/,
+  );
+  assert.match(
+    help,
+    /first line is the initial envelope and each later line is one newly observed entry/,
+  );
+  assert.doesNotMatch(
+    help,
+    /RAW log rows|raw payload|raw parsed JSON array|richer\/looser output/i,
+  );
+});
