@@ -89,6 +89,7 @@ import { lintGraph } from '../usecases/lint-graph.js';
 import { arePinColorsCompatible, resolvePinColor } from '../usecases/pin-colors.js';
 import { checkReachability } from '../usecases/reachability.js';
 import {
+  graphHasVariableReferences,
   validateCanonicalDeviceOutputVariableRefsOrThrow,
   validateGraphOrThrow,
 } from '../usecases/validate-graph.js';
@@ -1151,6 +1152,10 @@ export interface CreateRuleOptions {
   // Skip the scope-bootstrap follow-ups. Reserved for raw probes / restore
   // flows where the caller is supplying the scope state themselves.
   skipScopeBootstrap?: boolean;
+  // #178 — default-on typed inventory gate when callers supply initial nodes.
+  // Empty graphs do not perform a pre-write variable lookup. Disable only for
+  // explicit raw probes / restore flows that materialise variables separately.
+  varCheck?: boolean;
 }
 
 // F63a — `rule new` analog at the core layer. Wraps setGraph + the two
@@ -1165,10 +1170,17 @@ async function createRuleWithinWorkflow(
   opts: CreateRuleOptions = {},
 ): Promise<void> {
   const params = parseOrThrow(GraphSetRequest, req, 'GraphSetRequest');
-  // setGraph already runs UI-validator + parseOrThrow; we pass an empty-nodes
-  // body in the happy path so that's a no-op, but pass-through keeps surface
-  // symmetric with any future `createRule({nodes:[…]})` shortcut.
-  await setGraph(params, deps);
+  // setGraph already runs UI-validator + parseOrThrow. The CLI happy path is
+  // empty and therefore avoids an unnecessary inventory round-trip, while the
+  // public Core API's initial-node path receives the same default existence /
+  // actual-type gate as every other modeled graph write.
+  const checkVariables =
+    opts.varCheck !== false && graphHasVariableReferences(params.nodes as readonly unknown[]);
+  await setGraph(params, deps, {
+    ...(checkVariables && {
+      listAvailVars: (ruleId: string) => listAvailVarsForRule(ruleId, deps),
+    }),
+  });
   if (opts.skipScopeBootstrap === true) return;
   // Bootstrap R<ruleId> first (the per-rule scope is the most common need),
   // then global. Order doesn't affect correctness but keeps the call log

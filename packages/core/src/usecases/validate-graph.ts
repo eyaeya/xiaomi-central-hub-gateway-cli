@@ -932,6 +932,11 @@ function collectVarRefs(node: Record<string, unknown>): VarRef[] {
   return refs;
 }
 
+/** True when at least one modeled card carries a gateway variable reference. */
+export function graphHasVariableReferences(nodes: readonly unknown[]): boolean {
+  return nodes.some((node) => isRecord(node) && collectVarRefs(node).length > 0);
+}
+
 function checkVarRefs(
   node: Record<string, unknown>,
   idx: number,
