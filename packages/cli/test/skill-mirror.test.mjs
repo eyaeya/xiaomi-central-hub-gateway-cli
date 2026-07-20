@@ -4,11 +4,41 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { NODE_ADD_AUTHORING_FLAG_NAMES } from '../dist/commands/rule/node-add-authoring-flags.js';
 
 const publishedDir = fileURLToPath(new URL('../skills/xgg-rule-authoring/', import.meta.url));
 const repositoryDir = fileURLToPath(
   new URL('../../../skills/xgg-rule-authoring/', import.meta.url),
 );
+
+const modeledNodeTypes = [
+  'deviceInput',
+  'deviceGet',
+  'deviceOutput',
+  'alarmClock',
+  'timeRange',
+  'delay',
+  'statusLast',
+  'condition',
+  'loop',
+  'onlyNTimes',
+  'counter',
+  'signalOr',
+  'logicOr',
+  'logicAnd',
+  'logicNot',
+  'onLoad',
+  'eventSequence',
+  'register',
+  'modeSwitch',
+  'deviceInputSetVar',
+  'deviceGetSetVar',
+  'varChange',
+  'varGet',
+  'varSetNumber',
+  'varSetString',
+  'nop',
+].sort();
 
 async function listFiles(root, relative = '') {
   const entries = await readdir(path.join(root, relative), { withFileTypes: true });
@@ -62,6 +92,83 @@ test('Skill entrypoint has a content-bound build marker and minimal frontmatter'
     .map((line) => line.slice(0, line.indexOf(':')));
   assert.deepEqual(keys, ['name', 'description']);
   assert.ok(skill.trimEnd().split('\n').length < 500, 'SKILL.md should stay under 500 lines');
+  assert.match(skill, /\[references\/graph-model\.md\]\(references\/graph-model\.md\)/);
   assert.match(skill, /\[references\/node-catalog\.md\]\(references\/node-catalog\.md\)/);
+  assert.match(skill, /\[references\/device-semantics\.md\]\(references\/device-semantics\.md\)/);
   assert.match(skill, /\[references\/recipes\.md\]\(references\/recipes\.md\)/);
+  assert.match(skill, /\[references\/operations\.md\]\(references\/operations\.md\)/);
+});
+
+test('Skill node catalog keeps parameter coverage for all 25 executable cards plus nop', async () => {
+  const catalog = await readFile(path.join(repositoryDir, 'references', 'node-catalog.md'), 'utf8');
+  const section = /## 25\+nop 参数总表\n([\s\S]*?)(?=\n## )/.exec(catalog);
+  assert.ok(section, 'node catalog must contain the bounded 25+nop parameter table');
+
+  const documented = new Set();
+  for (const line of section[1].split('\n')) {
+    if (!line.startsWith('| `')) continue;
+    const firstCell = line.slice(0, line.indexOf('|', 1));
+    for (const match of firstCell.matchAll(/`([^`]+)`/g)) documented.add(match[1]);
+  }
+
+  assert.deepEqual(
+    [...documented].sort(),
+    modeledNodeTypes,
+    'node catalog parameter table must cover every modeled node type exactly',
+  );
+
+  const rows = section[1].split('\n').filter((line) => line.startsWith('| `'));
+  const row = (firstCell) => {
+    const found = rows.find((line) => line.startsWith(`| ${firstCell} |`));
+    assert.ok(found, `missing parameter row ${firstCell}`);
+    return found;
+  };
+
+  const inputProperty = row('`deviceInput` property');
+  const inputEvent = row('`deviceInput` event');
+  const captureProperty = row('`deviceInputSetVar` property');
+  const captureEvent = row('`deviceInputSetVar` event');
+  for (const sourceRow of [inputProperty, inputEvent, captureProperty, captureEvent]) {
+    assert.match(sourceRow, /--allow-no-push/, 'every push-source mode must document its waiver');
+  }
+  for (const preloadRow of [
+    inputProperty,
+    captureProperty,
+    row('`varChange` number'),
+    row('`varChange` string'),
+  ]) {
+    assert.match(preloadRow, /preload/, 'every preload-capable mode must document preload');
+  }
+  assert.doesNotMatch(inputEvent, /preload/);
+  assert.doesNotMatch(captureEvent, /preload/);
+  assert.match(inputEvent, /--event-filter/);
+  assert.doesNotMatch(captureEvent, /--event-filter/);
+  assert.match(captureEvent, /--event-arg-var/);
+  assert.doesNotMatch(row('`deviceGet`'), /--allow-no-push|preload/);
+  assert.match(row('`deviceOutput` action'), /--params/);
+
+  const delay = row('`delay`');
+  assert.match(delay, /ms\|s\|min\|hour/);
+  assert.match(delay, /`m\|h`/);
+  assert.match(row('`statusLast`'), /≥1/);
+  assert.match(row('`eventSequence`'), /≥1|同 statusLast/);
+  assert.match(row('`loop`'), /0\/负数/);
+});
+
+test('Skill documents every registered node-add authoring flag and lossless legacy edge form', async () => {
+  const files = await listFiles(repositoryDir);
+  const documentation = (
+    await Promise.all(files.map((relative) => readFile(path.join(repositoryDir, relative), 'utf8')))
+  ).join('\n');
+
+  for (const flag of NODE_ADD_AUTHORING_FLAG_NAMES) {
+    assert.ok(
+      documentation.includes(flag),
+      `Skill must document registered authoring flag ${flag}`,
+    );
+  }
+
+  for (const flag of ['--from-node-id', '--from-pin', '--to-node-id', '--to-pin']) {
+    assert.ok(documentation.includes(flag), `Skill must document lossless edge flag ${flag}`);
+  }
 });

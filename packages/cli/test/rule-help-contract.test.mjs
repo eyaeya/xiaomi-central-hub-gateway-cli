@@ -54,8 +54,16 @@ test('export and import help cover all five modeled device families', () => {
   );
   assert.match(
     exportHelp,
-    /Every replay first asserts all global dependencies' existence and number\|string type read-only/,
+    /Every replay first asserts all discoverable modeled global dependencies' existence and number\|string type read-only/,
   );
+  assert.match(
+    importHelp,
+    /Replay first asserts every discoverable modeled global dependency exists with its exported number\|string type/,
+  );
+  for (const text of [exportHelp, importHelp]) {
+    assert.match(text, /local or global references/);
+    assert.match(text, /preflight (?:does not prove them|is therefore not proof)/);
+  }
   assert.match(
     exportHelp,
     /never compares a global's value\/name and never creates or modifies one/,

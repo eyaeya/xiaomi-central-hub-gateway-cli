@@ -1,495 +1,223 @@
 ---
 name: xgg-rule-authoring
-description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
+description: Use when an LLM Agent must understand, design, inspect, validate, or operate Xiaomi Central Hub Geek Edition automation rule graphs through the xgg CLI, including the complete 25 executable cards plus nop, event/state pins, MIoT enums and value semantics, complex temporal/state patterns, variables, safe live verification, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-ed5cdd008b0f035bcbc808fdbd31d5bc89144025e3ffdb76dc279865d24eb46d -->
+<!-- xgg-skill-content-build: sha256-60cb0ad58fa6233a515577fa540f072510c7c514f3f14cce6a504a4643c50beb -->
 
-# xgg 自动化编写 Skill
+# xgg 中枢网关自动化编译器
 
 ## 目标
 
-用 `xgg` CLI 把用户的自然语言需求变成小米中枢网关极客版的自动化。网关里的每个自动化是一张**有向图**：节点是卡片，边是「某节点的输出 pin → 另一节点的输入 pin」。Agent 的任务不是「把命令跑到返回 ok」，而是「按需求选对卡片、查清参数、连对 pin、静态校验、启用，并用日志或变量读数证明它真的运行」。
+把用户自然语言编译成小米中枢网关极客版的**有向规则图**，而不是仅拼出一串返回 `ok` 的命令。完成意味着：
 
-把 `xgg --help` / 子命令 `--help` 作为参数名的当前事实来源，把目标网关的 spec、日志与 readback 作为设备行为的最终事实来源。本 Skill 的证据分三层：
+1. event、state、时间、内部状态、reset/stop 与副作用被正确拆开；
+2. 选中准确卡片、pin 与参数，设备枚举来自目标 spec；
+3. 写入保持安全、可回滚，并通过 schema、spec、拓扑和 truth-aware reachability；
+4. 若用户授权运行，用日志、trace、变量 readback 或设备结果证明行为。
 
-1. **离线确定性检查：** bundle 对照、CLI schema、unit/integration test、`rule validate --body/--stdin`，证明命令形状、序列化与静态约束。
-2. **安全实机探针：** 已验证未接状态的 `condition` 走 `unmet`、同节点 `loop.output → loop.stop` 有限反馈，以及 `timeRange` 在窗口进入时发出事件并提供独立状态；探针只使用临时规则/变量，不驱动物理设备。
-3. **目标网关验收：** property/event/action、物理触发、分区型号、设备替换和备份恢复依赖具体设备与固件，必须按 `spec → validate --spec-aware → lint → trigger/log/readback` 重新验证。不要把离线测试或单一网关探针表述成“全部实机验证”。
+规则 JSON 不是 LLM 通识。不要凭字段名、米家普通自动化经验或 `GUIDE.md` 旧示例猜 wire。
 
-正文 build 标记内嵌除该标记行及其换行外完整 `SKILL.md` UTF-8 字节的 SHA-256，测试会校验正文与摘要绑定；它可用于识别 npm 版本号相同但内容过期的安装副本：`grep '^<!-- xgg-skill-content-build:' <SKILL.md>`。仓库与 npm 包内镜像还应做字节级对比，`references/` 则必须依赖完整目录递归比较。
+## 证据边界
 
-## 使用场景（Agent 可承担的任务）
+始终区分三层：
 
-本 Skill 让你（Agent）独立承担下面三类任务，覆盖自动化的完整生命周期。三类与 README 的三类场景一一呼应，但写成给你的操作指引——每类点出关键命令与验收标准。获授权运行的规则要用日志或变量读数证明行为，命令返回 ok 不算完成；刻意保持禁用时则用 validate、strict lint 与 `rule view` 的 `enable=false` 完成静态验收。
+- **固定 Xiaomi Bundle：** 证明网页卡片、canonical wire、pin 类型、save validator 和日志 projector；它不包含固件 executor。
+- **当前 xgg：** 证明 CLI flags、typed synthesis、schema、静态 lint/reachability、export/import 与测试契约。
+- **目标网关：** 证明具体设备 spec、push、固件运行时序、状态持久性、动作成败与日志保留。
 
-### 1. 设计并创建自动化
+Bundle 中没有 executor 的行为，必须写成“卡片意图/待实机验证”，不能冒充真实运行结论。尤其是 counter 的精确阈值 tick、loop 首 tick、delay 并发、statusLast reset、eventSequence 并发、register/modeSwitch 生命周期及 action output 成功时序。
 
-把用户的自然语言需求变成一张可用的规则图。固定路径：
+## 必读路由
 
-```bash
-xgg rule new --name "<规则名>"            # 拿到 rule-id
-xgg rule node add --rule-id <rule-id> ... # 每张卡片一条；设备卡先 device spec 查参数
-xgg rule edge add --rule-id <rule-id> --from <node:pin> --to <node:pin>
-xgg rule layout <rule-id>                  # 连完线跑一次；执行卡按数据流布局，保留 nop 位置
-xgg rule validate --rule-id <rule-id> --spec-aware # 设备 spec + action input 契约
-xgg rule lint --rule-id <rule-id> --strict # 拓扑、必需输入、可达性与保存键
+第一次在一个会话中设计或改写规则，先读：
+
+- [references/graph-model.md](references/graph-model.md)：自然语言→E/S 图、wire、truth-aware reachability、控制卡与运行探针。
+- [references/node-catalog.md](references/node-catalog.md)：25 种执行卡+nop 的完整 pin、per-type flags/defaults、canonical JSON 和 GUIDE 旧例禁区。
+
+按任务再读：
+
+- 有任意设备 property/event/action：读 [references/device-semantics.md](references/device-semantics.md)。
+- 有 sequence/condition/hold/counter/limit/register/loop/modeSwitch/dynamic action：读 [references/recipes.md](references/recipes.md)。
+- 要登录、实机写入、变量/表达式、日志/trace、备份或恢复：读 [references/operations.md](references/operations.md)。
+
+这些 reference 都直接从本入口链接；不要只读 SKILL 摘要后猜细节。
+
+## 自然语言编译流程
+
+### 1. 先复述可判定需求
+
+在写命令前列出：
+
+```text
+触发 event：谁在何时发出一次事件？
+持续 state：触发瞬间哪些条件必须为真/假？
+主动 query：是否要在 event 到来后读取设备/变量再分支？
+时间关系：延迟、保持、有序窗口、循环、次数、轮换是哪一种？
+内部状态：是否需要 latch/counter/持久变量？何时 reset/stop/初始化？
+副作用：哪些设备写/action/变量写必须被 event 路径驱动？
+运行状态：保持 disabled，还是获授权 enable 并实测？
 ```
 
-图中含设备卡时，`--spec-aware` 是启用前和重放后的硬验收项；普通 `rule validate` 不读取当前 MIoT spec 或 live 设备能力，无法发现 property 的 notify/read/write、property-write 的原生类型/数值域/变量 metadata、action 索引/short-name，或 pushAvailable 漂移。对 `deviceOutput` variable ref，它也无法证明目标不是 boolean 或带 `value-list` 字段（包括空数组）的 literal-only 路径。
+若 reset、跨午夜、掉电/重启后的状态、动作失败后的后续链等会改变业务结果，而用户没说明，指出歧义；可以先构造 disabled 草案，但不能擅自选高风险运行语义。
 
-只有用户授权运行时才继续 `xgg rule enable <rule-id>`；授权运行后，若 `xgg rule logs <rule-id> --tail 20` 观察到对应项，可作为运行的正向证据。未获运行授权时，则用 `rule view` 确认保持 `enable=false`。设备相关卡片务必先 `xgg device spec <did>` 查清属性 / 事件 / 动作名，不猜字段。`onLoad` 是目前已有证据、可立即 `disable → enable` 重放的独立入口；`timeRange` 也已实测为独立窗口进入事件源，但要等待 start。`varChange` 在模型中是独立源，外部 `variable set-value` 是否按预期触发仍要在目标网关看日志验证；`loop` 必须由上游事件接入 `start`。物理按钮/传感器请用户实际触发后再看日志。
+图中含设备卡时，`--spec-aware` 是常规业务规则启用前和重放后的硬验收项。普通 validate 不读取当前 MIoT spec/live 设备，无法证明 notify/read/write access、pushAvailable、原生类型/值域、action 索引，或 output ref 是否落入 boolean/value-list literal-only 路径。常规规则的 errors 必须为零；warning 必须逐条审计、解释并明确接受。唯一允许 spec-aware error 的情况，是下述获明确授权的隔离 no-push 运行探针；它仍必须执行 spec-aware 并记录该预期诊断。
 
-### 2. 读日志诊断并修复既有自动化
+### 2. 画 node/pin 计划
 
-用户说某条自动化「不工作」时，先读它的真实运行日志定位，再改图修复，不要凭猜重写：
-
-```bash
-xgg rule logs <rule-id> --tail 50          # 观察已记录的触发 / 分支 / 动作结果
-xgg rule trace <rule-id> --pretty          # 累计 node/edge step trace；复杂分支/循环优先看
-xgg rule view <rule-id> --pretty           # 对照规则图看是哪一段
-# 改图：node add/update/remove、edge add/remove；复杂原子修改再用 rule set
-xgg rule validate --rule-id <rule-id> --spec-aware # 改完核对设备/action 契约
-xgg rule lint --rule-id <rule-id> --strict # 拓扑、必需输入、可达性与保存键
-# 修复前已启用或用户要求启用时才运行 rule enable；刻意禁用的规则保持禁用
-xgg rule logs <rule-id> --tail 20          # 复看日志确认修复
+```text
+需求事实 | E/S | node.type/mode | source pin | consumer:input pin | 参数证据 | reset/stop
 ```
 
-日志读法见「调试与验收」：`link <src>.<pin> → <dst>.<pin> = <事件>` 是边触发，`<node> [value]` 是取值 / 分支，`<node> success` / `<node> failed` 是动作结果。观察到这些项可作为对应触发、分支或动作的正向证据；未观察到则不能单独证明「没触发」，即使扩大窗口或去掉过滤，仍需结合规则图 readback、可控触发或其他证据。走了 `unmet` 分支则表示条件按 false 求值。
+核心选择：
 
-node/edge/layout/set 写入默认保留 live `enable`，所以已启用规则的多步修改可能立即生效，不能把最后的 `rule enable` 当成生效边界。先用 `rule view` 记录状态；会改变执行路径时，在授权下先 disable 并 readback，或离线构造/校验后用单次原子 `rule set`。验证后只按原状态和用户意图恢复。
-
-`rule trace` 把当前图 node/edge watchpoint 与已解析日志重建为累计帧，规则启用项会清空累计状态。用 `--node` / `--edge` / `--watch` 聚焦，时间/step flags 限界，`--next-from` 导航；默认 JSON 必须读取 `completeness.fetch/parse/selection/topology/semantic`。`--max-blocks <N>` 控制从网关源 `getLog` 扫描多少个保留日志块（默认 8）；`--max-steps <N>` 只裁剪扫描、投影后返回的最新 N 帧，不能扩大源扫描。若 `completeness.fetch.boundedByMaxBlocks=true`，或 `completeness.fetch.stopReason=max-blocks`，可增大 `--max-blocks <N>` 扫描更宽的保留日志；但仍不能越过网关保留窗口或证明执行完整。未解析日志只返回计数、不返回可能属于其他规则的原文；合法重复行保留，跨页按旧块到新块且保持块内顺序。节点 info 和已知 pin value 按 Bundle 转译/过滤，失败计入 semantic drift；`deviceGet` 按唯一 URN 复用公共 spec 与语义目录缓存，仅对 notify 属性按 `multiLanguage → normalization → raw` 投影 value label，bool 标签也来自同一 shared projector。spec / projector 失败和逐目录 fallback 会写入 semantic metadata，未知值仍为 raw，只公开 URN、不含 DID。它明确是有界保留日志在**当前图**上的客户端投影；拓扑漂移、语义丢弃、未解析行、分页边界和网关保留窗口都使其不能证明完整执行，更不是设备实时真值。
-
-优先做目标化变更，避免调用者手工构造整图 JSON：
-
-```bash
-xgg rule node update --rule-id <rid> --node-id <nid> --patch '{"cfg":{"name":"新名称"}}'
-xgg rule edge remove --rule-id <rid> --from <node:pin> --to <node:pin>
-xgg rule node remove --rule-id <rid> --node-id <nid> --cascade-edges
-xgg rule rename <rid> --name "新规则名"
-xgg rule set-tags <rid> --tags "照明,夜间"       # --tags "" 清空
-xgg rule delete <rid>
-```
-
-`node update` 只对顶层与 `cfg` 做 merge；patch `props` / `inputs` / `outputs` 时要给完整替换对象，且不能改 `id` / `type`。`node remove` 不加 `--cascade-edges` 时会故意留下指向已删节点的 dangling incoming edges，常规删除应加该 flag；只有修复异常图时才考虑不加。目标化命令内部仍是 `getGraph → 整图 setGraph`；mutation lease 只串行 xgg 客户端，不是网页 CAS，执行期间不要同时编辑网页画布。每个写命令仍受 Agent snapshot/mutation guard 约束。
-
-`rename` 只改 name 并保留 enable/uiType/tags/其他 userData；`set-tags` 是替换整组标签，不是追加；`delete` 默认先 snapshot，成功后也删除整个 `R<rid>` 本地变量 scope。删除不存在的规则默认报 `NOT_FOUND`，明确需要幂等清理时才加 `--allow-missing`。
-
-### 3. 盘点现有设备与自动化，与用户头脑风暴新方案
-
-帮用户在真实清单上做规划，而不是空想。先用只读命令建立全貌：
-
-```bash
-xgg device list --pretty                    # 可用设备 + 稳定品类 token/中文品类（默认排除 ghost）
-xgg device get <did> --pretty               # 精确读取 DID 元数据 + 同一组品类语义
-xgg rule list --pretty                      # 已经配了哪些自动化
-xgg rule view <rule-id> --pretty            # 逐条看现有自动化做了什么
-xgg device spec <did> --pretty              # 同一组品类语义 + 某设备具体能力
-```
-
-三条 pretty 入口都显示 spec URN 的稳定 `deviceType` token 与公共 `device-template` 的 `zh_cn` 品类；目录失败只回退 token，不得改用 `modelName` 或 spec 产品描述，列表对整份清单只加载一次目录。省略 `--pretty` 时保持原始 JSON shape 且不请求语义目录。据此判断哪些设备还没被任何规则用上、现有自动化是否有覆盖空白或互相冲突，再向用户提出更有价值的点子并说明依据。方案聊定后，直接走第 1 类的标准流程把它落地——盘点与创建在同一会话内衔接，不必让用户在设备列表和画布之间来回抄标识。
-
-> 收尾时提醒用户：CLI 的改动需要在网关网页 **F5 刷新**才能看到（见「避坑：网页端变量缓存」）。
-
-## 一、必须遵守的 CLI 操作规范
-
-1. **会话失效就停手要码。** 出现 `AUTH_REQUIRED` / `AUTH_EXPIRED`，或写命令退出码 `3` 时，立即停止当前写操作，向用户索取一个新的 6 位登录码，再执行（登录码由用户在米家 App 的中枢网关设备页面获取；若中枢网关是路由器或家庭屏自带的，则在对应设备内的中枢网关功能页面获取。登录码短时有效，通常只能用一次）：
-
-   ```bash
-   xgg login --code <6位登录码> --base-url http://<gateway-ip>:8086
-   ```
-
-   登录会绑定一个常驻 agent 守护进程（约 60 分钟空闲后自毁并清空会话）。`xgg status` 看 `live` 与 `idleMsRemaining`。
-
-2. **Agent 写操作启用快照目录。** 这样每次写前都会把网关全量状态落盘，便于回溯。**把快照目录建在当前工作目录下的子文件夹里**（如下面的 `$PWD/snapshots`），不要写到 `/tmp` 或全局家目录——快照随项目留存，用户随时可查、便于回溯：
-
-   ```bash
-   export XGG_AGENT_MODE=1
-   export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
-   ```
-
-   `XGG_AGENT_MODE=1` 时若缺 `--snapshots-dir`/`XGG_SNAPSHOTS_DIR`，写命令会以 `ConfigError`（退出码 `5`）在任何 RPC 之前失败。
-
-3. **默认解析 JSON stdout，给人看才加 `--pretty`。** 例外：`xgg rule logs` **默认输出人类表格**，要 JSON（`{ok, count, entries:[...]}`）得显式加 `--json`。
-
-4. **顺着提示走。** 命令返回的 `nextSteps`、或 stderr 里的 `note: ... next →`，在不违背用户需求的前提下按提示继续（用 `XGG_NO_NEXT_HINT=1` / `--no-next-hint` 可静音）。
-
-5. **不要用 `--no-validate` / `--no-snapshot` / `--no-var-check` 绕过普通问题。** 它们只在你明确做 raw probe、且已知风险时才用。`--no-validate` 关闭默认图/卡片 validation gates（full write 上包括 topology lint 与保存键 schema 检查），但不绕过请求/envelope 解析；`--no-var-check` 只关闭支持该 flag 的在线变量存在性和实际类型检查，合法 scope 仍是本地图不变量，也不会关闭 schema、spec-aware 或 enable 的 canonical-output gate；`--no-snapshot` 关闭写前快照。
-
-6. **任何设备相关卡片都先查 spec，不猜属性/事件/动作名：**
-
-   ```bash
-   xgg device list --pretty
-   xgg device spec <did> --pretty
-   ```
-
-   `device list` 默认排除 ghost device（网页标「设备已丢失」的：`online && !specV2Access && !specV3Access`）。不要把 ghost device 作为 `deviceOutput` 目标——命令会超时 `-9999`。只在排查设备清单差异时才用 `--include-ghost`。同名属性/动作/事件落在多个 service 时，按命令错误提示补 `--device-siid <N>` 消歧。
-
-7. **CLI 写入后网页不会自动刷新。** CLI 直连网关写入，但**不会**向其他已打开的网页会话广播 `configChanged`。所以长开着网关网页的用户，看不到 CLI 新增/修改的变量、scope、规则，且引用这些变量的卡片会显示「变量已丢失」。**这是排查「CLI 写没生效」的头号误报**：先让用户 **F5 刷新网页**，再怀疑真有 bug。诊断顺序：① `xgg variable get-value` 确认网关上真有这个值 → ② `xgg rule view` 确认规则引用的 scope/id 对 → ③ 让用户刷新网页 → ④ 三项都过才往别处查。
-
-### 退出码（写命令）
-
-| 码 | 含义 |
+| 需求 | 选择 |
 |---|---|
-| 0 | 成功 |
-| 1 | 网关报错 / `rule lint` 有 warning |
-| 2 | 写超时（未确认）/ `rule lint` 有 error |
-| 3 | 认证失败/过期 → 重新 `xgg login` |
-| 4 | 客户端 schema 解析失败（卡片 JSON 形状非法） |
-| 5 | 配置错误（如 `XGG_AGENT_MODE` 缺快照目录、卡片/变量校验未过） |
+| 物理/设备事件 | `deviceInput` event |
+| 持续属性状态 | `deviceInput` property；设备不 push 时优先改成 event→`deviceGet` |
+| 触发时主动查询并真假分支 | `deviceGet` / `varGet`; `output`=满足，`output2`=不满足 |
+| 触发时按状态分支 | `condition`: event→trigger，state→condition |
+| 合并 events / states | `signalOr` / `logicOr|logicAnd`; 反相 `logicNot` |
+| 延迟 / 保持 / 有序两事件 / 循环 | `delay` / `statusLast` / `eventSequence` / `loop` |
+| 前 N 次 / 累计阈值 / latch / 轮换 | `onlyNTimes` / `counter` / `register` / `modeSwitch` |
+| 捕获设备值 | push/event→`deviceInputSetVar`; triggered query→`deviceGetSetVar` |
+| 持久计算或文案 | `varSetNumber` / `varSetString` |
+| 定时事件 / 时间窗状态 | `alarmClock` / `timeRange` |
 
-`rule validate` / `rule lint` 这类只读命令用 `0`=干净、`1`=有 warning、`2`=有 error。**把 lint/validate 的 error（exit 2）当作启用前的硬止血点。**
+不要把 `timeRange` 当 `alarmClock`，不要把 `counter` 当 `onlyNTimes`，不要把 state 直接接 event input，也不要把多条线堆到同一 input。
 
-### 环境变量与全局约定
-
-| env var | 作用 |
-|---|---|
-| `XGG_BASE_URL` | 网关地址(等价 `--base-url`) |
-| `XGG_SESSION_FILE` | 会话文件路径(默认 `~/.xgg/session.json`) |
-| `XGG_AGENT_MODE=1` | 强制每次写前落快照(见规范 2) |
-| `XGG_SNAPSHOTS_DIR` | 快照目录(等价 `--snapshots-dir`) |
-| `XGG_LOGIN_CODE` | 登录码(等价 `login --code`) |
-| `XGG_NO_NEXT_HINT=1` | 静音「next →」生命周期提示 |
-| `XGG_NO_REFRESH_HINT=1` | 静音写后「F5 刷新网页」提示 |
-
-- **优先级一律是 flag 覆盖 env**(`--base-url` > `XGG_BASE_URL`,`--session-file` > `XGG_SESSION_FILE`,`--snapshots-dir` > `XGG_SNAPSHOTS_DIR`)。没有配置文件,只认 flag + env + 会话存储。
-- **默认输出 = stdout 上的紧凑单行 JSON**(`{ok:true,...}`),`--pretty` 才转人类表格;列表类命令的紧凑 JSON 才是机读权威形状。
-- **命令失败时 stderr 输出单行 JSON** `{"ok":false,"error":{"code","message","hint","details"}}`,多个问题在 `error.details.issues`;两条 stderr 提示(写后「F5 刷新」+「next →」)都不污染 stdout,可放心解析 stdout。
-
-## 二、固定工作流
+### 3. 查当前事实，不猜参数
 
 ```bash
 xgg status
 xgg device list --pretty
 xgg device spec <did> --pretty
-
-xgg rule new --name "<规则名>"                                   # 返回 rule id
-xgg rule node add --rule-id <rid> --type <node-type> ...        # 每张卡片一条
-xgg rule edge add --rule-id <rid> --from <node:pin> --to <node:pin>
-xgg rule layout <rid>                                           # 连完线跑一次；执行卡按数据流布局，保留 nop 位置
-xgg rule validate --rule-id <rid> --spec-aware                  # 设备 spec + action 输入 + 变量（一次列全部问题）
-xgg rule lint --rule-id <rid> --strict                          # 边拓扑 + pin 颜色（再叠加保存键校验）
+xgg rule list --pretty
+xgg rule view <rid> --pretty
+xgg rule node add --help
 ```
 
-关键点：
+默认 machine spec 在 `.spec.services`。记录 short-name、SIID/PIID/EIID/AIID、format/access、value-list/range、event arguments、action.in/out。中文 label 用于解释，wire 仍用 spec value。
 
-- `rule new` 只创建空规则 envelope；每张卡片用 `rule node add` 加。默认 rule id 是无连字符的数字串。
-- 新建 typed 节点的显式 `--id` 只允许 ASCII 字母数字 `[A-Za-z0-9]+`；不指定时 CLI 生成同语法的碰撞安全 ID。不要给新节点使用 `-`、`_`、`.`、`:`、空白或 Unicode。
-- canonical ID 连线用 `<node-id>:<pin>`，例如 `nClick:output` → `nLightOn:trigger`。旧图中的非 canonical ID 保持可读，`rule validate` / `rule lint` 会列出节点及受影响 edge；export/import 会自动携带 typed replay 兼容 intent，并对含 `:` 的旧 ID 使用分离 endpoint flags，不能把该 intent 用于新建。
-- `rule layout` 只改可执行卡片的网页画布坐标、不改逻辑：触发器/源在左，每个节点严格排在其所有输入右侧，分支纵向堆叠，相互独立的子自动化各占一条横带。`nop` 备注的位置表达它所说明的画布区域，因此保持不动。网页 UI 自己不做自动布局，所以这步是让 CLI 创建的规则在网页里可读的关键。
-- 用户授权运行时才 `rule enable` 并在触发后读 `rule logs`；否则用 `rule view` 确认保持 `enable=false`。
-- `rule enable` 返回成功只代表启用完成，**不代表触发成功**；触发后必须看 `rule logs`。
+任何设备卡都先 spec；同 short-name 跨 service 用 `--device-siid`。property source/capture 要 notify，query 要 read，property output 要 write；两类 push source 还要目标设备 `pushAvailable=true`。value-list 是闭集，range 是 `[min,max,step]`。action `--params` 必须精确覆盖 `action.in` 对应 short-name，并保持 native JSON type。
 
-### 三层校验——分清哪条命令抓哪类问题
+网关变量实际类型只有 `number|string`。在线图写、validate、strict export 会按每个**可发现的 modeled** 引用路径核对实际类型；opaque/future `--cfg` 内引用无法由这些门证明，边界见下文。`varSetString` target 必须 string，但 operand 可拼 number|string。boolean capture 用 number + canonical dtype number（0/1）。boolean 或任何带 `value-list` 字段（含 `[]`）的 device output 是 literal-only；动态 boolean 先按 number 0/1 分支，再写 literal false/true。
 
-| 层 | 命令 | 抓什么 | 写入时是否自动跑 |
-|---|---|---|---|
-| 卡片配置 + 变量存在/scope/类型 | `rule validate`（dry-run，不写）；设备卡加 `--spec-aware` | 卡片字段非法、`卡片变量丢失`、`卡片变量有误`、`卡片变量类型不匹配`；`--spec-aware` 还核对 property 的 notify/read/write access、property-write literal/数值域/变量 metadata、action input 逐索引契约，以及 output ref 的 literal-only 边界。在线 `--rule-id` 判断变量存在性/实际类型并追加设备 push 诊断；离线 body/stdin 没有这两类实例证据 | `rule set` / `rule enable` 默认跑本地校验；enable 对 persisted output ref 另做聚焦、fail-closed 的 spec 证明，但不查询无关 URN。完整设备 access/spec/push 契约仍以显式 `--spec-aware` 为准。node/edge/layout 默认接在线 var check；raw opt-out 只供明确探测或修复 |
-| 边拓扑 + pin 颜色 | `rule lint`；`--strict` 再叠加保存键级检查 | 非法/断开的 endpoint、空边、重复边、fan-in > 1、event→state cross-color，以及缺失必需输入。普通 lint 对缺失的 `condition.trigger`、`eventSequence.input1/input2`、`logicAnd` 每个声明输入报 warning，strict 升为 error；`condition.condition` 刻意可选，未接时网关把它当 false。合法的同节点反馈只报 warning | `rule set` 跑 full lint；`rule enable` 跑 full lint + reachability；`edge add` 对新边做 pin/duplicate/fan-in/cross-color 检查。`node add/update/remove`、`edge remove`、layout 跳过 full-graph lint（schema/var 检查各自不同）；import 本身只渲染，重放脚本再走 set/node/edge 写路径。每批修改后都手动跑 strict lint |
-| 按 pin + 状态真假聚合的有向可达性（never-fires sink） | `rule lint --strict`（读时报）；`rule enable` 写时硬拦 | `卡片不可达`：无法按目标卡必需输入与真假语义驱动动作卡（`deviceOutput`/`varSetNumber`/`varSetString`/`deviceGetSetVar`）。`eventSequence` 要全部事件输入；`condition.met` 要 trigger + may-true，`unmet` 要 trigger + may-false（未接状态即 false）；`statusLast` 只接受 may-true；`logicAnd`/`logicOr`/`logicNot` 传播真假；`signalOr` 任一路事件即可。`timeRange` 是独立的窗口进入事件源并同时提供状态；`loop.stop`/`onlyNTimes.zero` 不能单独向下游传播 | **仅 `rule enable` 硬拦**；`rule set` 不跑可达性（增量编写允许卡片悬空待连线），`rule validate` 也不报，要用 `rule lint --strict` 提前看到 |
+新 typed 节点省略 `--id` 时生成 `n` + 32 位十六进制；显式 ID 只能是非空 ASCII 字母数字 `[A-Za-z0-9]+`，不能含 `- _ . :`、空白或 Unicode。旧图 ID 必须保真：只有从既有 export 重放 modeled typed 节点时才使用 `--allow-legacy-id`；它不适用于新建、raw `--cfg`、opaque type 或本来已 canonical 的 ID。CLI 无法证明非 canonical ID 的 provenance，所以“只重放、不新建”也是 Agent 必须遵守的安全契约。
 
-启用前**两条都跑**看全量问题：`rule validate --rule-id <id> --spec-aware` 和 `rule lint --rule-id <id> --strict`。尤其是 `deviceOutput`，省略 `--spec-aware` 就不会检查当前 property-write 或 `action.in`/`props.ins` 契约。`rule enable` 的内建预检是兜底，不是「看全问题」的替代（它的 `error.message` 只报第一个，`details.issues` 才有全部）。
-
-## 三、如何获取卡片参数
-
-> **空网关也能从零构造，不需要任何现成规则可抄。** 最稳的冷启动是用 shortcut：一条 `rule node add --type <T> <flags>` 不写 JSON 就能产出已建模卡片，缺什么参数以 `--help` 为准。选择节点、pin 或 raw JSON 结构时读取 [references/node-catalog.md](references/node-catalog.md)，组合常见图形时读取 [references/recipes.md](references/recipes.md)。有现成规则时，`xgg rule view <id>` 的整图 JSON 是保留未知/扩展字段的全量来源。
-
-优先级从高到低：
-
-1. **设备参数：** 先跑 `xgg device spec <did> --pretty`；头部的稳定 `deviceType` 与中文 `deviceTypeDescription` 和 `device list/get --pretty` 同源，`device-information` 仅是元数据，不会列为可自动化能力。
-   - **事件/状态更新：** 从 Events 或 Notify properties 选择 `deviceInput` / `deviceInputSetVar`；property/event 模式严格二选一，typed 创建会硬检 notify 与设备 push。`--allow-no-push` 只放行本次目标网关运行时 probe，不持久化、不绕过 notify/read/write、不证明会发出；在线 spec-aware 仍诊断 no-push。strict export 对 access mismatch / no-push source 会拒绝，permissive export 对 no-push source 明确 warning 并补回 transient flag。event 模式只用 `--event-filter*` 比较事件参数，不能混入 `--op`、`--threshold*`、`--property-*` 或 `--force-out-of-range`。
-   - **当前状态查询：** 从 Readable properties 选择 `deviceGet` / `deviceGetSetVar`。
-   - **写入/动作执行：** 从 Writable properties 或 Actions 选择 `deviceOutput`。`action.out` 只是 MIoT 元数据，不能绑定到 `deviceOutput`，也不是规则图 output pin；action inputs 才是参数契约。boolean 或任何存在 `value-list` 字段的 property/action input（包括空数组）在固定 UI 中是 literal-only，不能用 `$var`；动态 boolean 先把 number 0/1 分支，再分别连到 literal `false` / `true` 的两个 output 节点。
-   - 每个用途内部仍按标准/`Proprietary/vendor` 分组；property 保留完整 URN、raw format、UI dtype、value-list/range，action input 与 event argument 按 PIID 解析。品类只按 `device-template → raw token`，不得回退产品名；其他中文语义按 best-effort 的 Bundle 顺序：值标签 `multiLanguage → normalization → raw`，service/property/event 名称 `multiLanguage → template → raw`，action 名称 `multiLanguage → raw → template`，action input 属性名 `multiLanguage → raw`；目录失败会明示 fallback。跨 service 重复 short-name 不会合并，按对应 `siid` 加 `--device-siid` 消歧；长行以 120 个终端显示列按 grapheme 完整换行，中文、组合字符、emoji 和长 URN 不截断。省略 `--pretty` 时仍是 raw spec 紧凑 JSON envelope，且不请求语义目录。
-2. **CLI shortcut 参数：** `xgg rule node add --help`。这是各卡片**参数名**的当前事实来源；25 种执行卡片和 `nop` 都有 shortcut，包括 `--type eventSequence --duration 5s`、`--type register`、`--type modeSwitch --outputs N`。
-3. **学已有规则：** `xgg rule view <id> --pretty` 用有界、稳定排序的 JSON 型摘要看节点 `props/inputs/outputs`；字符串带引号，number/boolean/null 保持原生类型，数组/对象结构明确，嵌套标量数组保留前若干实际值，省略时会标出数量。固定列宽按终端显示宽度处理中文、组合字符和 emoji；`nodeId` 与精确节点 `type` 无损多行显示、不丢字符，供后续命令复用。它只供紧凑审查，不是可重放格式。`xgg rule export <id> --format shell` 可反译成可复现的 CLI 命令。
-4. **机器处理、没有 shortcut、要保留额外字段、或一次原子推整张图时才用默认 JSON。** 不带 `--pretty` 的 `rule view` 是包含未知/扩展字段的无损来源；不要解析 pretty 表格。`rule node add --cfg` 接受完整 `{cfg,inputs,outputs,props}`（推荐）或历史 cfg-only 形状；后者不能替代需要完整四段的卡片。`rule set --body <整图JSON文件>` 原子写整图。不要手拼残缺 payload；先从 `rule view` 取得现有全量 JSON，或按 [node catalog](references/node-catalog.md) 的 envelope/逐类结构构造，再用离线 `rule validate --body` 检查。设备卡 cfg 必须带 `urn`。
-
-### 规则导出、导入与克隆
-
-`rule export --format shell` 直接输出的脚本也必须落盘审阅；需要保存/改目标 ID 时，先导出 JSON，再用**必填的** `--from-file` 渲染：
+### 4. 先 disabled 编写
 
 ```bash
-export SNAPSHOTS_DIR="$PWD/snapshots"       # export/import 生成脚本读取这个变量
-xgg rule export <source-id> --format json --strict-roundtrip > rule-export.json
-xgg rule import --from-file rule-export.json > replay.sh
-xgg rule import --from-file rule-export.json --target-id <target-id> \
-  --target-name "克隆规则名" > clone.sh
-# 审阅最终 enable 行为后再执行 bash replay.sh / bash clone.sh
-```
-
-生成脚本把 `XGG` 严格当作一个可执行文件路径（默认 `xgg`）；绝不能把 `XGG="node ..."` 或 `XGG="pnpm exec ..."` 当成命令字符串。要验证 npm 尚未包含的当前源码，先 `pnpm build`，再用 `XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js"` 指定构建入口；可用 `NODE_BIN="/absolute/path/to/node"` 指定 Node。脚本把两者组成 Bash argv array，路径中的空格不会拆词，也不使用 `eval`。例如：
-
-```bash
-XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js" \
-  NODE_BIN="/absolute/path/to/node" bash replay.sh
-```
-
-`rule import` 自身只做离线文本转换，stdout 是 shell，不代表已写入。脚本先用 `variable get-config --expect-type` 只读断言全部 `global` 依赖存在且类型匹配；global 不比较值/显示名，也绝不创建或修改。通过后才预检已捕获的本地变量（本地兼容性会核对类型、值和显示名）；若导出包含本地变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 同时生效）。clone 保留 `--expect-absent`，先创建禁用空壳，再准备 `R<target-id>` 变量。旧 JSON 没有 global 依赖仍兼容；声明 untyped global 的旧 JSON 会在渲染前 fail closed，必须用当前版本重新导出。所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，禁用源保持禁用。脚本是逐命令事务，不是 replay-wide lease：预检后变量仍可能并发漂移，执行期间禁止网页画布、其他 xgg/API writer 并发修改目标；staging 后失败会留下禁用 partial graph，用逐写快照检查或恢复。重放后总是 `validate --spec-aware → lint --strict → view/readback`；只有用户授权时才触发并读日志。
-
-- 对当前 spec 有效的已建模节点，完整 typed `include` / `between`、`preload`、`simplified`、原生设备写入参数、`nop` Delta/背景/几何与可由 DSL 无损表示的表达式可在 strict 模式往返；property/action literal 的原生 JSON 类型由 MIoT format 决定，只有数值 format 应用数值 value-list/range/step。strict export 会在 staging 前读取源网关 local/global 变量并按引用路径拒绝实际类型不匹配或缺失 global，同时核对 property 存在性/write access、literal/变量 metadata、action input 索引，以及 boolean/value-list output ref、access mismatch 与 no-push source。permissive export 必须明确 warning；只有 no-push probe 会补回 transient `--allow-no-push`，不能把不匹配语义表述成已证明可重放的能力。
-- `varSetNumber` / `varSetString` elements 若存在 DSL 歧义边界，任何 export 模式都会在输出前失败，不依赖 `--strict-roundtrip`；先给表达式增加显式分隔符。
-- clone 只把 `R<source-id>` 改为 `R<target-id>`；先断言全部 `global` 的存在性/类型，再预检本地变量计划并以 expect-absent 预留目标。`global` 不创建、不改写。
-- 未建模的未来节点导出为完整 opaque `--cfg` 结构，可同 ID 无损重放。因为 CLI 无法安全发现/改写 opaque payload 内的规则本地引用，带 opaque 节点时拒绝 `--target-id` clone。
-- `--strict-roundtrip` 拒绝已建模节点的语义损失 warning；lossless opaque same-id fallback 是例外，并会给出信息性 warning。
-
-## 四、节点、pin 与 typed operands
-
-选择卡片、确认 pin 颜色、处理完整 include/between、审计 action 参数或手写 raw JSON 时，读取 [references/node-catalog.md](references/node-catalog.md)。该参考包含 25 种执行卡片 + nop、权威 pin 表、shortcut、wire 编码、整图 envelope 和逐类 props。
-
-核心规则：
-
-- event 只能接 event；event|state 输出可接两色；每个输入 pin 的 fan-in 上限为 1。
-- 同节点反馈边合法且只报 warning；保留 warning 并验证终止。
-- condition.condition 可不连，默认 false，只有 unmet 可达。
-- timeRange 同时提供窗口状态和 start 进入事件；没有观察到等价 end 事件。
-- 数值 `deviceInput` / `deviceGet` 与 number 型 `varChange` / `varGet` 使用 `--op between` 时，必须同时显式传 `--threshold <lower>` 和 `--threshold2 <upper>`；省略任一边界会在任何 session/spec/快照/写图前失败，不会静默补 `0`。显式下界 `0` 合法；非-between 标量比较仍保留历史默认 `0`。
-- 已建模编辑优先用 simplified、preload、typed include/between 与原生 action 参数 shortcut；要保留 shortcut 不认识的额外字段时，从 `rule view` 做完整 JSON 往返，避免手工构造残缺 raw payload。
-
-## 五、变量模型
-
-网关变量是可被规则读写的持久值：
-
-```bash
-xgg variable list --pretty
-xgg variable get <scope> --pretty
-xgg variable get-config --scope global --id <id> --expect-type <number|string>
-xgg variable get-value --scope global --id <id>
-xgg variable create --scope global --id <id> --type number --value 0 --name "<显示名>"
-xgg variable set-value --scope global --id <id> --value 1
-xgg variable set-config --scope global --id <id> --name "<新显示名>"
-xgg variable create --scope R<规则id> --id <id> --type number --value 0 --name "<显示名>"
-xgg rule node add --rule-id <规则id> --type varChange --var-scope R<规则id> --var-id <id> --var-type number --op eq --threshold 1
-xgg variable watch --follow                       # 持续观察变量变化（NDJSON）
-```
-
-当前网关模型与 CLI 约束：
-
-- **类型只有 `number` 和 `string`，没有 boolean。** `--type boolean` 会被拒。开关状态用 `number` 的 `1/0` 或 `string` 的 `"on"/"off"`。
-- **引用会核对实际类型：** `varChange` / `varGet` 按卡片 `varType`；`varSetNumber` target 与每个变量 operand 都要求 number；`varSetString` target 要求 string，但固定 UI 的 operand selector 没传类型过滤，因此拼接 operand 保守接受 number/string。`deviceInputSetVar` / `deviceGetSetVar` capture target 与 `deviceOutput` ref 按各自持久化 dtype 和 MIoT 投影核对。不要靠同名变量或手写 dtype 混过类型。
-- **变量 id 和 scope 名都必须是非空纯字母数字** `[A-Za-z0-9]+`（可以数字开头），下划线/连字符/点/空格会被拒（`id/scope must be alphanumeric`）。
-- **scope 三种可见性：**
-  - `global`：全局，网页主页面「全局变量」可见，适合跨规则共享（在家模式、最后一次按钮动作、温度缓存等）。
-  - `R<规则id>`：**规则内变量**，在该规则编辑页「本规则变量」可见，校验器接受。`rule new` 会自动 bootstrap 本规则的 `R<id>` scope。引用错 scope 会报 `卡片变量有误: <scope> is neither "global" nor "R<本规则id>"`。**因为 scope 必须是纯字母数字，要用规则内变量就让规则 id 保持纯字母数字（默认就是数字串，OK）。**
-  - 其他任意串，或 `R<另一个/不存在的规则id>`：**ghost data**——网关可能存下，但当前规则不可见，网页也不会把它当作可用变量。不要用。
-- **scope 识别：** `rule node add --rule-id <id>` 把且只把 `global` 与当前规则的 `R<id>` 当作已知 scope；变量写命令会读取在线规则清单，确认 `R<id>` 确实对应现存规则。合法的本规则 scope 不需要 `--allow-unknown-scope`。跨规则、不存在或自定义 scope 会告警，并在严格规则校验中失败；`--allow-unknown-scope` 只用于明确的 raw/ghost-data 实验，不能让该 scope 变成规则可见。
-- **`set-value` 改值会核对类型：** `--type` 与变量已存类型不符直接退出 `5`(要改类型加 `--force-type`;不给 `--type` 则自动用已存类型)。删除用 `variable delete --scope <s> --id <id>`(或 `--all` 删整个 scope);`variable watch --follow --max-events <N>` 跟 N 条变化后退出。
-- **配置和值分开：** `get-config` 读取单变量配置；加 `--expect-type number|string` 时只读断言变量存在且类型匹配，missing/mismatch 非零退出，不比较值或显示名。`set-config` 只更新显示名，不改类型或当前值，并按写命令执行 snapshot guard。
-- **变量 `--value` 不是统一 JSON 解析：** `number` 使用数值转换；`string` 原样保存 argv 文本。`--value Seed` 保存 `Seed`，`--value '"Seed"'` 会把双引号也保存为数据。只有确实需要引号字符时才在字符串参数中写 JSON 风格引号。
-- 若用户明确说「不要用变量」，就别 `variable create`、别 `varChange/varGet/varSet*`。优先用 `deviceGet` 读真实设备状态；设备无可读状态时再问是否允许用 `register` 这种图内状态卡片。
-
-### 避坑：网页端变量缓存（CLI 写不广播 configChanged）
-
-CLI 直连网关写入变量，但**不会**向其他已打开的网页会话广播 `configChanged`。所以用 `variable create` / `set-value` / `delete` 对变量增删改查后，长开着网关网页的用户在浏览器刷新前看不到任何变更：
-
-- 新建的变量在网页「全局变量」「本规则变量」里**看不到**——容易被误判为「CLI 创建失败」。
-- 更具迷惑性的是，**引用该变量的卡片节点会在网页上显示「变量已丢失」**——容易被误判为「变量真的没了 / 被删了」。
-
-这两种都是已知的网页端 UI 缓存表现，**不是** CLI 写入失败，也**不是**变量真的丢失。
-
-**给 Agent 的行为指引**：当你已经用 `xgg variable get-value` 在网关上确认值真实存在、用 `xgg rule view` 确认规则引用的 scope/id 也对，而用户却反馈「网页上没看到这个变量」或「卡片显示变量已丢失」时，**不要**把它当成 CLI 写入失败、也**不要**断定变量真的丢了，更不要据此重写规则或重建变量。正确做法是主动告知用户：这是已知的网页端 UI 缓存 bug，请按 **F5 刷新网页**后再查看，变量与卡片即会恢复正常。诊断顺序固定为：
-
-```bash
-xgg variable get-value --scope <scope> --id <id>      # ① 确认网关上真有这个值
-xgg rule view <rule-id> --pretty                       # ② 确认卡片引用的 scope/id 也对
-# ③ 让用户 F5 刷新网页
-# ④ 三项都过才往别处排查
-```
-
-## 六、表达式（`varSetNumber` / `varSetString` 的 `--expr`）
-
-`--expr` 把你写的表达式拆成网关的 `elements` 数组。语法：
-
-| 写法 | 含义 |
-|---|---|
-| `$id` | 变量引用，默认 scope（`global`，或 `--default-expr-scope` 指定） |
-| `$scope.id` | 限定 scope 的变量引用 |
-| `$$` | 字面量 `$` |
-| 其余 | 字面文本（函数、运算符、中文都算） |
-
-**永远用单引号包 `--expr`**，否则 shell 会把 `$id` 当成 shell 变量展开。
-
-scope 和 id 共用变量创建入口的 `[A-Za-z0-9]+` 约束，因此 `$123`、`$global.123`、`$R456.123` 都是变量引用。每个未转义的 `$` 都必须启动合法的 `$id` 或 `$scope.id`；`$bad_id`、`$bad-id`、`$global.` 等会在本地直接报 `identifier`，不会在 `varSetString` 中静默拆成变量加普通文本。要写字面 `$` 一律用 `$$`。紧邻变量做减法时，数字/括号/函数调用可直接写（如 `$x-1`、`$x-abs(1)`）；其他情形建议写空格（`$x - $y`）以免把连字符误当成非法 id。
-
-`rule export` 会用同一解析器回读它生成的 `--expr`。如果源图的结构化 elements 无法用 DSL 无损表达（例如变量后紧跟会被吞入变量 ID 的字母或数字常量），导出会直接报 `ConfigError`，不会生成语义漂移或注定失败的脚本；先在源表达式中加入空格等显式分隔符，或使用 `rule view` 的整图 JSON 往返。
-
-- `varSetNumber`：target 与所有 `$var` operand 都必须是 number；把拼好的串当**数字表达式**求值。支持 `+ - * / %`、括号、逗号参数，以及函数库：
-  `abs pow log sin cos tan asin acos atan max min round floor ceil rand randint now year month date day hours minutes seconds pi e`。
-  **无参函数也要带括号**（`rand()` 不是 `rand`，否则被当变量名）；逗号用 ASCII `,`；`day()` 周日=0（不是 ISO 周一=1）；`now()` 是毫秒 epoch；`rand()` ∈ [0,1)。
-- `varSetString`：target 必须是 string；只做字符串拼接，不运行数值表达式语法检查。固定 UI 未按类型过滤 operand，因此 `$var` 可引用 number 或 string；仍会校验变量引用 grammar。中文/UTF-8 正常，总长上限 512 字节。
-
-例：`--expr '$global.count + 1'`（自增）、`--expr 'round($global.brightness65535 / 655.35)'`（65535→百分比）、`--expr 'randint(1, 16777215)'`（随机颜色）、`--expr '现在温度 $global.temp 度'`（字符串）。
-
-> CLI **会**在本地校验 `varSetNumber` 数字表达式语法——使用与网页“保存”按钮一致的解析器。两种触发：① 所有开启 graph validation 的图写路径，以及 `rule enable` 的重新检查；非法即拒绝并回显**具体错误**（kind + 拼好的表达式串）。`rename` / `set-tags` / `delete` 不是图校验路径；`rule import` 只渲染文本，只有它生成的脚本真正执行写命令时才校验。② `rule expr-check '<表达式>'` 纯本地单验一条（不连网关，0 合法 / 2 非法，支持 `--pretty`）。**推荐 agent 拼规则前先 `expr-check` 验一遍。**
-
-```bash
-$ xgg rule expr-check '$global.count + 1'
-{"ok":true,"input":"$global.count + 1","template":"$ + 1"}      # exit 0
-
-$ xgg rule expr-check 'flor($x)'                                  # 拼错函数名
-{"ok":false,"input":"flor($x)","template":"flor($)","kind":"function","message":"未知函数（检查拼写与大小写；无参函数也要带括号，如 rand()）"}   # exit 2
-
-$ xgg rule expr-check --pretty 'abs($x'                           # 括号不配对
-✗ 不合法 — 括号不匹配（检查 ( 与 ) 是否成对）[bracket]（表达式: "abs($"）   # exit 2
-```
-
-错误 `kind` 七类：DSL 预检查的 `identifier`（变量 scope/id 非法），以及网关算术解析器的 `bracket`（括号不配对）、`function`（未知函数）、`argCount`（参数个数不对）、`number`（空操作数/非数字 token）、`expression`（运算符两侧操作数不合法）、`internal`（解析内部错误）。`template` 是解析器实际看到的串（`$var` 折叠成 `$`）。`expr-check` 只校验**数字**表达式；`varSetString` 是纯拼接，但同样先做变量引用 grammar 预检查。
-
-## 七、观察设备实时状态
-
-在已审计 bundle 的调用面与当前 `xgg` 已建模接口中，未发现“客户端随时读取任意设备实时属性”的通用 RPC；这不是对所有固件/私有接口的绝对不存在证明。调试/汇报实时值时，把属性**导进变量**再读：
-
-先用 spec 确认属性及其类型；下面是完整的一次性读取图（bool 映射为 number 0/1，其他属性选择与 spec/CLI 映射匹配的 `number|string` 变量）：
-
-```bash
-xgg device spec <did> --pretty
-xgg variable create --scope global --id snap --type <number|string> --value <初值> --name snap
-xgg rule new --name "读取属性到变量"                    # 记下 rid
-xgg rule node add --rule-id <rid> --type onLoad --id nLoad
-xgg rule node add --rule-id <rid> --type deviceGetSetVar --id nRead \
-  --device-did <did> --device-property <p> --var-scope global --var-id snap
-xgg rule edge add --rule-id <rid> --from nLoad:output --to nRead:input
+xgg rule new --name "<规则名>"
+xgg rule node add --rule-id <rid> --type <type> --id <stable-id> ...
+xgg rule edge add --rule-id <rid> --from <source:pin> --to <target:pin>
 xgg rule layout <rid>
-xgg rule validate --rule-id <rid>
-xgg rule lint --rule-id <rid> --strict
-xgg rule enable <rid>
-xgg variable get-value --scope global --id snap
-xgg rule logs <rid> --tail 20
 ```
 
-持续接收属性 notify 则改用 property-mode `deviceInputSetVar`，然后 `xgg variable watch --follow`；按 bundle/UI 语义，`--preload` 会在规则启用时先查询/评估一次当前值，`--no-preload` 只跳过这次初始动作，后续 notify/change 路径不变。preload 不会制造缺失的 notify/read 或 push 能力；该时序仍须在目标固件用日志或变量读数验证。
+每张卡只使用 node catalog 该 type/mode 允许的 authoring flags。一个命令中任何业务 flag 被忽略都不可接受；CLI 应在 session/RPC 前拒绝无关或互斥 flag。
 
-审计 bundle 发现已知或疑似 RPC、且 typed 命令尚未覆盖时，可把 `xgg api <method> --kind read --params ...` 当作低层探针。对已知或可能修改状态的方法必须明确 `--kind write`，启用 Agent mode/快照目录并遵守 mutation guard；绝不能为了绕过保护把 write-capable 方法标成 read。它是有边界的协议探索入口，不是日常属性读取承诺。
+node/edge/layout/set 写入默认保留 live `enable`；已启用规则的多步编辑可能立即生效，不能把末尾 enable 当生效边界。先 readback；需要隔离时按授权先 disable，或离线构造后单次原子 set。默认图写路径会在线检查可发现的 modeled 变量引用是否存在及其实际类型；opaque/future payload 不在该证明内。`--no-var-check` 只供明确 raw probe/修复，不关闭 scope/schema/spec/enable gates。
 
-### 分区标签与能力感知设备替换
+`--allow-no-push` 只允许本次 typed `deviceInput` / `deviceInputSetVar` property/event 做目标网关运行探针；不持久化、不绕过 notify/read/write，也不证明设备会发出。在线 spec-aware 会保留路径化 no-push error，strict lint 也会保留同一 source 的 no-push warning/exit 1，因此该图不能冒充通过常规 error gate。只有用户明确授权验证固件扩展时，才可在无物理副作用的专用临时规则中，把 spec-aware 的这一条 error 作为唯一允许的 error，并显式接受 strict lint 的同源 warning：其他 errors 为零，其他 warnings 仍须逐项审计，enable 后立即取 logs/readback，随后 disable/delete。strict export 仍拒绝 no-push，permissive export 才会 warning 并补回 transient flag；此例外不能作为生产规则验收。
 
-已验证型号 `xiaomi.sensor_occupy.p1` 把 siid 4…35 映射为 A-1…B-16 标签；其他型号（包括其他潜在分区传感器）返回空列表，因此这不是通用分区发现：
+优先 typed shortcut。只有以下场景使用 raw：
 
-```bash
-xgg device partitions <did> --pretty
-```
+- 未建模未来卡片的完整保真；
+- shortcut 无法保留的扩展字段；
+- 需要一次原子写入整图。
 
-替换现有规则中的五类设备卡（`deviceInput` / `deviceGet` / `deviceOutput` / `deviceInputSetVar` / `deviceGetSetVar`）时，先只读解释候选和每项契约，再 dry-run 聚焦一个目标：
+raw 必须来自默认 JSON `rule view`/export，不能来自 pretty 或 GUIDE 片段。完整节点是 `{id,type,cfg,inputs,outputs,props}`；JSON wire 只存 source `outputs`，endpoint 用 `node.pin`。
 
-```bash
-xgg rule device replacements --rule-id <rid> --node-id <nid> --pretty
-xgg rule device replacements --rule-id <rid> --node-id <nid> \
-  --target-did <target-did> [--target-siid <N> --target-piid <N>] --pretty
-xgg rule device replace --rule-id <rid> --node-id <nid> \
-  --target-did <target-did> [--target-siid <N> --target-piid <N>] --pretty
-```
+CLI 的普通 edge endpoint 是 `node:pin`。若旧 node ID 自身含 `:`，必须改用四个无损参数 `--from-node-id/--from-pin/--to-node-id/--to-pin`；当前 export/import 会自动采用这种结构化重放，不能靠第一个冒号猜边界。
 
-`--target-piid` / `--target-eiid` / `--target-aiid` 三选一，并与目标卡家族匹配；selectors 必须配 `--target-did`。同一目标有多个兼容 mapping 时必须按 dry-run 建议消歧。兼容性比较 URN 前五段、dtype、value-range min/max/step、value-list values、event arguments 与 action inputs。
+导出/重放必须先落盘审阅。npm 尚未同步时先构建当前 checkout，并用 `XGG_NODE_ENTRY=<绝对 dist/cli.js>`（可配独立 `NODE_BIN`）让生成脚本以 Bash argv array 执行源码，不能把多词命令塞进 `XGG`。replay 先只读断言全部可发现的 modeled `global` 依赖存在且类型为 `number|string`，再预检已捕获的本地变量，之后才允许首笔变量/规则写入；global 从不创建、改值或改名。旧 JSON 若含未声明或无 `expectedType` 的可发现 global 引用会在渲染前 fail closed。opaque `--cfg` 不会被解析，其内部 local/global 引用既不在 preflight 证明内也不能安全改写；same-ID 保真重放须独立审阅并另行证明，clone 会拒绝。预检不是跨命令事务，执行期间仍须隔离其他 writer。完整命令与 clone/same-ID 顺序见 [operations.md](references/operations.md)。
 
-默认 replacement discovery 排除 ghost device。显式用 `--target-did` 聚焦 ghost 做清单差异诊断时，候选会明确返回 `eligible:false` 与原因，不生成可应用的 `planId`。不要尝试把该诊断结果推进写路径。
-
-只有用户确认 dry-run 后才写：
-
-```bash
-xgg rule device replace --rule-id <rid> --node-id <nid> \
-  --target-did <target-did> --target-siid <N> --target-piid <N> \
-  --apply --confirm-target-did <target-did> --snapshots-dir "$PWD/snapshots"
-```
-
-写路径固定强制 rollback snapshot，在同一 mutation lease 内 fresh 读取设备清单、reload spec、复查 live graph、严格校验、`setGraph` 并 readback；若目标从 dry-run 到 apply 之间变成 ghost，会在 `setGraph` 前硬拒绝。不支持 `--no-snapshot`。网关没有 CAS，应用期间让用户停止编辑网页画布。不要在家庭网关上为了“验证命令”随意替换真实设备卡。
-
-## 八、典型需求模板
-
-需求匹配按钮/toggle、时间窗、多路合并、延迟、循环、模式切换、变量或安全探针时，读取 [references/recipes.md](references/recipes.md)。配方只给图形模式；设备 short-name 与运行结果仍以目标网关 spec、lint、日志和 readback 为准。
-
-## 九、调试与验收
-
-1. 看图：`xgg rule view <rid> --pretty`
-2. 静态检查：`xgg rule validate --rule-id <rid> --spec-aware` + `xgg rule lint --rule-id <rid> --strict`（设备 action 不得省略 spec-aware）
-3. 触发并看日志：`xgg rule logs <rid> --tail 50`（默认表格；加 `--json` 出 JSON；`--level error` 只看错；`--follow` 持续跟）。复杂图再跑 `xgg rule trace <rid> --pretty`；机器判读用默认 JSON，并检查 `completeness` 而不是只读 `frames`。可重复传 `--node <id>` / `--edge '<src.pin->dst.pin>'`，或用时间/step flags 限定输出。
-
-   日志行示例（一次 `onLoad → deviceOutput` 的执行）：
-
-   ```
-   info  -        规则启用
-   info  nLoad   link nLoad.output → nOn.trigger = 事件
-   info  nOn     nOn [true]
-   info  nOn     nOn success
-   ```
-
-   读法：`link <src>.<pin> → <dst>.<pin> = 事件` 是边触发，`<node> [value]` 是该节点执行的取值/分支，`<node> success` / `failed` 是动作结果。
-
-   > `rule logs` 输出的是从有界网关日志拉取中**成功解析的日志项**，再按 rule id / 时间 / level 过滤并应用 `--tail`。它不暴露未解析行、游标是否回绕或扫描是否完整，还受 `--max-blocks`、网关保留窗口和 tail 上限影响。因此空结果不能单独证明「从未触发」；必须结合规则图 readback、可控触发或其他证据判断。网页还会做自己的过滤和渲染，所以两者不必逐行一致。
-4. 对专门构造、完整下游均为纯软件 marker 的探针，`onLoad` 可用 `rule disable` → `rule enable` 即时重放且不驱动物理设备；既有规则可能从 onLoad 驱动物理动作或业务变量，必须先审查完整下游并按用户授权触发。`timeRange` 可等待 start 验证窗口进入事件；`varChange` 等其他独立源先在目标网关验证实际触发。`loop` 不是独立入口，必须先由事件源驱动 `loop.start`；物理按钮、门锁、人体传感器要请用户实际触发后再看日志。
-5. 网页显示「变量已丢失」但 CLI 里变量存在时，先让用户**刷新网页**，不要立刻重写规则（见规范 7）。
-
-## 十、备份（本地 `.bak` 与网关云备份）
-
-本地导出生成与官方 bundle 相同 envelope 的完整 version-2 `.bak`；导入同时接受 version 2 与官方旧版 rules-only 数组。导入会**删除当前全部规则和变量，再仅重建备份中包含的内容**，固定先 dry-run：
-
-```bash
-xgg backup local-export --output ./gateway-rules.bak
-xgg backup local-import --input ./gateway-rules.bak --dry-run
-# 只有用户明确授权 replace-all 后：
-xgg backup local-import --input ./gateway-rules.bak \
-  --confirm-replace-all --snapshots-dir "$PWD/snapshots"
-```
-
-读取阶段会在访问 session 前验证 SHA-256、bounded deflate、payload schema、变量与每张规则。旧版数组没有变量，会规范化为 `variables: {}`；真正导入会删除现有变量且不会重建它们，并不是 merge 或“保留当前变量”，所以必须在 dry-run 中核对 `createVariables` 等计数。真正应用固定强制 rollback snapshot、持有一个 mutation lease，并在首个失败处停止。不要用家庭网关做无授权恢复 E2E；安全验证只做 local-export、离线 decode/plan 与 `--dry-run`。
-
-云备份命令：
-
-```bash
-xgg backup list --from fds --pretty             # 列云备份
-xgg backup create --from fds --file-name "<名字>"   # 网关会给名字追加 .bak 后缀
-xgg backup cloud-export --from fds --did <did> --ts <ts> --file-name "<名字>" --output ./history.bak --snapshots-dir "$PWD/snapshots"
-xgg backup download --from fds --did <did> --ts <ts> --file-name "<名字>"   # 三项均来自 backup list；低层 generate 前必须先 download
-xgg backup progress --from fds --progress-id <id>
-xgg backup generate --from fds --did <did> --ts <ts> --file-name "<名字>"
-xgg backup load --from fds --did <did> --ts <ts> --file-name "<名字>" --snapshots-dir "$PWD/snapshots"
-xgg backup delete --from fds --did <did> --ts <ts> --file-name "<名字>" --snapshots-dir "$PWD/snapshots"
-xgg backup config get --from fds
-xgg backup config set --from fds --auto-backup true --auto-backup-limit <N> --snapshots-dir "$PWD/snapshots"
-xgg backup create --from fds --file-name "<名字>" --wait   # 轮询进度到 100% 再返回
-```
-
-从历史云备份保存可移植文件时使用 `cloud-export`：它会在一个 mutation lease 内自动 download、等到终态再 generate，随后把官方 length-prefix/raw-deflate + SHA-256 envelope 以 `0600` 原子写入本地；默认拒绝覆盖，确需替换才加 `--overwrite`。stdout 只给文件与进度摘要，不输出完整家庭规则/变量。`generate` 是依赖网关缓存状态的低层命令，只用于已经明确完成同一 `{did,ts,file-name}` download 的高级流程。
-
-`--from fds` 指小米云存储。Agent 模式同样受快照目录约束。
-
-低层 `generate` 前必须先对完全相同的 `{did,ts,file-name}` 执行 `download`。`load` 会在一个 mutation lease 内自动 download、等缓存进度到 100%，再调用 load 并等待可确认的恢复终态；下载 ACK/进度含糊时不会进入 load，load 只返回 `{}` 等无进度 ACK 时仍按 `NOT_CONFIRMED` 封锁，不能把网页固定等待几秒当成完成。`load` 是全量恢复，`delete` 永久删除云备份，`config set` 改自动备份策略；三者都必须有用户明确授权和 rollback snapshot，不能仅为探测能力而执行。
-
-`create` / `download` 默认原样返回网关 ACK/result；可轮询句柄可能是 bare number、`progress_id` 或 `progressId`，精确空对象 `{}` 表示同步完成，其他无句柄 ACK 不能证明完成。加 `--wait` 才会抽取句柄、轮询到 100% 并在 JSON 输出里附带统一的 `progress`；句柄 `0`（同步完成或命中网关本地缓存）立即映射为 100%。`load` 自动执行的下载终态摘要固定输出为 `downloadResult` / `downloadProgress`；load ACK 只表示已接受，因此无论是否带 `--wait` 都会在同一 mutation workflow 租约内等到 100% 后才返回，`--wait` 只额外把 load 的 terminal `progress` 写入输出。可选 `--poll-interval-ms`（默认 1000）同时作用于下载与恢复轮询，`--poll-timeout-ms`（默认 60000）给每个阶段独立的超时预算。
-
-## 十一、常见踩坑
-
-| 现象 | 原因 | 处理 |
-|---|---|---|
-| `rule enable` 成功但动作没发生 | 只证明启用，未证明触发 | 触发后查 `rule logs` |
-| 网页看不到 CLI 新建的变量/规则，或卡片显示「变量已丢失」 | 网页 SPA 缓存未刷新（CLI 写不广播） | 让用户 F5 刷新；先按规范 7 三步诊断 |
-| `cross-color edge: event output → state input` (exit 5) | 把纯事件接进了状态输入 | 事件接事件输入；状态合并用 `logicOr/logicAnd`，事件合并用 `signalOr` |
-| `fan-in cap ... 一个输入节点只能连一条线` | 一个输入 pin 接了多条入边 | 先过 `signalOr`/`logicOr`/`logicAnd` 再汇入 |
-| `卡片不可达: <类型> sink ... has no satisfiable upstream event path`（enable exit 5 / lint error） | 独立事件源没有按目标 pin/真假聚合规则抵达动作卡；常见是 `eventSequence` 只活一路、`logicAnd` 缺状态、`condition` 分支缺对应真假事实、`statusLast` 只有 false，或只接了 `loop.stop`/`onlyNTimes.zero` | 补齐必需输入并检查真假：`eventSequence` 全部事件；`condition.met` / `statusLast` 要可变为 true 的状态，`condition.unmet` 要可为 false；需要反相时接 `logicNot`，多状态按 `logicAnd`/`logicOr` 组合；连完 `rule lint --strict` 复查 |
-| `卡片变量有误: <scope> is neither global nor R<id>` | 引用了非法 scope（常见：复制规则后还指向源规则的 `R<旧id>`） | 改 `--var-scope global` 或当前规则的 `R<本规则id>`，或在新规则 scope 下重建变量 |
-| `卡片变量丢失` | 变量不存在/被删 | 先 `xgg variable create` |
-| `--type boolean ... not a valid gateway variable type` | 变量类型只有 number/string | 开关用 number 1/0 或 string on/off |
-| `id/scope must be alphanumeric` | 变量 id/scope 含非字母数字 | 去掉 `_ - .` 等 |
-| `float property only supports --op gt\|lt\|between` | **连续** float 属性不支持 gte/lte/eq/ne（带 value-list 的枚举 float 会自动按 `int` 处理，可用 eq/ne） | 改 `gt/lt/between`，或换思路（如 `logicNot` 取反表达 `≤`）；若该属性其实是枚举（有 value-list）本错误不该出现，复查 `xgg device spec` |
-| `cannot write a number variable to ...: the MIoT property declares no value-range` | 把 `number` 变量写进没有 `value-range` 的设备属性/动作入参 | 改用字面 `--value <数值>`，或换一个 `device spec` 里声明了 `value-range` 的属性；boolean/string 变量不受限 |
-| bool 属性比较不触发 | bool 只能 `eq`，threshold 必须 0/1 | `--op eq --threshold 1`(真) 或 `0`(假) |
-| typed push source 因 `pushAvailable=false` 被拒 | 设备实例不提供 push；property notify/event 都不能据此承诺会发出 | 优先改用 `deviceGet` 主动读；仅做目标网关运行时探针才加 transient `--allow-no-push`，之后用日志验收 |
-| 目标设备命令超时 `-9999` | ghost device 或设备不可达 | 换非 ghost 设备，查 `device list` 的可用性 |
-| `varSetNumber` 表达式语法非法（写入被拒，exit 5） | 写错函数名/括号/参数 | 看回显的具体 kind+表达式串；或 `rule expr-check '<表达式>'` 单验一条；无参函数记得带括号 |
-| `varSetNumber` 语法合法但算错（运行期数值不对） | 取值/逻辑问题（语法已过本地校验） | 看 `rule logs` 的 eval 结果 |
-
-## 十二、收尾标准
-
-向用户汇报完成前，至少：
+### 5. 每批修改后过四道门
 
 ```bash
 xgg rule layout <rid>
 xgg rule validate --rule-id <rid> --spec-aware
 xgg rule lint --rule-id <rid> --strict
+xgg rule view <rid>
 ```
 
-是否启用以用户意图和原规则状态为准，不要为验收擅自激活刻意禁用的自动化。用户授权运行、或原规则本就应启用时，才执行 `xgg rule enable <rid>` 并在触发后读 `rule logs`；否则用 `rule view`/readback 确认 `enable=false`。在已获运行授权前提下，能由 Agent 自主触发的（`onLoad`，或可安全驱动的设备；`loop` 仍需上游事件接 `start`）就触发并读日志/变量证明运行；不能的（物理按钮、传感器）明确告诉用户需要其物理触发，并在用户触发后再读日志确认。最后提醒用户：CLI 的改动需要在网关网页 **F5 刷新**才能看到。
+- validate：节点/schema、合法 scope、在线变量存在/实际类型；`--spec-aware` 再核 access、push、原生 literal/值域、action input 与 output-ref canonical 边界。
+- lint：edge、pin color、fan-in、required input、保存键；strict 再查 sink reachability。
+- enable：最终硬拦不可达 sink，并对 persisted output ref 聚焦 fail-closed spec 证明，但不替代完整 spec-aware；成功也不证明运行。
+- readback：证明实际保存的节点、wire 与 enable 状态。
 
-## 附录：冷启动与 raw JSON
+`rule lint` 顶层 `ok:true` 只表示命令执行完成。必须检查退出码及 `summary.errors/warnings`；exit 1=warning，2=error。含设备卡的规则绝不省略 `--spec-aware`。
 
-需要整图 envelope、逐类节点四段结构、卡片尺寸、比较 wire 编码或非平凡 JSON 实样时，读取 [references/node-catalog.md](references/node-catalog.md)。优先使用 shortcut；只有 shortcut 覆盖不到或必须原子写整图时才下沉到 raw JSON。
+### 6. 只按授权启用并证明
+
+用户要求 disabled 草案：确认 `enable=false` 后停止。用户授权运行：
+
+```bash
+xgg rule enable <rid>
+# 执行安全、可控触发；物理 source 请用户触发或等待真实条件
+xgg rule logs <rid> --tail 50 --json
+xgg rule trace <rid> --pretty
+```
+
+证明链：source/node 日志 → edge 日志 → 分支值 → action success/failed → variable/device readback。空日志不证明未触发；trace 必须检查 `completeness`，不是只看 frames。
+
+复杂运行时至少验证正例和会改变结论的负例，例如 sequence 正序/逆序/超时、condition 真/假、onlyNTimes N+1/reset、loop stop、modeSwitch 多次轮换。
+
+## 规则图不可违反的约束
+
+1. `E→E`、`S→S`；只有 source `B` 可接 E 或 S。
+2. 同一 target input 最多一条边；多事件先 `signalOr`，多状态先 `logicOr/logicAnd`。
+3. 每个动作/写变量节点必须有可满足的 upstream event path；辅助 pin `stop/zero/setFalse` 不是主触发。
+4. `condition.trigger` 必须 event 可达；condition 是 state。未接 state 时 XGG static model 只允许 unmet。
+5. `eventSequence` 两个输入都必须可达；`logicAnd` 每个声明 input 都必须有 state。
+6. `statusLast` 需要可能为 true 的 state；反相需求用 `logicNot`。
+7. `onlyNTimes` 与 `counter` 的 `zero` 是可选控制 pin；只有业务需要开启新计数窗口/允许清零时才接。按日重置用 alarmClock→zero；生命周期累计或一次性前 N 次门可以省略 zero。
+8. `loop` 必须有 start；有界或可取消业务要设计 stop。若明确要永久轮询，可省略 stop，并说明终止依赖 disable/delete、使用正 interval、评估事件风暴风险。此前目标网关已验证 `output→同节点 stop` 的有限反馈，其他反馈与固件仍要实测。
+9. `modeSwitch` outputs 从 0 连续，动态逻辑/事件输入至少 2。
+10. device/action/set/query output 可以继续串接，但 Bundle 不证明它只在成功后发；关键链路读日志。
+
+## 实机安全
+
+登录、snapshot、退出码、并发编辑与备份细节以 [operations.md](references/operations.md) 为准。最小底线：
+
+```bash
+export XGG_AGENT_MODE=1
+export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
+```
+
+- 出现 auth required/expired 或 exit 3，停止写入并索取新的一次性码；码永不落入仓库、Issue/PR 或报告。
+- 已启用规则的 node/edge/layout/set 修改可能立即生效。写前读 enable；需要隔离时按授权先 disable，或离线构造后单次 set。
+- mutation lease 只串行 xgg，不是网页 CAS；写期间停止网页编辑。
+- 不用 `--no-snapshot/--no-validate/--no-var-check` 绕过正常失败。
+- CLI 写后网页可能缓存旧图/变量：先 CLI readback，再请用户 F5。
+- restore/delete/config-set 与真实设备动作不是能力探针；只在用户明确授权和可回滚条件下执行。
+
+## 诊断顺序
+
+自动化“不工作”时：
+
+```text
+1. rule view：节点、pins、enable 是否是预期
+2. device spec / variable readback：参数和值域是否漂移
+3. validate --spec-aware：卡片、变量、access/push、action.in/output ref
+4. lint --strict：拓扑、颜色、required、truth-aware reachability
+5. logs/trace completeness：source 是否出现、哪条 edge/branch 停止
+6. 可控重放：仅在完整下游已审查且获授权
+7. 最小目标化修复，再重复 1-6
+```
+
+不要因为“没有日志”就重写图；也不要因网页显示变量丢失先重建变量。先 `variable get-value`、`rule view`、F5，再判断。
+
+## 完成标准
+
+交付至少包含：
+
+- 自然语言→node/pin 计划及关键语义选择；
+- device spec/变量证据与所有枚举 label→wire value 映射；
+- 最终 `rule view`、validate/lint exit + summary、enable 状态；
+- 若获授权运行，正/负触发的 logs/trace/readback 与 evidence limits；
+- reset/stop、内部状态生命周期、action failure 的未证实项；
+- snapshot/backup 和临时规则/变量清理状态；
+- 网页 F5 提醒。
+
+content build marker 是除 marker 行及其换行外本文件 UTF-8 bytes 的 SHA-256，用于识别 npm 版本号相同但内容过期的副本。仓库、package mirror、实际安装 Skill 仍必须递归字节一致。

@@ -161,7 +161,7 @@ diff -qr "$CLI_PKG/skills/xgg-rule-authoring" ~/.agents/skills/xgg-rule-authorin
 diff -qr "$CLI_PKG/skills/xgg-rule-authoring" ~/.claude/skills/xgg-rule-authoring
 ```
 
-从 GitHub 源码运行时，也可以直接把 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md) 交给 Agent 读取，或复制到本地 skills 目录：
+从 GitHub 源码运行时，应把完整的 [skills/xgg-rule-authoring/](skills/xgg-rule-authoring/) 目录交给 Agent，或递归复制到本地 skills 目录；`SKILL.md` 是入口，不是可脱离 `references/` 单独分发的完整指南：
 
 ```bash
 mkdir -p ~/.claude/skills/xgg-rule-authoring
@@ -170,6 +170,8 @@ cp -R skills/xgg-rule-authoring/. ~/.claude/skills/xgg-rule-authoring/
 mkdir -p ~/.agents/skills/xgg-rule-authoring
 cp -R skills/xgg-rule-authoring/. ~/.agents/skills/xgg-rule-authoring/
 ```
+
+尚未发布到 npm 的 PR/main 变更必须使用源码 `pnpm build` 后的 `node packages/cli/dist/cli.js`，并从同一 checkout 同步整个 Skill 目录；重新安装全局 `xgg` 不会提前获得未发布代码。Skill 采用渐进披露：入口负责自然语言编译与安全工作流，`references/` 分别给出图执行模型、25+nop 完整参数表、MIoT 设备语义、复杂配方及实机操作/验收，不能只复制单个 `SKILL.md`。
 
 Agent 执行写操作时建议开启专用快照目录：
 
@@ -206,12 +208,12 @@ xgg device spec <did> --pretty
 
 xgg rule new --name "<自动化名称>"
 xgg rule node add --rule-id <rule-id> --type deviceInput \
-  --device-did <button-did> --device-event click --id nclick
+  --device-did <button-did> --device-event click --id nClick
 xgg rule node add --rule-id <rule-id> --type deviceOutput \
-  --device-did <target-did> --device-property <property> --value <value> --id naction
+  --device-did <target-did> --device-property <property> --value <value> --id nAction
 xgg rule node add --rule-id <rule-id> --type nop \
-  --text "按钮单击后执行目标动作" --background '#FFD966' --id nnote
-xgg rule edge add --rule-id <rule-id> --from nclick:output --to naction:trigger
+  --text "按钮单击后执行目标动作" --background '#FFD966' --id nNote
+xgg rule edge add --rule-id <rule-id> --from nClick:output --to nAction:trigger
 xgg rule layout <rule-id>
 xgg rule validate --rule-id <rule-id> --spec-aware
 xgg rule lint --rule-id <rule-id> --strict
@@ -219,13 +221,13 @@ xgg rule lint --rule-id <rule-id> --strict
 
 要点：
 
-- 先跑 `xgg device spec <did> --pretty`，按输出中的用途选择能力：事件与 notify 属性用于 `deviceInput` / `deviceInputSetVar`，read 属性用于 `deviceGet` / `deviceGetSetVar`，write 属性与 action 用于 `deviceOutput`；typed 创建会在写图前硬检对应的 `notify` / `read` / `write` access，不要凭设备名猜字段。两类 push source 还要求设备 `pushAvailable=true`；只有明确在目标网关做运行时探针时才加 `--allow-no-push`。该 flag 只放行本次 typed node-add 的设备级 push gate，不持久化、不绕过任何 property access，也不证明目标固件会发出事件；随后在线 `validate --spec-aware` 仍会如实诊断该 no-push 节点。含 access mismatch 或 no-push source 的 strict export 会在生成重放脚本前拒绝；permissive export 对 no-push source 会明确 warning 并补回 transient `--allow-no-push`，不会把它伪装成持久能力。
+- 先跑 `xgg device spec <did> --pretty`，按输出中的用途选择能力：事件与 notify 属性用于 `deviceInput` / `deviceInputSetVar`，read 属性用于 `deviceGet` / `deviceGetSetVar`，write 属性与 action 用于 `deviceOutput`；typed 创建会在写图前硬检对应的 `notify` / `read` / `write` access，不要凭设备名猜字段。两类 push source 还要求设备 `pushAvailable=true`；只有明确在目标网关做运行时探针时才加 `--allow-no-push`。该 flag 只放行本次 typed node-add 的设备级 push gate，不持久化、不绕过任何 property access，也不证明目标固件会发出事件；随后在线 `validate --spec-aware` 仍会把 no-push 记为 error，strict lint 仍给同一 source 的 no-push warning/exit 1。常规规则不得有 error；每条 advisory warning 都必须逐项审计、解释并明确接受，否则视为阻断。只有用户明确授权的隔离临时探针，才可把目标 source 的 spec-aware no-push error 作为唯一允许的 error，并仍逐项审计所有 warning、要求下游仅安全软件 marker、取证后立即 disable/delete。含 access mismatch 或 no-push source 的 strict export 会在生成重放脚本前拒绝；permissive export 对 no-push source 会明确 warning 并补回 transient `--allow-no-push`，不会把它伪装成持久能力。no-push property 仅在有 read 时可由可靠触发驱动 `deviceGet` / `deviceGetSetVar` 降级；event payload/次数/顺序不能被 query 重建，没有等价可靠 source 时应判定无法可靠实现。
 - CLI 与 Core SDK 的 typed `rule node add` 显式 `--id` 只能使用非空 ASCII 字母数字 `[A-Za-z0-9]+`；省略时会生成满足该约束的 ID。旧图中的其他 ID 不会被静默改名，`rule validate` / `rule lint` 会逐节点列出告警及受影响的 edge 引用；`rule export` 会显式加入 `--allow-legacy-id`，旧 JSON export 也会在 render/import 时仅对 modeled typed 节点补齐该 replay intent。含 `:` 的旧 ID 由导出脚本使用 `--from-node-id/--from-pin/--to-node-id/--to-pin` 分离传递，避免 `NID:pin` 歧义。所有兼容 intent 都会拒绝新建、raw 与已兼容 ID；未来/opaque 卡片仍走保留完整 tuple 的 raw `--cfg` 路径。
 - `deviceInput` 的 `--device-property` 属性模式和 `--device-event` 事件模式二选一，不能混用。事件参数比较只用 `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--op`、`--threshold`、`--threshold2`、`--property-value`、`--property-include`、`--force-out-of-range` 只属于属性模式，event 模式传入时会在读取 session/spec、快照或写网关前拒绝。
 - `deviceOutput --value '$scope.id'` 表示变量引用；字符串字面值若以 `$` 开头，需要把第一个 `$` 写两次，例如 `--value '$$hello'` 实际写入 `$hello`。`rule export` 会自动添加这一层转义。数值 property-write literal 严格解析完整十进制/scientific token：float/double 必须有限，整数必须是精确 safe integer，并服从非空 value-list 与有效 value-range/step。变量引用只支持不含 `value-list` 字段的 string 目标，或不含该字段且带有效 value-range 的 number 目标；boolean 与任何存在 `value-list` 字段的目标（包括空数组 `[]`）在固定网页 UI 中都是 literal-only，下发 typed `$var` 会被拒绝。boolean 动态状态应先把 number 0/1 分支，再分别连到 literal `false` / `true` 的两个 `deviceOutput`。
 - 在线 `rule validate` 及默认图写路径会按精确 `scope + id` 读取变量清单，并按引用位置核对实际 `number|string` 类型；`--no-var-check` 只为明确 raw probe 保留，会跳过需要在线清单的变量存在性和类型检查，但合法 scope 仍是本地图不变量，也不会关闭其他 schema、spec 或 enable gate。
 - 连线完成后跑 `xgg rule layout <rule-id>`，让可执行卡片按数据流排布；`nop` 的自由位置会保留，避免备注离开它所说明的区域。
-- 启用前跑 `xgg rule validate --rule-id <rule-id> --spec-aware` 和 `xgg rule lint --rule-id <rule-id> --strict`。`deviceOutput` 必须使用 spec-aware 校验，才能核对当前 property-write 或 `action.in` 契约。只有用户授权运行时才执行 `xgg rule enable <rule-id>`，触发后用 `xgg rule logs` 验收；否则用 `rule view` 确认保持 `enable=false`。
+- 启用前跑 `xgg rule validate --rule-id <rule-id> --spec-aware` 和 `xgg rule lint --rule-id <rule-id> --strict`。常规业务规则必须让两者 errors=0；每条 warning 都要按路径逐项审计、解释并明确接受，未解释或未接受的 warning 视为阻断。合法可解释的 advisory warning 包括已证明可终止的 self-loop、兼容旧节点 ID，以及同 ID 无损保留的 opaque/future 卡片；它们不能被批量忽略。上述获授权 no-push 临时探针仍要运行并记录两者，只允许目标 source 的 spec-aware no-push error；strict lint 的同源 no-push warning/exit 1 也必须显式接受。`deviceOutput` 必须使用 spec-aware 校验，才能核对当前 property-write 或 `action.in` 契约。只有用户授权运行时才执行 `xgg rule enable <rule-id>`，触发后用 `xgg rule logs` 验收；否则用 `rule view` 确认保持 `enable=false`。
 - 对专门构造、完整下游均为纯软件 marker 的 Agent 探针，可用 `onLoad` 配合 `rule disable` + `rule enable` 重放，不需要人类物理按按钮；既有规则可能从 onLoad 驱动物理动作或业务变量，先审查完整下游并取得授权再重放。
 - `nop` 只给网页画布添加备注，不参与连线或执行。纯文本用 `--text`；要保留标题、粗体、列表、对齐等格式，用 `--delta '<Quill ops JSON>'`（也接受 `{"ops":[...]}`），`rule export` / `rule import` 会无损往返 Delta、背景色、尺寸和位置，`rule layout` 不会搬动它。
 - 严格 lint 与 enable 会按目标 pin 的必需输入语义检查动作可达性，并把状态“可用 / 可能为 true / 可能为 false”分开。独立事件源包括 `onLoad`、`alarmClock`、`timeRange`、`deviceInput`、`deviceInputSetVar`、`varChange`；`timeRange` 同时提供时间窗状态，并在进入窗口时发出事件（没有观察到等价的窗口结束事件）。`condition.condition` 未连线时按 `false` 处理，因此 trigger 可走 `unmet`，但 `met` 不可达。`register` 初值与 `setFalse` 提供 false，只有可达的 `setTrue` 再增加 true；`eventSequence` 的每个事件输入都必须可达；`logicAnd` / `logicOr` / `logicNot` 按布尔语义传播真假状态，`signalOr` 则任一路事件即可。`loop.stop` 与 `onlyNTimes.zero` 是控制输入，不能单独证明下游动作可执行。
@@ -282,11 +284,17 @@ xgg rule node add --rule-id <rule-id> --type deviceOutput \
 
 ```bash
 export SNAPSHOTS_DIR="$PWD/snapshots"
-xgg rule export <rule-id> --format json --strict-roundtrip > rule-export.json
-xgg rule import --from-file rule-export.json > replay.sh
-xgg rule import --from-file rule-export.json --target-id <new-rule-id> > clone.sh
+export SOURCE_BASE_URL="http://<source-gateway>:8086"
+export TARGET_BASE_URL="http://<target-gateway>:8086"
+xgg rule export <rule-id> --format json --strict-roundtrip \
+  --base-url "$SOURCE_BASE_URL" > rule-export.json
+xgg rule import --from-file rule-export.json --base-url "$TARGET_BASE_URL" > replay.sh
+xgg rule import --from-file rule-export.json --target-id <new-rule-id> \
+  --base-url "$TARGET_BASE_URL" > clone.sh
 # 审阅最终 enable 行为后再执行 bash replay.sh / bash clone.sh
 ```
+
+执行前检查两份脚本各自唯一的 `BASE_URL=` 行就是实际目标，且不含 `192.168.x.x` / `<...>` 占位符。冻结其他 writer 后，按 `rule-export.json.externalVariables[]` 的 `id/expectedType` 对目标逐个执行 `variable get-config --scope global --expect-type ... --base-url "$TARGET_BASE_URL"`；全部通过后，same-ID 目标若当前启用，才可记录图/状态并在获授权后 disable + readback，再执行会重复 global preflight 的脚本。因 local prepare 早于 graph staging，失败后先诊断，不自动恢复 enable；完整无 `eval` 循环见 bundled Skill 的 `operations.md`。
 
 生成脚本把 `XGG` 严格当作**一个可执行文件路径**（默认 `xgg`），不能写成 `XGG="node ..."` 或 `XGG="pnpm exec ..."` 这样的多词命令。需要重放尚未发布到 npm 的当前源码时，先 `pnpm build`，再把 Node 与构建入口作为两个独立参数传入；两条路径即使含空格也不会被拆词：
 
@@ -295,11 +303,11 @@ XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js" \
   NODE_BIN="/absolute/path/to/node" bash replay.sh
 ```
 
-脚本用 Bash argv array 直接执行，不使用 `eval` 或未加引号的 word splitting。`NODE_BIN` 可省略并默认使用 PATH 上的 `node`，`XGG_NODE_ENTRY` 应指向绝对的构建后入口。
+脚本用 Bash argv array 直接执行，不使用 `eval` 或未加引号的 word splitting。`NODE_BIN` 可省略并默认使用 PATH 上的 `node`，`XGG_NODE_ENTRY` 应指向绝对的构建后入口。上述 import 显式把目标 URL 嵌入脚本。若省略 `--base-url`，import 会先读取渲染进程的 `XGG_BASE_URL`；一旦有值就硬编码，执行时 `BASE_URL` 不能覆盖。只有渲染时二者都没有才保留运行时 fallback，且脚本不会从登录 session 推断目标；因此不要依赖隐式分支，始终显式传目标 URL。
 
-脚本先对所有 `global` 外部依赖执行只读 `variable get-config --expect-type`，确认存在且类型为导出记录的 `number|string`；不比较全局变量的值或显示名，也绝不创建或修改它们。所有 global assertion 通过后，才只读预检已捕获的规则内变量；若导出包含规则内变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 也在这里生效）。clone 保留 `--expect-absent`，先成功创建禁用空壳，再准备 `R<target-id>` 变量。此后所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，源规则禁用时保持禁用。旧 JSON 若没有 global 依赖仍可重放；若声明了未携带 `expectedType` 的旧 global 依赖则在渲染前 fail closed，需用当前版本重新导出。same-ID 重放会替换目标图，而且整段脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg 进程或 API 客户端并发修改目标；预检后变量仍可能并发漂移，staging 后失败会留下禁用的 partial graph，用逐写快照检查或恢复。
+脚本先对所有**可发现的 modeled** `global` 外部依赖执行只读 `variable get-config --expect-type`，确认存在且类型为导出记录的 `number|string`；不比较全局变量的值或显示名，也绝不创建或修改它们。所有 global assertion 通过后，才只读预检已捕获的规则内变量；若导出包含规则内变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 也在这里生效）。clone 保留 `--expect-absent`，先成功创建禁用空壳，再准备 `R<target-id>` 变量。此后所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，源规则禁用时保持禁用。旧 JSON 若确实没有可发现的 global 依赖仍可重放；任何可发现的 global 引用若缺少 command+top-level typed declaration，或 declaration 没有可信 `expectedType`，则在渲染前 fail closed，需用当前版本重新导出。opaque `--cfg` payload 不会被解析，生成的 preflight 不能证明其中潜藏的 local/global 引用；same-ID 保真重放必须独立审阅 payload 并在启用前另行证明这些依赖。same-ID 重放会替换目标图，而且整段脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg 进程或 API 客户端并发修改目标。预检失败没有写入；same-ID local prepare 若在 staging 前中断，旧图可能仍保持原状（包括 enabled），但可能只创建了部分 local。clone staging 或任一 target-graph staging 后失败才会留下禁用 partial graph。失败后应同时 readback 图/enable 与变量，并用逐写快照检查或恢复。
 
-对当前 spec 有效、已建模的节点，完整 typed `include` / `between`、`preload`、`simplified`、`nop`、设备写入参数与规则内变量可在 `--strict-roundtrip` 下往返。strict export 会先核对持久化 property-write 的属性存在性/写权限、原生 literal/数值域和变量 metadata，并核对 `deviceOutput.props.ins` 与 `action.in` 的逐索引对应、PIID/short-name 唯一性及同类输入契约；它还会读取源网关 local/global 变量的实际类型，按每个引用路径拒绝类型不匹配或缺失的 global 依赖，避免重放在 staging 后才失败。任何 typed replay 无法复现的设备写入或其他语义损失 warning 都会拒绝导出。permissive export 会保留明确 warning，并用索引语义、唯一占位 key 及无原型参数字典避免乱序、重复 key 或 `__proto__` 造成静默丢值。未来新增但当前 CLI 尚未建模的节点会导出成 opaque `--cfg` 结构，允许同 ID 无损重放并给出信息性 warning；CLI 无法安全发现其中的规则内引用，因此带 opaque 节点的导出会拒绝 `--target-id` 克隆。
+对当前 spec 有效、已建模的节点，完整 typed `include` / `between`、`preload`、`simplified`、`nop`、设备写入参数与规则内变量可在 `--strict-roundtrip` 下往返。strict export 会先核对持久化 property-write 的属性存在性/写权限、原生 literal/数值域和变量 metadata，并核对 `deviceOutput.props.ins` 与 `action.in` 的逐索引对应、PIID/short-name 唯一性及同类输入契约；它还会读取源网关可发现的 modeled local/global 变量实际类型，按每个引用路径拒绝类型不匹配或缺失的 global 依赖，避免重放在 staging 后才失败。任何 typed replay 无法复现的设备写入或其他语义损失 warning 都会拒绝导出。permissive export 会保留明确 warning，并用索引语义、唯一占位 key 及无原型参数字典避免乱序、重复 key 或 `__proto__` 造成静默丢值。未来新增但当前 CLI 尚未建模的节点会导出成 opaque `--cfg` 结构，允许同 ID 无损重放并给出信息性 warning；CLI 无法安全发现或改写其中的 local/global 引用，因此带 opaque 节点的导出会拒绝 `--target-id` 克隆，而 same-ID 重放也不能把 strict export 或生成的 preflight 当成 opaque 内部依赖证明。
 
 ### 分区设备与能力感知替换
 
@@ -349,7 +357,7 @@ xgg rule validate --body candidate.json --spec-aware
 xgg rule validate --rule-id <rule-id> --spec-aware
 ```
 
-`--rule-id` 模式本身会从已登录 daemon 读取网关规则与可用变量。上述“是否访问 registry 由 `--spec-aware` 决定”只针对 `rule validate`；`rule enable` 对 persisted `deviceOutput` variable ref 另做聚焦、fail-closed 的 spec 证明，只查询实际含 output ref 的 URN，不查询无关旧节点，且 404、网络失败或无效 spec 都会在 enable 写入前停止。`--allow-no-push` waiver 不写入图，因此在线 spec-aware validation 仍会如实报告 no-push；这是有意保留的事实诊断，不代表之前的单次 probe flag 被扩大成持久能力声明。
+`--rule-id` 模式本身会从已登录 daemon 读取网关规则与可用变量。上述“是否访问 registry 由 `--spec-aware` 决定”只针对 `rule validate`；`rule enable` 对 persisted `deviceOutput` variable ref 另做聚焦、fail-closed 的 spec 证明，只查询实际含 output ref 的 URN，不查询无关旧节点，且 404、网络失败或无效 spec 都会在 enable 写入前停止。`--allow-no-push` waiver 不写入图，因此在线 spec-aware validation 仍会把 no-push 报为 error；这是有意保留的事实诊断，不代表之前的单次 probe flag 被扩大成持久能力声明。它也解释了为什么隔离探针必须把该项明确记录为唯一预期例外，而不能宣称 validate clean。
 
 ## 常用命令
 
@@ -430,7 +438,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 - `variable get-config` 读取单个变量的配置；加 `--expect-type number|string` 时成为纯读的存在性/类型断言，missing 或 mismatch 以 `ConfigError` 非零退出，不比较值/显示名，也不做任何写入。`set-config` 只更新显示名，不改类型或当前值，并按其他写命令一样执行 snapshot guard。
 - 变量 scope 默认用 `global`。规则本地变量使用当前规则的 `R<rule-id>`；变量写命令会确认其中的 rule id 确实存在，规则节点也只接受与自身 `--rule-id` 匹配的本地 scope。合法本地 scope 不需要 `--allow-unknown-scope`；跨规则、不存在或自定义 scope 会告警并在严格校验中失败。如果 rule id 含连字符，本地变量 scope 无法按该约定合法创建，建议改用 `global` 或使用纯字母数字 rule id。
 - `rule export` 会用当前表达式解析器回读生成的 `varSetNumber` / `varSetString --expr`；若源图的结构化 elements 无法用 DSL 无损表示（例如变量后紧跟会被吞入变量 ID 的字母或数字常量），导出会以 `ConfigError` 拒绝。请先在源表达式中加入显式分隔符，或改用 `rule view` 的整图 JSON 往返。
-- `rule export/import --target-id` 克隆时只把源规则的 `R<source-id>` 迁移为 `R<target-id>`。脚本先只读断言全部 `global` 依赖的存在性/类型，再预检完整本地变量计划；随后以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备规则内变量。已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前失败，绝不覆盖。兼容的已有本地变量会保留，类型/值/显示名冲突也会在首次写前失败。`global` 不会被创建或改写；预检与后续命令之间仍存在并发漂移窗口。
+- `rule export/import --target-id` 克隆时只把源规则的 `R<source-id>` 迁移为 `R<target-id>`。脚本先只读断言全部可发现的 modeled `global` 依赖存在且类型匹配，再预检完整的已捕获本地变量计划；含 opaque 节点时会因无法证明或改写内部引用而拒绝 clone。随后以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备规则内变量。已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前失败，绝不覆盖。兼容的已有本地变量会保留，类型/值/显示名冲突也会在首次写前失败。`global` 不会被创建或改写；预检与后续命令之间仍存在并发漂移窗口。
 - 在已审计 bundle 的调用面与当前 `xgg` 已建模接口中，未发现“客户端随时读取任意设备实时属性”的通用 RPC。需要观测实时值时，用 `deviceInputSetVar`（变化推送）或 `deviceGetSetVar`（由规则事件触发读取）写入变量，再用 `xgg variable watch --follow` 观察；不要把这个结论外推为所有固件都绝无其他私有接口。
 - `backup local-import` 同时接受完整 version-2 `.bak` 与官方旧版 rules-only 数组；旧版没有变量，解码后规范化为 `variables: {}`。`--confirm-replace-all` 会先删除当前全部规则和变量，再仅重建备份包含的内容，因此导入旧版文件不会保留或重建任何变量。固定先跑 `--dry-run` 并核对 `createVariables` 等计数；应用路径必须有 rollback snapshot，且不应在未授权的家庭网关上做恢复试验。
 - 从历史云备份取得可移植文件时优先用 `backup cloud-export`：它会在同一 mutation lease 内自动 download、确认进度并 generate，再于 lease 释放后原子发布官方 envelope 的 `.bak`，stdout 不包含完整规则/变量。低层 `backup generate` 只适合明确知道同一备份已在网关缓存中的高级流程。
@@ -473,7 +481,7 @@ npm publish release-artifacts/eyaeya-xgg-cli-*.tgz --access public
 
 ## Agent 权威参考
 
-供 AI Agent 操作本 CLI 的完整权威指南（含 25 种可执行卡片 + `nop` 备注节点、pin 颜色规则、变量模型、表达式、调试流程与分级验证边界）见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。
+供 AI Agent 操作本 CLI 的完整权威指南见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。首次设计/改写规则必须按入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或实机写入时再读取对应的 `device-semantics.md`、`recipes.md`、`operations.md`。这套材料覆盖 25 种执行卡片 + `nop`、event/state 图模型、完整 flags/defaults/enums、MIoT label→wire value、复杂 reset/stop 模式和证据分层，并明确禁止复制固定 `GUIDE.md` 中已经过时的节点 JSON。
 
 ## License
 

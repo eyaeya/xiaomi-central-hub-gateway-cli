@@ -96,16 +96,19 @@ Limitations:
     cfg/props keys. Unmodeled future cards are preserved as
     opaque raw nodes and remain valid in strict mode for lossless same-id
     replay; --target-id cloning still rejects them because unknown payloads
-    cannot be remapped safely. Permissive export surfaces warnings on stderr/JSON.
+    cannot be remapped safely. Opaque payload local/global references are not
+    discovered, so strict export or generated preflight does not prove them.
+    Permissive export surfaces warnings on stderr/JSON.
   - varSetNumber / varSetString elements must be losslessly expressible in
     the current --expr DSL. Export fails before returning a script when a
     variable/constant boundary would be absorbed or rejected; add an explicit
     separator in the source expression or use rule view JSON round-trip.
   - Rule-local variables are captured with their current value and display
-    name. Every replay first asserts all global dependencies' existence and
-    number|string type read-only, then preflights the complete local-variable
-    plan. It never compares a global's value/name and never creates or modifies
-    one. Same-id then prepares captured variables with compatibility guards before
+    name. Every replay first asserts all discoverable modeled global
+    dependencies' existence and number|string type read-only, then preflights
+    the complete captured local-variable plan. It never compares a global's
+    value/name and never creates or modifies one. Same-id then prepares
+    captured variables with compatibility guards before
     its first target-graph write. A --target-id clone instead writes the
     disabled empty target with create-only/expect-absent semantics before any
     variable write, then prepares the remapped R<target-id> variables. Thus an
@@ -116,11 +119,12 @@ Limitations:
     the gateway has no replay-wide transaction; per-write snapshots are the
     recovery path.
     --target-id must differ from the source id.
-  - global variables are explicit typed external dependencies: replay verifies
-    existence and type before any target write, but never creates or modifies
-    them. Historical JSON with an untyped global fails closed and must be
-    re-exported; old JSON with no globals remains compatible. Any non-global
-    scope other than R<source-id> is rejected instead of guessed.
+  - Discoverable modeled global variables are explicit typed external
+    dependencies: replay verifies existence and type before any target write,
+    but never creates or modifies them. Historical JSON with an untyped global
+    fails closed and must be re-exported; old JSON with no discovered globals
+    remains compatible. Any non-global scope other than R<source-id> is rejected
+    instead of guessed.
   - All five modeled device-backed node families (deviceInput, deviceGet,
     deviceOutput, deviceInputSetVar, deviceGetSetVar) require the source gateway
     to expose the referenced DID/spec so ids can be reversed to typed names.
@@ -130,9 +134,10 @@ Limitations:
     \`nop\` Quill note, DO have c-shortcut equivalents and round-trip as
     \`rule node add\` commands. Genuinely unknown future node types are retained
     as complete opaque \`rule node add --cfg '<JSON>'\` fallbacks, with their
-    edges restored after every endpoint exists. Same-id replay is lossless;
-    \`--target-id\` cloning is rejected for opaque nodes because their unknown
-    payload may contain rule-local references that cannot be remapped safely.`,
+    edges restored after every endpoint exists. Same-id replay preserves the
+    opaque bytes but cannot prove their internal dependencies; \`--target-id\`
+    cloning is rejected because unknown payloads may contain local or global
+    references that cannot be discovered or remapped safely.`,
     )
     .action(
       wrap('rule.export', async (id: string, opts: ExportOpts) => {
