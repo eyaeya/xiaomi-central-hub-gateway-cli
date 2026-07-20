@@ -66,6 +66,27 @@ function variableGraph(scope) {
   };
 }
 
+function propertyWriteGraph(value) {
+  return {
+    id: '172',
+    nodes: [
+      {
+        id: 'propertywrite',
+        type: 'deviceOutput',
+        cfg: {
+          urn,
+          pos: { x: 0, y: 0, width: 684, height: 204 },
+          name: 'deviceOutput',
+          version: 1,
+        },
+        inputs: { trigger: null },
+        outputs: { output: [] },
+        props: { did: 'dummy-device', siid: 2, piid: 2, value },
+      },
+    ],
+  };
+}
+
 function spec() {
   return {
     type: urn,
@@ -82,6 +103,14 @@ function spec() {
             description: 'On',
             format: 'bool',
             access: ['read', 'notify'],
+          },
+          {
+            iid: 2,
+            type: 'urn:miot-spec-v2:property:ratio:00000007:issue172:1',
+            description: 'Ratio',
+            format: 'double',
+            access: ['read', 'write'],
+            'value-range': [0, 1, 0.25],
           },
         ],
       },
@@ -199,6 +228,38 @@ test('--spec-aware is an explicit public-spec entry while local input stays daem
   assert.equal(requestUrl.searchParams.get('type'), urn);
 });
 
+test('--stdin --spec-aware applies the persisted property-write domain contract with a fake spec', async (t) => {
+  const paths = await fixture(t, 'success');
+
+  const valid = parseSuccess(
+    runCli(
+      ['rule', 'validate', '--stdin', '--spec-aware', '--no-next-hint'],
+      paths,
+      JSON.stringify(propertyWriteGraph(0.5)),
+    ),
+  );
+  assert.deepEqual(valid.issues, []);
+
+  const invalid = runCli(
+    ['rule', 'validate', '--stdin', '--spec-aware', '--no-next-hint'],
+    paths,
+    JSON.stringify(propertyWriteGraph(0.3)),
+  );
+  assert.equal(invalid.status, 2, invalid.stderr);
+  assert.equal(invalid.stderr, '');
+  const payload = JSON.parse(invalid.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(
+    payload.issues.some((entry) =>
+      /property write piid=2.*not aligned.*step 0.25/i.test(entry.message),
+    ),
+    true,
+    JSON.stringify(payload),
+  );
+  const requests = (await readFile(paths.markerPath, 'utf8')).trim().split('\n');
+  assert.equal(requests.length, 2);
+});
+
 test('offline validate reports legacy modeled node ids without rejecting or rewriting them', async (t) => {
   const paths = await fixture(t, 'reject');
   const legacy = {
@@ -264,6 +325,6 @@ test('validate help states the offline contract and explicit spec-aware option',
   assert.match(result.stdout, /public MIoT registry I\/O/i);
   assert.match(
     result.stdout,
-    /action\.in \/ props\.ins index, short-name and numeric-domain checks/i,
+    /deviceOutput property-write and action\.in \/ props\.ins contracts/i,
   );
 });

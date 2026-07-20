@@ -218,7 +218,7 @@ test('unescaped malformed dollars and escaped non-string values still fail close
   );
   await assert.rejects(
     addValue(gateway, 'badNumber', '$$1', 'count'),
-    (error) => error?.code === 'CONFIG' && /requires numeric value/.test(error.message),
+    (error) => error?.code === 'CONFIG' && /requires an exact safe integer/.test(error.message),
   );
   assert.deepEqual(gateway.state.nodes, []);
 });

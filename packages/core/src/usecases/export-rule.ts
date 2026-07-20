@@ -25,7 +25,10 @@ import { isValidVariableIdentifier } from '../schemas/variable-identifier.js';
 import { isValidVariableScopeName } from '../schemas/variable.js';
 import { ConfigError, NotFoundError } from '../transport/errors.js';
 import { getDeviceSpec as fetchDeviceSpec } from './get-device-spec.js';
-import { checkDeviceOutputActionInputContract } from './validate-graph.js';
+import {
+  checkDeviceOutputActionInputContract,
+  checkDeviceOutputPropertyWriteContract,
+} from './validate-graph.js';
 import { scanVariableReference } from './variable-reference.js';
 
 /**
@@ -1197,6 +1200,13 @@ async function renderDeviceOutput(
   } else if (props.piid !== undefined) {
     // F16 property-write shape
     const spec = await ensureSpec(did, deps, specCache);
+    for (const contractIssue of checkDeviceOutputPropertyWriteContract(
+      props,
+      spec,
+      `deviceOutput node ${n.id}.props`,
+    )) {
+      warnings.push(`deviceOutput node ${n.id}: ${contractIssue.message} (${contractIssue.path})`);
+    }
     const propertyName = findPropertyName(spec, Number(props.siid), Number(props.piid));
     if (propertyName === null) {
       flags.push({
