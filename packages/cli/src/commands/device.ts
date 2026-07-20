@@ -17,6 +17,7 @@ import {
   printNextStepHintLine,
   withNextSteps,
 } from '../agent-hints.js';
+import { prepareDeviceSpecOutput } from '../device-spec-output.js';
 import { parsePositiveTimerMs } from '../local-input.js';
 import { type TableColumn, emit, emitList } from '../output.js';
 
@@ -172,7 +173,10 @@ export function deviceCommand(): Command {
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
     .option('--timeout <ms>', 'fetch timeout in milliseconds', '5000')
-    .option('--pretty', 'pretty-print as human-readable summary table')
+    .option(
+      '--pretty',
+      'rule-purpose capability view with semantic labels, selectors, typed domains, and resolved arguments',
+    )
     .addHelpText(
       'after',
       '\nExamples:\n  $ xgg device spec lumi.<DID>\n  $ xgg device spec 12345 --pretty',
@@ -188,57 +192,17 @@ export function deviceCommand(): Command {
         timeoutMs: deps.timeoutMs,
       });
       const hints = buildNextSteps('device.spec', { spec }, opts);
-      if (!opts.pretty) {
+      const prepared = await prepareDeviceSpecOutput(spec, opts.pretty === true, deps.timeoutMs);
+      if (prepared.format === 'json') {
         // F21: wrap spec in `{ok:true, spec}` so callers can `jq '.ok'` the
         // same way they do with device list / device get. The raw spec is
         // still reachable via `.spec.services` etc.
-        const basePayload = { ok: true, spec } as Record<string, unknown>;
+        // Semantic catalogs are deliberately not fetched on this default path.
+        const basePayload = prepared.payload as Record<string, unknown>;
         const payload = nextHintOptedOut(opts) ? basePayload : withNextSteps(basePayload, hints);
         emit(payload, { pretty: false });
       } else {
-        // Pretty-print: per-service tables for properties / actions / events
-        process.stdout.write(`${spec.description} (${spec.type})\n\n`);
-        for (const svc of spec.services) {
-          process.stdout.write(`Service ${svc.iid}: ${svc.description} [${svc.type}]\n`);
-          if (svc.properties && svc.properties.length > 0) {
-            const table = new Table({
-              head: ['iid', 'description', 'format', 'access', 'unit', 'range'],
-              style: { head: [], border: [] },
-            });
-            for (const p of svc.properties) {
-              table.push([
-                String(p.iid),
-                p.description,
-                p.format,
-                p.access.join(', '),
-                p.unit ?? '',
-                p['value-range'] ? p['value-range'].join(', ') : '',
-              ]);
-            }
-            process.stdout.write(`  Properties:\n${table.toString()}\n`);
-          }
-          if (svc.actions && svc.actions.length > 0) {
-            const table = new Table({
-              head: ['iid', 'description', 'in', 'out'],
-              style: { head: [], border: [] },
-            });
-            for (const a of svc.actions) {
-              table.push([String(a.iid), a.description, a.in.join(', '), a.out.join(', ')]);
-            }
-            process.stdout.write(`  Actions:\n${table.toString()}\n`);
-          }
-          if (svc.events && svc.events.length > 0) {
-            const table = new Table({
-              head: ['iid', 'description', 'arguments'],
-              style: { head: [], border: [] },
-            });
-            for (const e of svc.events) {
-              table.push([String(e.iid), e.description, e.arguments ? e.arguments.join(', ') : '']);
-            }
-            process.stdout.write(`  Events:\n${table.toString()}\n`);
-          }
-          process.stdout.write('\n');
-        }
+        process.stdout.write(prepared.text);
       }
       printNextStepHintLine(hints, opts, { contextLabel: `device ${did}` });
     }),

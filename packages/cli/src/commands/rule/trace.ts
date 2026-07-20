@@ -121,6 +121,7 @@ selection, and current-graph/topology-drift metadata.`,
         );
         const deviceGetLabels = await resolveRuleTraceDeviceGetLabels(
           view.nodes.filter((node) => observedInfoNodeIds.has(node.id)),
+          { semanticOptions: { timeoutMs: deps.timeoutMs } },
         );
         const calculation = calculateRuleTrace({
           ruleId: id,
@@ -149,6 +150,8 @@ selection, and current-graph/topology-drift metadata.`,
           calculation.topologyDrift.entryCount,
           calculation.semanticDrift.entryCount,
           deviceGetLabels.specLookup.failureCount,
+          deviceGetLabels.semanticProjection.failureCount,
+          deviceGetLabels.semanticProjection.valueLabelFallbackCatalogCount,
         );
         const payload = {
           ok: true,
@@ -198,12 +201,13 @@ selection, and current-graph/topology-drift metadata.`,
             },
             semantic: {
               boundary:
-                'Bundle getInfo/pin projection; deviceGet uses notify-property instance value-list then built-in bool labels; device multiLanguage/catalog normalization is not reproduced' as const,
+                'Bundle getInfo/pin projection; deviceGet notify-property value labels use the shared best-effort MIoT semantic projection (multiLanguage then normalization then raw, including built-in bool labels); full catalog status is reported separately' as const,
               driftEntryCount: calculation.semanticDrift.entryCount,
               nodeInfoParseFailureCount: calculation.semanticDrift.nodeInfoParseFailureCount,
               incompatibleLinkEntryCount: calculation.semanticDrift.incompatibleLinkEntryCount,
               driftWatchpoints: calculation.semanticDrift.watchpoints,
               specLookup: deviceGetLabels.specLookup,
+              projection: deviceGetLabels.semanticProjection,
             },
           },
         };
@@ -321,6 +325,8 @@ function completenessReasons(
   topologyDriftCount: number,
   semanticDriftCount: number,
   specLookupFailureCount: number,
+  semanticProjectionFailureCount: number,
+  semanticCatalogFallbackCount: number,
 ): string[] {
   const reasons = ['gateway-retention-unknown', 'historical-topology-not-snapshotted'];
   if (fetched.stopReason === 'max-blocks') reasons.push('scan-hit-max-blocks');
@@ -329,6 +335,12 @@ function completenessReasons(
   if (topologyDriftCount > 0) reasons.push('current-graph-topology-drift');
   if (semanticDriftCount > 0) reasons.push('bundle-semantic-drift');
   if (specLookupFailureCount > 0) reasons.push('device-get-spec-lookup-failed-raw-fallback');
+  if (semanticProjectionFailureCount > 0) {
+    reasons.push('device-get-semantic-projection-failed-raw-fallback');
+  }
+  if (semanticCatalogFallbackCount > 0) {
+    reasons.push('device-get-semantic-catalog-fallback');
+  }
   return reasons;
 }
 

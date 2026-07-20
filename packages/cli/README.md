@@ -51,7 +51,7 @@ npx skills add eyaeya/xiaomi-central-hub-gateway-cli
 ## 常用流程
 
 ```bash
-xgg device spec <did>
+xgg device spec <did> --pretty
 xgg rule new --name "<自动化名称>"
 xgg rule node add --rule-id <rule-id> --type <type> ...
 xgg rule edge add --rule-id <rule-id> --from <node:pin> --to <node:pin>
@@ -62,7 +62,9 @@ xgg rule lint --rule-id <rule-id> --strict
 
 只有用户授权运行时才继续 `xgg rule enable <rule-id>`，触发后用 `rule logs` 验收；否则用 `rule view` 确认保持 `enable=false`。
 
-复杂分支、条件或循环可用 `xgg rule trace <rule-id>` 查看按步累积的当前图 node/edge 状态；`--node` / `--edge` / `--watch` 可筛 watchpoint，`--since` / `--until` / `--start-step` / `--end-step` / `--max-steps` 可限定范围，`--next-from` 可导航到下一次变化，`--pretty` 输出紧凑时间线。默认 JSON 含日志分页停止原因、未解析行计数、扫描/选择边界、Bundle 语义丢弃与相对当前图的拓扑漂移，但不回显可能属于其他规则的未解析原文。分页按旧块到新块、块内原序重建且保留合法重复行。节点 info 按 Bundle 逐类型转译；`deviceGet` 按唯一 URN 复用公共 MIoT spec 缓存，notify 属性优先实例 value-list、再用 Bundle 内置 bool 标签，未知值或查询失败时回退 raw，并只报告失败 URN/count、不暴露 DID；设备 multiLanguage/catalog normalization 暂未复刻。trace 是客户端从有界保留日志和当前规则图派生的投影，不是新网关 RPC、设备实时真值或完整执行证明。
+`device spec --pretty` 按自动化用途分组：事件与 notify 属性对应 `deviceInput` / `deviceInputSetVar`，read 属性对应 `deviceGet` / `deviceGetSetVar`，write 属性与 action 对应 `deviceOutput`；每组内部再分标准与 proprietary/vendor，且排除 `device-information` 元数据。property 会完整显示 selector/URN、raw format、UI 投影 dtype、value-list/range，action input 与 event argument 的 PIID 会解析成 property selector/name/type/domain；`action.out` 只显示为不可绑定的 MIoT 元数据，不代表规则图输出 pin。中文语义使用 best-effort 的 Bundle 优先级：值标签 `multiLanguage → normalization → raw`，service/property/event 名称 `multiLanguage → template → raw`，action 名称 `multiLanguage → raw → template`，action input 属性名 `multiLanguage → raw`；目录失败会在 `Catalog status` 明示并回退。跨 service 重复 short-name 会全部保留；按对应 `siid` 传 `--device-siid` 消歧。长行按 120 个终端显示列完整换行，中文、组合字符、emoji 和长 URN 不会误切或截断。省略 `--pretty` 时仍输出原有紧凑 JSON envelope 与 raw spec，且不请求语义目录，供脚本解析。
+
+复杂分支、条件或循环可用 `xgg rule trace <rule-id>` 查看按步累积的当前图 node/edge 状态；`--node` / `--edge` / `--watch` 可筛 watchpoint，`--since` / `--until` / `--start-step` / `--end-step` / `--max-steps` 可限定范围，`--next-from` 可导航到下一次变化，`--pretty` 输出紧凑时间线。默认 JSON 含日志分页停止原因、未解析行计数、扫描/选择边界、Bundle 语义丢弃与相对当前图的拓扑漂移，但不回显可能属于其他规则的未解析原文。分页按旧块到新块、块内原序重建且保留合法重复行。节点 info 按 Bundle 逐类型转译；`deviceGet` 按唯一 URN 复用公共 MIoT spec 与语义目录缓存，只为 notify 属性投影 value label，按 `multiLanguage → normalization → raw` 取值，bool 标签也由共享 projector 生成。spec / projector 失败和逐目录 fallback 会写入 semantic metadata，未知值仍显示 raw，并且只公开 URN、不含 DID。trace 是客户端从有界保留日志和当前规则图派生的投影，不是新网关 RPC、设备实时真值或完整执行证明。
 
 `xgg rule view <rule-id> --pretty` 用稳定、有界的 JSON 型摘要展示每个节点的 `inputs`、`props` 与输出拓扑，便于快速审查；字符串带 JSON 引号，number/boolean/null 保持原生类型，数组/对象结构明确，嵌套标量数组保留前若干实际值，省略时会标出数量。表格使用固定列宽并按终端显示宽度换行或截断，中文、组合字符和 emoji 不会按 JavaScript 字符数误切；用于后续命令的 `nodeId` 与精确节点 `type` 始终无损多行显示，不加省略号。机器处理、编辑重放、读取未知或被摘要省略的字段时，必须改用不带 `--pretty` 的默认无损 JSON。
 
