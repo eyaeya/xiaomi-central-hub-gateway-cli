@@ -144,26 +144,25 @@ test('connectWs rejects text protocol messages', async (t) => {
   await waitForClose(peer);
 });
 
-test('connectWs discards queued messages when the peer closes', async (t) => {
+test('connectWs rejects pending and future receives when the peer closes', async (t) => {
   const { peer, transport } = await openLoopback(t, {
     maxFrameBytes: 32,
     maxQueuedBytes: 64,
     maxQueuedFrames: 4,
   });
 
-  peer.send(Buffer.from([1, 2, 3]));
-  await flushMessages(peer);
+  const pending = transport.receive();
   peer.close();
+  await assert.rejects(pending, expectNetworkError(/ws closed by peer/));
   await waitForClose(peer);
-  // Let the loopback client's corresponding close event run after the server
-  // side completes its close handshake.
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
   await assert.rejects(transport.receive(), expectNetworkError(/ws closed by peer/));
 });
 
 test('connectWs close waits for physical termination and rejects new sends immediately', async (t) => {
   const { peer, transport } = await openLoopback(t);
+  peer.send(Buffer.from([1, 2, 3]));
+  await flushMessages(peer);
+
   let settled = false;
   const closePending = transport.close().then(() => {
     settled = true;
@@ -171,6 +170,7 @@ test('connectWs close waits for physical termination and rejects new sends immed
 
   assert.equal(settled, false, 'close must not settle synchronously before the ws close event');
   assert.throws(() => transport.send(Buffer.from([1])), /ws not open/);
+  await assert.rejects(transport.receive(), expectNetworkError(/ws closed by client/));
   await closePending;
   await waitForClose(peer);
   assert.equal(settled, true);
