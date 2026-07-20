@@ -724,7 +724,12 @@ test('typed and raw backup load keep the lease through terminal progress', async
     const ordered = fixture.trace
       .filter((event) => event.kind === 'gateway' || event.kind === 'release')
       .map((event) => event.method);
-    assert.deepEqual(ordered, ['/api/loadBackup', '/api/getBackupProgress', '$mutation.release']);
+    assert.deepEqual(
+      ordered,
+      mode === 'typed-nested'
+        ? ['/api/downloadBackup', '/api/loadBackup', '/api/getBackupProgress', '$mutation.release']
+        : ['/api/loadBackup', '/api/getBackupProgress', '$mutation.release'],
+    );
   }
 
   const ambiguous = workflowFixture((method) => {
@@ -759,6 +764,51 @@ test('typed and raw backup load keep the lease through terminal progress', async
     ).length,
     1,
   );
+});
+
+test('typed backup load confirms its download before load and never loads after ambiguity', async () => {
+  const asyncDownload = workflowFixture((method) => {
+    if (method === '/api/downloadBackup') return { progress_id: 3 };
+    if (method === '/api/loadBackup') return { progress_id: 7 };
+    return defaultResponse(method);
+  });
+  const completed = await loadBackup({ from: 'fds', backup }, asyncDownload.deps, {
+    includeProgress: true,
+    pollIntervalMs: 1,
+    pollTimeoutMs: 100,
+  });
+  assert.deepEqual(completed, {
+    downloadResult: { progress_id: 3 },
+    downloadProgress: { progress: 100 },
+    result: { progress_id: 7 },
+    progress: { progress: 100 },
+  });
+  const gateway = asyncDownload.trace.filter((event) => event.kind === 'gateway');
+  assert.deepEqual(
+    gateway.map((event) => event.method),
+    ['/api/downloadBackup', '/api/getBackupProgress', '/api/loadBackup', '/api/getBackupProgress'],
+  );
+  assert.equal(new Set(gateway.map((event) => event.leaseId)).size, 1);
+
+  const ambiguousDownload = workflowFixture((method) => {
+    if (method === '/api/downloadBackup') return true;
+    if (method === '/api/loadBackup') throw new Error('load must not run');
+    return defaultResponse(method);
+  });
+  await assert.rejects(
+    loadBackup({ from: 'fds', backup }, ambiguousDownload.deps, {
+      pollIntervalMs: 1,
+      pollTimeoutMs: 100,
+    }),
+    NotConfirmedError,
+  );
+  assert.equal(
+    ambiguousDownload.trace.some(
+      (event) => event.kind === 'gateway' && event.method === '/api/loadBackup',
+    ),
+    false,
+  );
+  assert.equal(ambiguousDownload.trace.filter((event) => event.kind === 'fence').length, 1);
 });
 
 test('backup load converts every post-ack confirmation failure to NOT_CONFIRMED', async () => {
@@ -881,6 +931,10 @@ test('backup load progress at 50 blocks a contender until terminal 100', async (
     path: socketPath,
     handler: async (request) => {
       if (request.method === '$ping') return { host: baseUrl, agentStartedAt: startedAt };
+      if (request.method === '/api/downloadBackup') {
+        trace.push('download');
+        return 0;
+      }
       if (request.method === '/api/loadBackup') {
         trace.push('load');
         return { progress_id: 7 };
@@ -924,7 +978,7 @@ test('backup load progress at 50 blocks a contender until terminal 100', async (
 
   allowTerminal();
   await Promise.all([restore, contender]);
-  assert.deepEqual(trace, ['load', 'progress:50', 'progress:100', 'contender-write']);
+  assert.deepEqual(trace, ['download', 'load', 'progress:50', 'progress:100', 'contender-write']);
 });
 
 test('harvestBaseline waits for download cache completion before generate', async (t) => {

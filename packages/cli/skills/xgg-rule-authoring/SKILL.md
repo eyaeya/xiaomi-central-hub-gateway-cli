@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-7f5f973ce59285ea1f986070bb84e3c99b743208ae6e9bba7768e0f182d08766 -->
+<!-- xgg-skill-content-build: sha256-f818f33e6f81856546397d079c706af0005e29a5f21c0bbd14cac191f48b7846 -->
 
 # xgg 自动化编写 Skill
 
@@ -424,7 +424,7 @@ xgg backup local-import --input ./gateway-rules.bak \
 xgg backup list --from fds --pretty             # 列云备份
 xgg backup create --from fds --file-name "<名字>"   # 网关会给名字追加 .bak 后缀
 xgg backup cloud-export --from fds --did <did> --ts <ts> --file-name "<名字>" --output ./history.bak --snapshots-dir "$PWD/snapshots"
-xgg backup download --from fds --did <did> --ts <ts> --file-name "<名字>"   # 三项均来自 backup list；generate/load 前必须先 download
+xgg backup download --from fds --did <did> --ts <ts> --file-name "<名字>"   # 三项均来自 backup list；低层 generate 前必须先 download
 xgg backup progress --from fds --progress-id <id>
 xgg backup generate --from fds --did <did> --ts <ts> --file-name "<名字>"
 xgg backup load --from fds --did <did> --ts <ts> --file-name "<名字>" --snapshots-dir "$PWD/snapshots"
@@ -438,9 +438,9 @@ xgg backup create --from fds --file-name "<名字>" --wait   # 轮询进度到 1
 
 `--from fds` 指小米云存储。Agent 模式同样受快照目录约束。
 
-`generate` / `load` 前必须先对完全相同的 `{did,ts,file-name}` 执行 `download`。`load` 是全量恢复，`delete` 永久删除云备份，`config set` 改自动备份策略；三者都必须有用户明确授权和 rollback snapshot，不能仅为探测能力而执行。
+低层 `generate` 前必须先对完全相同的 `{did,ts,file-name}` 执行 `download`。`load` 会在一个 mutation lease 内自动 download、等缓存进度到 100%，再调用 load 并等待可确认的恢复终态；下载 ACK/进度含糊时不会进入 load，load 只返回 `{}` 等无进度 ACK 时仍按 `NOT_CONFIRMED` 封锁，不能把网页固定等待几秒当成完成。`load` 是全量恢复，`delete` 永久删除云备份，`config set` 改自动备份策略；三者都必须有用户明确授权和 rollback snapshot，不能仅为探测能力而执行。
 
-`create` / `download` 默认原样返回网关 ACK/result；可轮询句柄可能是 bare number、`progress_id` 或 `progressId`，精确空对象 `{}` 表示同步完成，其他无句柄 ACK 不能证明完成。加 `--wait` 才会抽取句柄、轮询到 100% 并在 JSON 输出里附带统一的 `progress`；句柄 `0`（同步完成或命中网关本地缓存）立即映射为 100%。`load` 是 restore，ACK 只表示已接受，因此无论是否带 `--wait` 都会在 mutation workflow 租约内等到 100% 后才返回；`--wait` 只额外把 terminal `progress` 写入输出。可选 `--poll-interval-ms`（默认 1000）调轮询间隔、`--poll-timeout-ms`（默认 60000）调超时。
+`create` / `download` 默认原样返回网关 ACK/result；可轮询句柄可能是 bare number、`progress_id` 或 `progressId`，精确空对象 `{}` 表示同步完成，其他无句柄 ACK 不能证明完成。加 `--wait` 才会抽取句柄、轮询到 100% 并在 JSON 输出里附带统一的 `progress`；句柄 `0`（同步完成或命中网关本地缓存）立即映射为 100%。`load` 自动执行的下载终态摘要固定输出为 `downloadResult` / `downloadProgress`；load ACK 只表示已接受，因此无论是否带 `--wait` 都会在同一 mutation workflow 租约内等到 100% 后才返回，`--wait` 只额外把 load 的 terminal `progress` 写入输出。可选 `--poll-interval-ms`（默认 1000）同时作用于下载与恢复轮询，`--poll-timeout-ms`（默认 60000）给每个阶段独立的超时预算。
 
 ## 十一、常见踩坑
 

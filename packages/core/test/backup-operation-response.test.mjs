@@ -100,6 +100,23 @@ function depsReturning(response) {
   };
 }
 
+function depsReturningForLoad(response) {
+  const deps = depsReturning(response);
+  const makeClient = deps.ipcClient;
+  return {
+    ...deps,
+    ipcClient: (...args) => {
+      const client = makeClient(...args);
+      const request = client.request;
+      return {
+        ...client,
+        request: (method, params) =>
+          method === '/api/downloadBackup' ? Promise.resolve(0) : request(method, params),
+      };
+    },
+  };
+}
+
 test('BackupOperationResponse accepts every documented response variant', () => {
   for (const variant of validVariants) {
     const parsed = BackupOperationResponse.safeParse(variant.value);
@@ -134,7 +151,7 @@ test('backup operation usecases preserve every documented response variant', asy
 
 test('loadBackup preserves progress responses only after terminal confirmation', async () => {
   for (const variant of validVariants.filter((entry) => entry.progressId !== null)) {
-    const result = await loadOperation.invoke(depsReturning(variant.value));
+    const result = await loadOperation.invoke(depsReturningForLoad(variant.value));
     assert.deepEqual(result, variant.value, variant.name);
   }
 });
@@ -144,7 +161,10 @@ test('loadBackup fences acknowledgement variants without a progress handle', asy
     ...validVariants.filter((entry) => entry.progressId === null),
     ...unconfirmableProgressHandles,
   ]) {
-    await assert.rejects(loadOperation.invoke(depsReturning(variant.value)), NotConfirmedError);
+    await assert.rejects(
+      loadOperation.invoke(depsReturningForLoad(variant.value)),
+      NotConfirmedError,
+    );
   }
 });
 
@@ -165,7 +185,7 @@ test('backup create/download reject malformed progress before wait handling', as
 test('loadBackup classifies malformed acknowledged responses as NOT_CONFIRMED', async () => {
   for (const variant of malformedObjects) {
     await assert.rejects(
-      loadOperation.invoke(depsReturning(variant.value)),
+      loadOperation.invoke(depsReturningForLoad(variant.value)),
       (error) =>
         error instanceof NotConfirmedError &&
         error.details?.phase === 'ack-parse' &&

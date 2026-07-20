@@ -209,11 +209,16 @@ async function ensureBackupDownloadedWithinWorkflow(
   return { result, progress };
 }
 
+interface BackupLoadTerminalCompletion {
+  result: BackupOperationResponse;
+  progress: BackupProgressResponse;
+}
+
 async function loadBackupWithinWorkflow(
   input: BackupTargetInput,
   deps: ResourceDeps,
   opts: LoadBackupOptions,
-): Promise<BackupLoadCompletion> {
+): Promise<BackupLoadTerminalCompletion> {
   const raw = await callBackup(
     deps,
     '/api/loadBackup',
@@ -273,11 +278,14 @@ async function loadBackupWithinWorkflow(
 }
 
 /**
- * Restore a backup and keep the mutation workflow leased until the gateway
- * reports terminal progress. The initial response is only an acknowledgement;
- * releasing after it would let a later mutation race an unfinished restore.
+ * Restore a backup through the production Bundle's complete workflow and keep
+ * one mutation lease from cache download through terminal restore progress.
+ * Both download and load responses are acknowledgements; releasing after
+ * either one would let a later mutation race unfinished gateway work.
  */
 export interface BackupLoadCompletion {
+  downloadResult: BackupOperationResponse;
+  downloadProgress: BackupProgressResponse;
   result: BackupOperationResponse;
   progress: BackupProgressResponse;
 }
@@ -304,12 +312,15 @@ export async function loadBackup(
 ): Promise<BackupOperationResponse | BackupLoadCompletion> {
   targetRequest(input, 'BackupLoad');
   assertBackupPollOptions(opts);
-  const completion = await withResourceMutationWorkflow(deps, 'backup.load', () =>
-    loadBackupWithinWorkflow(input, deps, {
+  const completion = await withResourceMutationWorkflow(deps, 'backup.load', async () => {
+    const { result: downloadResult, progress: downloadProgress } =
+      await ensureBackupDownloadedWithinWorkflow(input, deps, opts, 'backup.load.download');
+    const load = await loadBackupWithinWorkflow(input, deps, {
       ...(opts.pollIntervalMs !== undefined && { pollIntervalMs: opts.pollIntervalMs }),
       ...(opts.pollTimeoutMs !== undefined && { pollTimeoutMs: opts.pollTimeoutMs }),
-    }),
-  );
+    });
+    return { downloadResult, downloadProgress, ...load };
+  });
   return opts.includeProgress === true ? completion : completion.result;
 }
 
