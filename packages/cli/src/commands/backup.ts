@@ -289,7 +289,7 @@ export function backupCommand(): Command {
   addGatewayOptions(
     cmd
       .command('local-import')
-      .description('Validate/plan or replace all rules and variables from a local .bak')
+      .description('Validate/plan or replace from a current or legacy official local .bak')
       .requiredOption('--input <path>', 'source .bak path')
       .option('--dry-run', 'report the complete live delete/create plan without writing')
       .option(
@@ -302,7 +302,7 @@ export function backupCommand(): Command {
       )
       .addHelpText(
         'after',
-        '\nExamples:\n  $ xgg backup local-import --input ./gateway-rules.bak --dry-run\n  $ xgg backup local-import --input ./gateway-rules.bak --confirm-replace-all --snapshots-dir ./snapshots/\n\nImport verifies SHA-256, bounded deflate, payload schema, variables, and every rule before session access. Applying always snapshots first, holds one mutation lease, and stops on the first failure.',
+        '\nExamples:\n  $ xgg backup local-import --input ./gateway-rules.bak --dry-run\n  $ xgg backup local-import --input ./gateway-rules.bak --confirm-replace-all --snapshots-dir ./snapshots/\n\nImport accepts complete version-2 backups and official legacy rules-only arrays. A legacy array contains no variables: apply still deletes every current rule and variable, then recreates only its rules. Import verifies SHA-256, bounded deflate, payload schema, variables, and every rule before session access. Applying always snapshots first, holds one mutation lease, and stops on the first failure.',
       ),
   ).action(
     wrap('backup.local-import', async (opts: LocalImportOpts) => {

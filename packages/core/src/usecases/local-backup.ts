@@ -11,6 +11,7 @@ import type { ResourceDeps } from '../resources/index.js';
 import { getRule, listRules } from '../resources/rules.js';
 import { listScopes, listVariables } from '../resources/variables.js';
 import {
+  LegacyLocalBackupPayload,
   type LocalBackupPayload,
   LocalBackupPayload as LocalBackupPayloadSchema,
 } from '../schemas/backup.js';
@@ -102,7 +103,10 @@ export function encodeLocalBackup(input: LocalBackupPayload): Buffer {
   return Buffer.concat([envelope, digest]);
 }
 
-/** Verify digest first, then bounded-inflate and validate the version-2 payload. */
+/**
+ * Verify digest first, then bounded-inflate and normalize either official
+ * local-backup generation: the legacy rules-only array or version 2.
+ */
 export function decodeLocalBackup(
   input: Uint8Array,
   limits: InnerJsonLimits = {},
@@ -110,7 +114,7 @@ export function decodeLocalBackup(
   const bytes = Buffer.from(input);
   if (bytes.length <= LENGTH_PREFIX_BYTES + DIGEST_BYTES) {
     throw new SchemaError('local backup is too short', {
-      format: 'xiaomi-local-bak-v2',
+      format: 'xiaomi-local-bak',
       bytes: bytes.length,
     });
   }
@@ -120,7 +124,7 @@ export function decodeLocalBackup(
   const expectedDigest = createHash('sha256').update(envelope).digest();
   if (!timingSafeEqual(suppliedDigest, expectedDigest)) {
     throw new SchemaError('local backup digest mismatch', {
-      format: 'xiaomi-local-bak-v2',
+      format: 'xiaomi-local-bak',
     });
   }
 
@@ -129,9 +133,24 @@ export function decodeLocalBackup(
     raw = unpackInnerJson(envelope, limits);
   } catch (error) {
     throw new SchemaError('local backup deflate payload is invalid', {
-      format: 'xiaomi-local-bak-v2',
+      format: 'xiaomi-local-bak',
       cause: error instanceof Error ? error.message : String(error),
     });
+  }
+  if (Array.isArray(raw)) {
+    const legacyRules = parseOrThrow(LegacyLocalBackupPayload, raw, 'LegacyLocalBackupPayload');
+    return parseOrThrow(
+      LocalBackupPayloadSchema,
+      {
+        version: 2,
+        rules: legacyRules.map((rule) => ({
+          ...rule,
+          id: rule.id ?? rule.cfg.id,
+        })),
+        variables: {},
+      },
+      'LocalBackupPayload',
+    );
   }
   return parseOrThrow(LocalBackupPayloadSchema, raw, 'LocalBackupPayload');
 }
