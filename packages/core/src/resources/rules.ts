@@ -28,7 +28,11 @@ import {
   parseSafeIntegerDecimalLiteral,
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
-import { type DurationRange, parseDurationLiteral } from '../schemas/nodes/duration.js';
+import {
+  type CanonicalDurationUnit,
+  type DurationRange,
+  parseDurationLiteral,
+} from '../schemas/nodes/duration.js';
 import { NodeUnion, NopContents, type NopDeltaOperation } from '../schemas/nodes/index.js';
 import {
   GraphSetRequest,
@@ -3433,15 +3437,15 @@ function parseDurationOrThrow(
   raw: string | undefined,
   flag: string,
   range: DurationRange = 'positive',
-): { unit: 'ms' | 's' | 'm'; value: number; ms: number } {
+): { unit: CanonicalDurationUnit; value: number; ms: number } {
   if (raw === undefined) {
-    throw new ConfigError(`${flag} is required (examples: 500ms, 5s, 2m)`);
+    throw new ConfigError(`${flag} is required (examples: 500ms, 5s, 2min, 1hour)`);
   }
   const duration = parseDurationLiteral(raw, range);
   if (duration === null) {
     const rangeDescription = range === 'integer' ? 'an' : 'a positive';
     throw new ConfigError(
-      `${flag} must be ${rangeDescription} integer duration ending in ms, s, or m`,
+      `${flag} must be ${rangeDescription} integer duration ending in ms, s, min, or hour (m/h aliases are accepted)`,
     );
   }
   return { unit: duration.unit, value: duration.value, ms: duration.milliseconds };
@@ -3889,21 +3893,21 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
           '--sunrise / --sunset require --latitude <DEG> --longitude <DEG> (current xgg does not auto-load location)',
         );
       }
-      const offsetSec = (shortcut.offsetMin ?? 0) * 60;
+      const offsetMinutes = shortcut.offsetMin ?? 0;
       return {
         id,
         type: 'alarmClock',
         cfg: {
           ...baseCfg('alarmClock'),
-          happenType: 'now',
-          tempOffset: 0,
+          happenType: offsetMinutes < 0 ? 'before' : offsetMinutes > 0 ? 'after' : 'now',
+          tempOffset: Math.abs(offsetMinutes),
         },
         inputs: {},
         outputs: { output: [] },
         props: {
           type: 'sunset',
           isSunset: shortcut.sunset === true,
-          offset: offsetSec,
+          offset: offsetMinutes,
           latitude: shortcut.latitude,
           longitude: shortcut.longitude,
           filter,

@@ -666,11 +666,11 @@ export function attachNodeAdd(cmd: Command): void {
     .option('--inputs <N>', 'logicAnd/logicOr/signalOr input count (default 2)', Number.parseInt)
     .option(
       '--duration <S>',
-      'delay/statusLast/eventSequence duration (delay: integer; others: positive integer; unit ms|s|m)',
+      'delay/statusLast/eventSequence duration (delay: integer; others: positive integer; canonical unit ms|s|min|hour; m/h aliases accepted)',
     )
     .option(
       '--interval <S>',
-      'loop interval (gateway-compatible integer + ms|s|m, e.g. 0ms, 30s, 1m)',
+      'loop interval (gateway-compatible integer + canonical ms|s|min|hour; m/h aliases accepted)',
     )
     .option('--start <HH:MM[:SS]>', 'timeRange start time')
     .option('--end <HH:MM[:SS]>', 'timeRange end time')

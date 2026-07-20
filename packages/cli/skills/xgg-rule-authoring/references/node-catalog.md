@@ -198,5 +198,7 @@ pin 颜色有 event、state、event|state。只有源输出可以是 event|state
 日落：
 
 ```json
-{"type":"sunset","isSunset":true,"offset":-1800,"latitude":31.2,"longitude":121.4,"filter":{"day":[1,2,3,4,5]}}
+{"type":"sunset","isSunset":true,"offset":-30,"latitude":31.2,"longitude":121.4,"filter":{"day":[1,2,3,4,5]}}
 ```
+
+`props.offset` 是 signed minutes；上例表示日落前 30 分钟，不是秒或毫秒。

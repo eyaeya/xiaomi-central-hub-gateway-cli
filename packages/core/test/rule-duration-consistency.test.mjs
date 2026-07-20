@@ -110,14 +110,14 @@ function errorIssues(issues) {
   return issues.filter((issue) => issue.severity === 'error');
 }
 
-test('all duration nodes accept exact ms, s, and m representations', async () => {
+test('all duration nodes accept exact canonical ms, s, min, and hour representations', async () => {
   const nodes = [
     durationNode('delay', 'delay-ms', 'ms', 500, 500),
     durationNode('statusLast', 'status-s', 's', 5, 5_000),
-    durationNode('loop', 'loop-m', 'm', 2, 120_000),
+    durationNode('loop', 'loop-min', 'min', 2, 120_000),
     onLoad('event-one', ['sequence.input1']),
     onLoad('event-two', ['sequence.input2']),
-    durationNode('eventSequence', 'sequence', 's', 5, 5_000),
+    durationNode('eventSequence', 'sequence', 'hour', 2, 7_200_000),
   ];
 
   for (const node of nodes.filter((candidate) => candidate.type !== 'onLoad')) {
@@ -130,12 +130,29 @@ test('all duration nodes accept exact ms, s, and m representations', async () =>
   assert.deepEqual(errorIssues(await validateGraph({ graph: { id: 'rule-1', nodes } })), []);
 });
 
+test('existing raw m nodes remain valid as a legacy read-compatibility path', async () => {
+  const nodes = [
+    durationNode('delay', 'delay-m', 'm', 2, 120_000),
+    durationNode('statusLast', 'status-m', 'm', 2, 120_000),
+    durationNode('loop', 'loop-m', 'm', 2, 120_000),
+    onLoad('event-one', ['sequence.input1']),
+    onLoad('event-two', ['sequence.input2']),
+    durationNode('eventSequence', 'sequence', 'm', 2, 120_000),
+  ];
+
+  for (const node of nodes.filter((candidate) => candidate.type !== 'onLoad')) {
+    assert.equal(nodeSchemaForType(node.type).safeParse(node).success, true, node.type);
+  }
+  assert.deepEqual(errorIssues(lintGraph({ graph: { id: 'rule-1', nodes }, strict: true })), []);
+  assert.deepEqual(errorIssues(await validateGraph({ graph: { id: 'rule-1', nodes } })), []);
+});
+
 test('all duration nodes reject display/runtime mismatches with both values named', async () => {
   const cases = [
-    durationNode('delay', 'delay', 'm', 5, 1_000),
+    durationNode('delay', 'delay', 'min', 5, 1_000),
     durationNode('statusLast', 'status', 's', 5, 1_000),
-    durationNode('loop', 'loop', 'm', 2, 1_000),
-    durationNode('eventSequence', 'sequence', 's', 5, 1_000),
+    durationNode('loop', 'loop', 'hour', 2, 1_000),
+    durationNode('eventSequence', 'sequence', 'min', 5, 1_000),
   ];
 
   for (const node of cases) {
@@ -166,7 +183,7 @@ test('all duration nodes reject display/runtime mismatches with both values name
 
 test('duration display fields reject unsupported units and invalid numeric values', () => {
   const cases = [
-    { field: 'unit', value: 'h', expected: /ms.*s.*m/ },
+    { field: 'unit', value: 'h', expected: /ms.*s.*min.*hour/ },
     { field: 'value', value: Number.POSITIVE_INFINITY, expected: /finite/i },
     { field: 'value', value: 1.5, expected: /integer/i },
   ];
@@ -199,7 +216,7 @@ test('zero remains compatible only for delay and loop', () => {
 
 test('setGraph and enableRule reject a mismatch before any write RPC', async () => {
   const id = 'rule-1';
-  const mismatch = durationNode('delay', 'wait', 'm', 5, 1_000);
+  const mismatch = durationNode('delay', 'wait', 'min', 5, 1_000);
   const setFake = fakeDeps(() => {
     throw new Error('unexpected RPC');
   });
@@ -278,23 +295,62 @@ function durationState(nodes) {
   }));
 }
 
-test('export replay preserves display and runtime values for all duration nodes', async () => {
+test('duration shortcut synthesis accepts m/h aliases but writes canonical min/hour cfg', async () => {
+  const id = 'rule-1';
+  const gateway = createStatefulGateway(id);
+  const cases = [
+    {
+      shortcut: { type: 'delay', id: 'delay-alias-m', duration: '2m' },
+      expected: { unit: 'min', value: 2, props: { timeout: 120_000 } },
+    },
+    {
+      shortcut: { type: 'statusLast', id: 'status-hour', duration: '1hour' },
+      expected: { unit: 'hour', value: 1, props: { timeout: 3_600_000 } },
+    },
+    {
+      shortcut: { type: 'loop', id: 'loop-min', interval: '3min' },
+      expected: { unit: 'min', value: 3, props: { interval: 180_000 } },
+    },
+    {
+      shortcut: { type: 'eventSequence', id: 'sequence-alias-h', duration: '2h' },
+      expected: { unit: 'hour', value: 2, props: { timeout: 7_200_000 } },
+    },
+  ];
+
+  for (const { shortcut } of cases) {
+    await addNode({ ruleId: id, shortcut, varCheck: false }, gateway.deps);
+  }
+
+  assert.deepEqual(
+    durationState(gateway.state.nodes),
+    cases.map(({ shortcut, expected }) => ({
+      id: shortcut.id,
+      type: shortcut.type,
+      cfg: { unit: expected.unit, value: expected.value },
+      props: expected.props,
+    })),
+  );
+});
+
+test('export replay preserves canonical display units and runtime milliseconds', async () => {
   const id = 'rule-1';
   const sourceNodes = [
     durationNode('delay', 'delay-ms', 'ms', 500, 500),
     durationNode('statusLast', 'status-s', 's', 5, 5_000),
-    durationNode('loop', 'loop-m', 'm', 2, 120_000),
-    durationNode('eventSequence', 'sequence-s', 's', 5, 5_000),
-    durationNode('delay', 'delay-zero', 's', 0, 0),
-    durationNode('loop', 'loop-zero', 'm', 0, 0),
-    durationNode('delay', 'delay-negative', 's', -2, -2_000),
-    durationNode('loop', 'loop-negative', 'ms', -3, -3),
+    durationNode('loop', 'loop-min', 'min', 2, 120_000),
+    durationNode('eventSequence', 'sequence-hour', 'hour', 2, 7_200_000),
+    durationNode('delay', 'delay-zero', 'min', 0, 0),
+    durationNode('loop', 'loop-zero', 'hour', 0, 0),
+    durationNode('delay', 'delay-negative', 'min', -2, -120_000),
+    durationNode('loop', 'loop-negative', 'hour', -3, -10_800_000),
     durationNode('delay', 'delay-exponent', 'ms', 1e21, 1e21),
   ];
   const gateway = createStatefulGateway(id);
   const exported = await exportRuleFromView(
     { id, cfg: ruleSummary(id), nodes: sourceNodes },
     gateway.deps,
+    undefined,
+    true,
   );
 
   for (const command of exported.commands) {
@@ -310,4 +366,30 @@ test('export replay preserves display and runtime values for all duration nodes'
   }
 
   assert.deepEqual(durationState(gateway.state.nodes), durationState(sourceNodes));
+});
+
+test('export replay upgrades a legacy raw m node to canonical min cfg', async () => {
+  const id = 'rule-1';
+  const sourceNode = durationNode('delay', 'legacy-m', 'm', 2, 120_000);
+  const gateway = createStatefulGateway(id);
+  const exported = await exportRuleFromView(
+    { id, cfg: ruleSummary(id), nodes: [sourceNode] },
+    gateway.deps,
+  );
+  const command = exported.commands.find((candidate) => candidate.kind === 'node-add');
+  assert.ok(command);
+
+  await addNode(
+    { ruleId: id, shortcut: shortcutFromExport(command), varCheck: false },
+    gateway.deps,
+  );
+
+  assert.deepEqual(durationState(gateway.state.nodes), [
+    {
+      id: 'legacy-m',
+      type: 'delay',
+      cfg: { unit: 'min', value: 2 },
+      props: { timeout: 120_000 },
+    },
+  ]);
 });
