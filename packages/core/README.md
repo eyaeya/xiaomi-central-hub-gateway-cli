@@ -76,6 +76,8 @@ const specAwareIssues = await validateGraph({
 
 在线变量校验通过 `listAvailVars` 显式注入清单；每项必须保留完整的 `{ scope, id, type: 'number' | 'string' }`。校验器按精确 scope/id 判断存在性，并在所有可判定的引用点核对实际类型。省略 callback 时仍执行合法 scope 和本地图结构检查，但不会假装知道变量是否存在或是什么类型。`exportRuleFromView(..., strictRoundtrip=true)` 会读取源网关规则内与 global 变量的实际类型，在生成任何 staging 脚本前拒绝路径化 mismatch 或缺失 global；permissive export 保留 warning。
 
+`createRule()` 若由 SDK 调用方直接携带初始变量卡，也会在首笔 `/api/setGraph` 前执行同一在线类型门禁；CLI 的空图 `rule new` 不增加这次预读取。只有明确的 raw/restore 流程才应传 `CreateRuleOptions.varCheck: false`。
+
 `getDeviceSpec` 会复核 property 卡的 notify/read/write access、dtype/domain 与 action input 契约。若调用方还有目标网关设备清单，可同时注入 `getDevice(did)`，对 `deviceInput` / `deviceInputSetVar` property/event push source 追加实例级 `pushAvailable` 诊断；没有该回调时不得把离线结果表述成已证明 push 可用。`AddNodeShortcut.allowNoPush: true` 仅是本次 typed add 的 transient runtime-probe intent，不持久化、不绕过任何 property access；后续带 `getDevice` 的 `validateGraph` 会继续如实报告 no-push。preload 也只控制启用时首次查询/评估，不改变 notify/read 资格。
 
 spec registry 的 404 会返回 warning，表示该 URN 的外部检查被跳过；网络/超时/5xx 或 schema 失败会返回独立 error issue。两者都不会中止图遍历，因此同一次结果仍包含已经发现的本地问题。`validateGraphOrThrow` 会在收集完整 issue 列表后，按既有契约对第一个 error 抛出 `ConfigError`。

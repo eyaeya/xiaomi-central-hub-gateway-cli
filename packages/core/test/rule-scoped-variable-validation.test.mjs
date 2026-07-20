@@ -545,9 +545,60 @@ test('rule scope bootstrap shares the two known missing-scope classifications', 
   });
 
   await createRule({ id: ruleId, nodes: [], cfg: ruleSummary() }, deps);
+  assert.equal(calls[0]?.method, '/api/setGraph');
   assert.deepEqual(
     calls.filter((call) => call.method === '/api/createVar').map((call) => call.params.scope),
     [localScope, 'global'],
+  );
+});
+
+test('createRule checks variable existence and actual type before its first graph write', async () => {
+  const ref = varChange('global');
+  const cases = [
+    { name: 'missing', globals: {}, message: /卡片变量丢失: global\.same/ },
+    {
+      name: 'wrong type',
+      globals: { same: { ...variableEntry, type: 'string', value: 'wrong' } },
+      message: /卡片变量类型不匹配: global\.same is stored as "string".*requires "number"/,
+    },
+  ];
+
+  for (const current of cases) {
+    const { deps, calls } = fakeDeps((method, params) => {
+      if (method === '/api/getVarList') {
+        return params.scope === 'global' ? current.globals : {};
+      }
+      if (method === '/api/setGraph') return null;
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+
+    await assert.rejects(
+      createRule({ id: ruleId, nodes: [ref], cfg: ruleSummary() }, deps),
+      (error) => error?.code === 'CONFIG' && current.message.test(error.message),
+      current.name,
+    );
+    assert.equal(
+      calls.some((call) => call.method === '/api/setGraph'),
+      false,
+      current.name,
+    );
+  }
+});
+
+test('createRule keeps an explicit raw/restore opt-out for initial variable cards', async () => {
+  const ref = varChange('global');
+  const { deps, calls } = fakeDeps((method) => {
+    if (method === '/api/setGraph') return null;
+    throw new Error(`unexpected RPC: ${method}`);
+  });
+
+  await createRule({ id: ruleId, nodes: [ref], cfg: ruleSummary() }, deps, {
+    varCheck: false,
+    skipScopeBootstrap: true,
+  });
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ['/api/setGraph'],
   );
 });
 
