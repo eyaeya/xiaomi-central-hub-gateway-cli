@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-02ac5949b35cf3f0b4d68e21bbea3ebc8a60e1a72b89698dfad18d3713004a25 -->
+<!-- xgg-skill-content-build: sha256-4f8c2403410bf9b04e8da0722545193ae0cd0affc3bccc4b17578ad6593010c4 -->
 
 # xgg 自动化编写 Skill
 
@@ -199,8 +199,8 @@ xgg rule lint --rule-id <rid> --strict                          # 边拓扑 + pi
 
 1. **设备参数：** `xgg device spec <did> --pretty`。从 `Properties` 选 `--device-property`，`Actions` 选 `--device-action`，`Events` 选 `--device-event`。`deviceInput` 的 property/event 模式严格二选一；event 模式只用 `--event-filter*` 比较事件参数，不能混入 `--op`、`--threshold*`、`--property-*` 或 `--force-out-of-range` 这类 property 比较 flag。
 2. **CLI shortcut 参数：** `xgg rule node add --help`。这是各卡片**参数名**的当前事实来源；25 种执行卡片和 `nop` 都有 shortcut，包括 `--type eventSequence --duration 5s`、`--type register`、`--type modeSwitch --outputs N`。
-3. **学已有规则：** `xgg rule view <id> --pretty` 看节点 `props/inputs/outputs`；`xgg rule export <id> --format shell` 反译成可复现的 CLI 命令。
-4. **没有 shortcut、要保留额外字段、或一次原子推整张图时才用 JSON。** `rule node add --cfg` 接受完整 `{cfg,inputs,outputs,props}`（推荐）或历史 cfg-only 形状；后者不能替代需要完整四段的卡片。`rule set --body <整图JSON文件>` 原子写整图。不要手拼残缺 payload；先从 `rule view` 取得现有全量 JSON，或按 [node catalog](references/node-catalog.md) 的 envelope/逐类结构构造，再用离线 `rule validate --body` 检查。设备卡 cfg 必须带 `urn`。
+3. **学已有规则：** `xgg rule view <id> --pretty` 用有界、稳定排序的 JSON 型摘要看节点 `props/inputs/outputs`；字符串带引号，number/boolean/null 保持原生类型，数组/对象结构明确，嵌套标量数组保留前若干实际值，省略时会标出数量。固定列宽按终端显示宽度处理中文、组合字符和 emoji；`nodeId` 与精确节点 `type` 无损多行显示、不丢字符，供后续命令复用。它只供紧凑审查，不是可重放格式。`xgg rule export <id> --format shell` 可反译成可复现的 CLI 命令。
+4. **机器处理、没有 shortcut、要保留额外字段、或一次原子推整张图时才用默认 JSON。** 不带 `--pretty` 的 `rule view` 是包含未知/扩展字段的无损来源；不要解析 pretty 表格。`rule node add --cfg` 接受完整 `{cfg,inputs,outputs,props}`（推荐）或历史 cfg-only 形状；后者不能替代需要完整四段的卡片。`rule set --body <整图JSON文件>` 原子写整图。不要手拼残缺 payload；先从 `rule view` 取得现有全量 JSON，或按 [node catalog](references/node-catalog.md) 的 envelope/逐类结构构造，再用离线 `rule validate --body` 检查。设备卡 cfg 必须带 `urn`。
 
 ### 规则导出、导入与克隆
 

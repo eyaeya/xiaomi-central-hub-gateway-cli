@@ -64,6 +64,8 @@ xgg rule trace <rule-id> --node <node-id> --pretty
 xgg rule view <rule-id> --pretty
 ```
 
+`rule view --pretty` 的节点表会以稳定顺序展示有界的 `inputs`、`props` 与输出拓扑摘要：字符串保留 JSON 引号，number/boolean/null 保留原生类型，数组与对象保持明确结构，嵌套的标量数组也会保留前若干实际值；过长内容会用带省略数量的标记说明。表格使用固定列宽并按终端显示宽度换行或截断，中文、组合字符和 emoji 不会按 JavaScript 字符数误切；用于后续命令的 `nodeId` 与精确节点 `type` 始终无损多行显示，不加省略号。它适合人工或 Agent 快速审查，但不是可重放格式；需要完整字段、未知扩展字段或机器处理时，使用不带 `--pretty` 的默认无损 JSON。
+
 Agent 可以把已解析的日志项与规则图 readback、可控触发结果结合起来，区分**已触发但动作没执行**、**条件没满足走了另一分支**等情况。定位之后，Agent 直接修改规则图，重新 `validate`、`lint --strict` 并按需要 `enable`，再结合 readback 与新的可观测结果确认修复——整个排障过程有据可查，而不是反复试错。
 
 > `xgg rule logs` 输出的是从有界网关日志拉取中**成功解析的日志项**，再按 rule id / 时间 / level 过滤并应用 `--tail`。它不暴露未解析行、游标是否回绕或扫描是否完整，还受 `--max-blocks`、网关保留窗口和 tail 上限影响。因此空结果不能单独证明「从未触发」；它适合与规则图 readback 和可控触发证据结合排障，也不必和网页日志面板逐行对应。
