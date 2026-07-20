@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { inflateRawSync } from 'node:zlib';
+import { deflateRawSync, inflateRawSync } from 'node:zlib';
 
 import {
   ConfigError,
@@ -23,8 +23,19 @@ import {
 const fixture = JSON.parse(
   await readFile(new URL('./fixtures/local-backup-v2.json', import.meta.url), 'utf8'),
 );
+const legacyFixture = JSON.parse(
+  await readFile(new URL('./fixtures/local-backup-legacy-array.json', import.meta.url), 'utf8'),
+);
 const baseUrl = 'http://local-backup.test';
 const startedAt = '2026-07-19T00:00:00.000Z';
+
+function encodeUncheckedPayload(payload) {
+  const json = Buffer.from(JSON.stringify(payload), 'utf8');
+  const length = Buffer.alloc(4);
+  length.writeUInt32LE(json.length, 0);
+  const envelope = Buffer.concat([length, deflateRawSync(json)]);
+  return Buffer.concat([envelope, createHash('sha256').update(envelope).digest()]);
+}
 
 function position() {
   return { x: 0, y: 0, width: 200, height: 120 };
@@ -172,7 +183,53 @@ test('bundle-derived fixture has the exact length-prefix, raw-deflate, and SHA-2
   assert.deepEqual(decodeLocalBackup(encodeLocalBackup(fixture.payload)), fixture.payload);
 });
 
-test('local backup rejects digest tampering, forged lengths, and non-v2 payloads', () => {
+test('local backup accepts and normalizes the official legacy rules-only array', async () => {
+  const decoded = decodeLocalBackup(encodeUncheckedPayload(legacyFixture.payload));
+  assert.deepEqual(decoded, {
+    version: 2,
+    rules: [
+      {
+        ...legacyFixture.payload[0],
+        id: legacyFixture.payload[0].cfg.id,
+      },
+    ],
+    variables: {},
+  });
+
+  const plan = await planLocalBackupImport(decoded, fakeGateway().deps);
+  assert.equal(plan.totals.createRules, 1);
+  assert.equal(plan.totals.createVariableScopes, 0);
+  assert.equal(plan.totals.createVariables, 0);
+
+  const withMatchingId = structuredClone(legacyFixture.payload);
+  withMatchingId[0].id = withMatchingId[0].cfg.id;
+  assert.deepEqual(decodeLocalBackup(encodeUncheckedPayload(withMatchingId)), decoded);
+});
+
+test('legacy local backup rejects mismatched, duplicate, and malformed rules', () => {
+  const mismatched = structuredClone(legacyFixture.payload);
+  mismatched[0].id = 'differentRule';
+  assert.throws(
+    () => decodeLocalBackup(encodeUncheckedPayload(mismatched)),
+    (error) => error instanceof SchemaError && error.message.includes('LegacyLocalBackupPayload'),
+  );
+
+  const duplicate = structuredClone(legacyFixture.payload);
+  duplicate.push(structuredClone(duplicate[0]));
+  assert.throws(
+    () => decodeLocalBackup(encodeUncheckedPayload(duplicate)),
+    (error) => error instanceof SchemaError && error.message.includes('LocalBackupPayload'),
+  );
+
+  const malformed = structuredClone(legacyFixture.payload);
+  malformed[0].nodes = undefined;
+  assert.throws(
+    () => decodeLocalBackup(encodeUncheckedPayload(malformed)),
+    (error) => error instanceof SchemaError && error.message.includes('LegacyLocalBackupPayload'),
+  );
+});
+
+test('local backup rejects digest tampering, forged lengths, and invalid versioned payloads', () => {
   const bytes = Buffer.from(fixture.backupBase64, 'base64');
   const tampered = Buffer.from(bytes);
   tampered[10] ^= 0x01;
@@ -332,6 +389,36 @@ test('confirmed import snapshots, leases, and applies the exact bundle restore o
   assert.equal(snapshotReads.includes('/api/getDevList'), true);
   assert.equal(snapshotReads.includes('/api/getGraph'), true);
   assert.equal(snapshotReads.includes('/api/getVarList'), true);
+});
+
+test('confirmed legacy import deletes current variables and recreates rules only', async (t) => {
+  const snapshotsDir = await mkdtemp(join(tmpdir(), 'xgg-legacy-import-snapshot-'));
+  t.after(() => rm(snapshotsDir, { recursive: true, force: true }));
+  const gateway = fakeGateway();
+  const payload = decodeLocalBackup(encodeUncheckedPayload(legacyFixture.payload));
+
+  const result = await importLocalBackup(payload, gateway.deps, {
+    confirmReplaceAll: true,
+    snapshotsDir,
+  });
+
+  assert.deepEqual(result.applied, {
+    deletedRules: 1,
+    deletedVariableScopes: 2,
+    createdVariables: 0,
+    setVariableValues: 0,
+    createdRules: 1,
+  });
+  const writeCalls = gateway.calls.filter((call) => call.requestOptions?.kind === 'write');
+  assert.deepEqual(
+    writeCalls.map((call) => call.method),
+    ['/api/deleteGraph', '/api/deleteVar', '/api/deleteVar', '/api/setGraph'],
+  );
+  assert.equal(writeCalls.at(-1).params.id, 'legacyFixtureRule');
+  assert.equal(
+    writeCalls.every((call) => call.requestOptions.leaseId === gateway.leaseId),
+    true,
+  );
 });
 
 test('partial import stops immediately, returns NOT_CONFIRMED, and fences the workflow', async (t) => {

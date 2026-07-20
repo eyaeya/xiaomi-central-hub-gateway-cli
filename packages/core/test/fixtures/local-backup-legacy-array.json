@@ -1,0 +1,44 @@
+{
+  "source": "Constructed from gateway.6cbc85.js jr.loadBackup legacy Array.isArray payload",
+  "payload": [
+    {
+      "cfg": {
+        "id": "legacyFixtureRule",
+        "enable": false,
+        "uiType": "rule",
+        "userData": {
+          "name": "Legacy fixture rule",
+          "transform": {
+            "x": 0,
+            "y": 0,
+            "scale": 1,
+            "rotate": 0
+          },
+          "lastUpdateTime": 0,
+          "version": 0
+        }
+      },
+      "nodes": [
+        {
+          "id": "legacySource",
+          "type": "onLoad",
+          "cfg": {
+            "pos": {
+              "x": 0,
+              "y": 0,
+              "width": 200,
+              "height": 120
+            },
+            "name": "onLoad",
+            "version": 1
+          },
+          "inputs": {},
+          "outputs": {
+            "output": []
+          },
+          "props": {}
+        }
+      ]
+    }
+  ]
+}

@@ -412,7 +412,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 - `rule export` 会用当前表达式解析器回读生成的 `varSetNumber` / `varSetString --expr`；若源图的结构化 elements 无法用 DSL 无损表示（例如变量后紧跟会被吞入变量 ID 的字母或数字常量），导出会以 `ConfigError` 拒绝。请先在源表达式中加入显式分隔符，或改用 `rule view` 的整图 JSON 往返。
 - `rule export/import --target-id` 克隆时只把源规则的 `R<source-id>` 迁移为 `R<target-id>`。脚本先只读预检完整变量计划，再以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备规则内变量；已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前失败，绝不覆盖。兼容的已有变量会保留，类型/值/显示名冲突也会在首次写前失败。`global` 始终是明确的外部依赖，不会被创建或改写。
 - 在已审计 bundle 的调用面与当前 `xgg` 已建模接口中，未发现“客户端随时读取任意设备实时属性”的通用 RPC。需要观测实时值时，用 `deviceInputSetVar`（变化推送）或 `deviceGetSetVar`（由规则事件触发读取）写入变量，再用 `xgg variable watch --follow` 观察；不要把这个结论外推为所有固件都绝无其他私有接口。
-- `backup local-import --confirm-replace-all` 会删除并重建全部规则和变量。固定先跑 `--dry-run`；应用路径必须有 rollback snapshot，且不应在未授权的家庭网关上做恢复试验。
+- `backup local-import` 同时接受完整 version-2 `.bak` 与官方旧版 rules-only 数组；旧版没有变量，解码后规范化为 `variables: {}`。`--confirm-replace-all` 会先删除当前全部规则和变量，再仅重建备份包含的内容，因此导入旧版文件不会保留或重建任何变量。固定先跑 `--dry-run` 并核对 `createVariables` 等计数；应用路径必须有 rollback snapshot，且不应在未授权的家庭网关上做恢复试验。
 - `xgg api` 是低层逃生口，不建议把它作为常规自动化编辑路径。read 是普通/未知方法的默认 intent；当前已知写接口必须显式传 `--kind write`，并进入与 typed 写命令相同的 Agent guard、完整写前 rollback snapshot 与 `NOT_CONFIRMED` 超时分类。未知的新接口仍可显式选择 read 或 write，JSON 输出会回显最终 `kind`。
 
 ## GitHub 与 npm 内容边界

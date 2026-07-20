@@ -153,10 +153,37 @@ export const BackupContentRule = z
 export type BackupContentRule = z.infer<typeof BackupContentRule>;
 
 /**
- * Local `.bak` payload emitted by the official web bundle's
+ * Rules in the official legacy local-backup array. The official loader reads
+ * only `cfg` and `nodes`; some historical files therefore omit the redundant
+ * outer `id`. Keep a supplied id honest, then let the decoder derive a missing
+ * one from `cfg.id` before entering the canonical version-2 pipeline.
+ */
+export const LegacyLocalBackupRule = z
+  .object({
+    id: z.string().optional(),
+    cfg: RuleSummary,
+    nodes: z.array(Node),
+  })
+  .passthrough()
+  .superRefine((rule, ctx) => {
+    if (rule.id !== undefined && rule.id !== rule.cfg.id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['id'],
+        message: `legacy local-backup rule id mismatch: rule=${rule.id}, cfg=${rule.cfg.id}`,
+      });
+    }
+  });
+export type LegacyLocalBackupRule = z.infer<typeof LegacyLocalBackupRule>;
+
+export const LegacyLocalBackupPayload = z.array(LegacyLocalBackupRule);
+export type LegacyLocalBackupPayload = z.infer<typeof LegacyLocalBackupPayload>;
+
+/**
+ * Canonical local `.bak` payload emitted by the official web bundle's
  * `jr.generateBackup()` path. Version 2 stores complete rule graphs and the
  * full scope/id variable map before the binary deflate + digest envelope is
- * applied.
+ * applied. Legacy rules-only arrays are normalized to this shape at decode.
  */
 export interface LocalBackupPayload {
   version: 2;

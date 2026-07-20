@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-1ac2c85e89c500556b96aa0380bf6fb7c290e8c8cabf451ca62ed43ebb884b89 -->
+<!-- xgg-skill-content-build: sha256-4e38a4a7fab448dc3b606a6d980b77db437e84ad5570f08858804716ba268adc -->
 
 # xgg 自动化编写 Skill
 
@@ -406,7 +406,7 @@ xgg rule device replace --rule-id <rid> --node-id <nid> \
 
 ## 十、备份（本地 `.bak` 与网关云备份）
 
-本地导出生成与官方 bundle 相同 envelope 的 `.bak`；导入是**删除并重建全部规则和变量**，固定先 dry-run：
+本地导出生成与官方 bundle 相同 envelope 的完整 version-2 `.bak`；导入同时接受 version 2 与官方旧版 rules-only 数组。导入会**删除当前全部规则和变量，再仅重建备份中包含的内容**，固定先 dry-run：
 
 ```bash
 xgg backup local-export --output ./gateway-rules.bak
@@ -416,7 +416,7 @@ xgg backup local-import --input ./gateway-rules.bak \
   --confirm-replace-all --snapshots-dir "$PWD/snapshots"
 ```
 
-读取阶段会在访问 session 前验证 SHA-256、bounded deflate、payload schema、变量与每张规则。真正应用固定强制 rollback snapshot、持有一个 mutation lease，并在首个失败处停止。不要用家庭网关做无授权恢复 E2E；安全验证只做 local-export、离线 decode/plan 与 `--dry-run`。
+读取阶段会在访问 session 前验证 SHA-256、bounded deflate、payload schema、变量与每张规则。旧版数组没有变量，会规范化为 `variables: {}`；真正导入会删除现有变量且不会重建它们，并不是 merge 或“保留当前变量”，所以必须在 dry-run 中核对 `createVariables` 等计数。真正应用固定强制 rollback snapshot、持有一个 mutation lease，并在首个失败处停止。不要用家庭网关做无授权恢复 E2E；安全验证只做 local-export、离线 decode/plan 与 `--dry-run`。
 
 云备份命令：
 
