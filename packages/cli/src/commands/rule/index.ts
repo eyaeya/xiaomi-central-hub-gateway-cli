@@ -20,6 +20,7 @@ import { attachNodeUpdate } from './node-update.js';
 import { attachRename } from './rename.js';
 import { attachSetTags } from './set-tags.js';
 import { attachSet } from './set.js';
+import { attachTrace } from './trace.js';
 import { attachValidate } from './validate.js';
 import { attachView } from './view.js';
 
@@ -29,6 +30,7 @@ export function ruleCommand(): Command {
   attachGet(cmd);
   attachView(cmd);
   attachLogs(cmd);
+  attachTrace(cmd);
   attachNew(cmd);
   attachExport(cmd);
   attachImport(cmd);

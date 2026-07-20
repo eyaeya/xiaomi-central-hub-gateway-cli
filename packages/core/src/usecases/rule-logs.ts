@@ -5,7 +5,7 @@ import { agentCall } from './agent-call.js';
 // newline-delimited "block" of raw log lines for the whole gateway, not for
 // any specific rule. Codex M8 reverse-engineering (REPORT.md task 1):
 //   - param: `{ num: number }` — block index, increment from 0 until empty
-//     or the first line repeats (server-side cursor).
+//     or the complete raw block repeats (server-side cursor).
 //   - response: `{ jsonrpc, id, result: string }` where `result` is the
 //     raw block text.
 // All rule scoping + time filtering must happen on the client.
@@ -71,13 +71,18 @@ export function parseLogLine(raw: string): RuleLogEntry | null {
 
   switch (type) {
     case 'r': {
+      if (parts.length !== 5) return null;
       const cfgRaw = rest.join('|');
       base.message = renderRuleConfig(cfgRaw);
       base.ruleConfig = safeJsonParse(cfgRaw) ?? cfgRaw;
       return base;
     }
     case 'l': {
+      if (parts.length !== 7) return null;
       const [src, dst, value] = rest;
+      const [, srcPin] = src?.split('.') ?? [];
+      const [, dstPin] = dst?.split('.') ?? [];
+      if (srcPin === undefined || dstPin === undefined) return null;
       if (src !== undefined) base.src = src;
       if (dst !== undefined) base.dst = dst;
       if (value !== undefined) base.linkValue = value;
@@ -87,6 +92,7 @@ export function parseLogLine(raw: string): RuleLogEntry | null {
       return base;
     }
     case 'i': {
+      if (parts.length !== 6) return null;
       const [nodeId, ...payload] = rest;
       if (nodeId !== undefined) base.nodeId = nodeId;
       const info = payload.join('|');
@@ -95,10 +101,12 @@ export function parseLogLine(raw: string): RuleLogEntry | null {
       return base;
     }
     case 'e': {
+      if (parts.length !== 7) return null;
       const [nodeId, codeStr, ...msgParts] = rest;
       if (nodeId !== undefined) base.nodeId = nodeId;
       const errorCode = Number(codeStr);
-      if (Number.isFinite(errorCode)) base.errorCode = errorCode;
+      if (Number.isNaN(errorCode)) return null;
+      base.errorCode = errorCode;
       const errorMessage = msgParts.join('|');
       base.errorMessage = errorMessage;
       base.message = `${nodeId ?? '?'} [error ${codeStr ?? '?'}] ${errorMessage}`;
@@ -136,31 +144,36 @@ export interface FetchRuleLogsInputs extends ResourceDeps {
 }
 
 export interface FetchRuleLogsResult {
-  /** All parsed entries across the pulled blocks, in chronological order. */
+  /** Parsed entries in Bundle block order: oldest block to newest, preserving each block. */
   entries: RuleLogEntry[];
-  /** Lines we could not parse (kept for diagnosis). */
+  /** Raw lines we could not parse. Internal diagnostic data; CLI output must expose only counts. */
   unparsed: string[];
   /** How many blocks we actually fetched. */
   blocksRead: number;
-  /** True when paging stopped because a block repeated its first line. */
+  /** True when paging stopped because a full raw block repeated exactly. */
   cursorWrapped: boolean;
+  /** Why pagination stopped; `max-blocks` means the client scan bound was reached. */
+  stopReason: 'empty-block' | 'duplicate-block' | 'max-blocks';
+  /** Effective caller-provided pagination bound. */
+  maxBlocks: number;
 }
 
 const DEFAULT_MAX_BLOCKS = 8;
 
 /**
  * Pull every available log block from `/api/getLog`, parse each line, and
- * return a chronologically ordered list. We page from `num=0` upward and
- * stop on the first empty block (gateway ran out) or when the new block's
- * first line equals a line we've already seen (gateway cursor wrapped).
+ * return Bundle-ordered entries. The gateway pages newest block first, while
+ * the production Bundle parses oldest block to newest and preserves line order
+ * inside each block. Stop only at an empty block or an exactly repeated full
+ * block; identical raw lines inside or across different blocks remain valid.
  */
 export async function fetchRuleLogs(input: FetchRuleLogsInputs): Promise<FetchRuleLogsResult> {
   const maxBlocks = input.maxBlocks ?? DEFAULT_MAX_BLOCKS;
-  const entries: RuleLogEntry[] = [];
-  const unparsed: string[] = [];
-  const seenRawLines = new Set<string>();
+  const rawBlocks: string[][] = [];
+  const seenRawBlocks = new Set<string>();
   let blocksRead = 0;
   let cursorWrapped = false;
+  let stopReason: FetchRuleLogsResult['stopReason'] = 'max-blocks';
 
   for (let num = 0; num < maxBlocks; num += 1) {
     const raw = await agentCall({
@@ -173,34 +186,40 @@ export async function fetchRuleLogs(input: FetchRuleLogsInputs): Promise<FetchRu
       ...(input.timeoutMs !== undefined && { timeoutMs: input.timeoutMs }),
     });
     blocksRead = num + 1;
-    if (typeof raw !== 'string' || raw.length === 0) break;
-
-    const lines = raw.split('\n').filter((l) => l.length > 0);
-    const first = lines[0];
-    if (first === undefined) break;
-
-    if (seenRawLines.has(first)) {
-      cursorWrapped = true;
+    if (typeof raw !== 'string' || raw.length === 0) {
+      stopReason = 'empty-block';
       break;
     }
 
-    let addedAny = false;
+    const lines = raw.split('\n').filter((l) => l.length > 0);
+    const first = lines[0];
+    if (first === undefined) {
+      stopReason = 'empty-block';
+      break;
+    }
+
+    if (seenRawBlocks.has(raw)) {
+      cursorWrapped = true;
+      stopReason = 'duplicate-block';
+      break;
+    }
+    seenRawBlocks.add(raw);
+    rawBlocks.push(lines);
+  }
+
+  const entries: RuleLogEntry[] = [];
+  const unparsed: string[] = [];
+  for (const lines of rawBlocks.reverse()) {
     for (const line of lines) {
-      if (seenRawLines.has(line)) continue;
-      seenRawLines.add(line);
       const parsed = parseLogLine(line);
       if (parsed) {
         entries.push(parsed);
       } else {
         unparsed.push(line);
       }
-      addedAny = true;
     }
-    if (!addedAny) break;
   }
-
-  entries.sort((a, b) => a.timestamp - b.timestamp);
-  return { entries, unparsed, blocksRead, cursorWrapped };
+  return { entries, unparsed, blocksRead, cursorWrapped, stopReason, maxBlocks };
 }
 
 export interface FilterRuleLogsOpts {
