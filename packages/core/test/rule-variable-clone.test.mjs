@@ -326,7 +326,20 @@ test('clone snapshots referenced local variables, remaps every supported referen
 
   assert.equal(exported.ruleId, '456');
   assert.equal(exported.ruleName, '[Cloned] variable clone fixture');
-  assert.deepEqual(exported.externalVariables, [{ scope: 'global', id: 'shared' }]);
+  assert.deepEqual(exported.externalVariables, [
+    { scope: 'global', id: 'shared', expectedType: 'number' },
+  ]);
+  assert.deepEqual(
+    exported.commands.filter((item) => item.kind === 'external-variable-dependency'),
+    [
+      {
+        kind: 'external-variable-dependency',
+        scope: 'global',
+        id: 'shared',
+        expectedType: 'number',
+      },
+    ],
+  );
   assert.match(exported.warnings.join('\n'), /external variable dependency global\.shared/);
 
   const kinds = exported.commands.map((item) => item.kind);
@@ -465,15 +478,70 @@ test('strict export rejects actual variable-type mismatches before staging while
     );
 
     const permissive = await exportRuleFromView(view, fake.deps);
+    const guidance =
+      current.name === 'global target'
+        ? /replay asserts the graph-required target type "number" before any write/
+        : /typed replay will reject/;
     assert.equal(
       permissive.warnings.some(
         (warning) =>
-          /stored as .*typed replay will reject/.test(warning) && current.path.test(warning),
+          /stored as/.test(warning) && guidance.test(warning) && current.path.test(warning),
       ),
       true,
       current.name,
     );
+    if (current.name === 'global target') {
+      assert.deepEqual(permissive.externalVariables, [
+        { scope: 'global', id: 'shared', expectedType: 'number' },
+      ]);
+      assert.match(renderExportedAsShell(permissive), /--expect-type 'number'/);
+    }
   }
+});
+
+test('permissive export uses unique graph semantics for a missing global and fails closed without trustworthy type evidence', async () => {
+  const typedNode = sourceNodes().find((node) => node.id === 'get-global');
+  assert.ok(typedNode);
+  await assert.rejects(
+    exportRuleFromView(
+      { id: sourceId, cfg: summary(), nodes: [typedNode] },
+      fakeDeps(localVariables, {}).deps,
+      undefined,
+      true,
+    ),
+    (error) => error?.code === 'CONFIG' && /missing on the source gateway/.test(error.message),
+  );
+  const typed = await exportRuleFromView(
+    { id: sourceId, cfg: summary(), nodes: [typedNode] },
+    fakeDeps(localVariables, {}).deps,
+  );
+  assert.deepEqual(typed.externalVariables, [
+    { scope: 'global', id: 'shared', expectedType: 'number' },
+  ]);
+  assert.match(typed.warnings.join('\n'), /missing on the source gateway/);
+  assert.match(renderExportedAsShell(typed), /--expect-type 'number'/);
+
+  const untypedNode = {
+    id: 'string-expression',
+    type: 'varSetString',
+    cfg: cfg('varSetString'),
+    inputs: { input: null },
+    outputs: { output: [] },
+    props: {
+      scope: sourceScope,
+      id: 'text',
+      elements: [{ type: 'var', scope: 'global', id: 'unknown' }],
+    },
+  };
+  const untyped = await exportRuleFromView(
+    { id: sourceId, cfg: summary(), nodes: [untypedNode] },
+    fakeDeps({ text: localVariables.text }, {}).deps,
+  );
+  assert.deepEqual(untyped.externalVariables, [{ scope: 'global', id: 'unknown' }]);
+  assert.throws(
+    () => renderExportedAsShell(untyped),
+    (error) => error?.code === 'CONFIG' && /no trusted expectedType/.test(error.message),
+  );
 });
 
 test('boolean variable refs keep canonical capture/output repair guidance in strict and permissive export', async () => {
@@ -512,6 +580,23 @@ test('boolean variable refs keep canonical capture/output repair guidance in str
       current.name,
     );
   }
+
+  const globalBoolean = structuredClone(byId.get('get-global'));
+  assert.ok(globalBoolean);
+  globalBoolean.props.varType = 'boolean';
+  const permissiveGlobal = await exportRuleFromView(
+    { id: sourceId, cfg: summary(), nodes: [globalBoolean] },
+    fakeDeps().deps,
+  );
+  assert.deepEqual(permissiveGlobal.externalVariables, [{ scope: 'global', id: 'shared' }]);
+  assert.match(
+    permissiveGlobal.warnings.join('\n'),
+    /no trustworthy replay type can be asserted.*re-export before rendering/,
+  );
+  assert.throws(
+    () => renderExportedAsShell(permissiveGlobal),
+    (error) => error?.code === 'CONFIG' && /no trusted expectedType/.test(error.message),
+  );
 });
 
 test('strict export accepts number and string operands in a varSetString concatenation', async () => {
@@ -691,6 +776,218 @@ test('clone fails closed for source=target, missing snapshots, missing variables
       (error) => error?.code === 'CONFIG',
     );
   }
+});
+
+test('shell asserts every global first, stops before mutation on a later failure, and preserves same-id/clone ordering', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'xgg-global-preflight-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fakeXgg = join(root, 'fake xgg.mjs');
+  await writeFile(
+    fakeXgg,
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+appendFileSync(process.env.XGG_CAPTURE, JSON.stringify(args) + '\\n');
+if (process.env.XGG_FAIL_SECOND === '1' && args[0] === 'variable' && args[1] === 'get-config' && args[args.indexOf('--id') + 1] === 'second') process.exit(23);
+`,
+  );
+  await chmod(fakeXgg, 0o700);
+  const source = {
+    ruleId: '123',
+    ruleName: 'global preflight fixture',
+    enable: false,
+    externalVariables: [
+      { scope: 'global', id: 'first', expectedType: 'number' },
+      { scope: 'global', id: 'second', expectedType: 'string' },
+    ],
+    commands: [
+      {
+        kind: 'external-variable-dependency',
+        scope: 'global',
+        id: 'first',
+        expectedType: 'number',
+      },
+      {
+        kind: 'external-variable-dependency',
+        scope: 'global',
+        id: 'second',
+        expectedType: 'string',
+      },
+      {
+        kind: 'rule-set-body',
+        bodyJson: JSON.stringify({ id: '123', nodes: [], cfg: summary('123') }),
+        description: 'empty rule',
+      },
+      {
+        kind: 'variable-create',
+        scope: 'R123',
+        id: 'local',
+        type: 'number',
+        value: 1,
+        userData: { name: 'Local' },
+      },
+    ],
+    warnings: [],
+  };
+
+  const failedCapture = join(root, 'failed.jsonl');
+  const failed = spawnSync('bash', ['-c', renderExportedAsShell(source)], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      XGG: fakeXgg,
+      XGG_CAPTURE: failedCapture,
+      XGG_FAIL_SECOND: '1',
+      TMPDIR: root,
+    },
+  });
+  assert.equal(failed.status, 23);
+  const failedCalls = (await readFile(failedCapture, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    failedCalls.map((args) => `${args[0]}:${args[1]}:${args[args.indexOf('--id') + 1]}`),
+    ['variable:get-config:first', 'variable:get-config:second'],
+  );
+
+  for (const [label, exported, expected] of [
+    [
+      'same-id',
+      source,
+      ['global:first', 'global:second', 'check:local', 'create:local', 'rule:set'],
+    ],
+    [
+      'clone',
+      applyRename(source, { targetId: '456' }),
+      ['global:first', 'global:second', 'check:local', 'rule:set', 'create:local'],
+    ],
+  ]) {
+    const capture = join(root, `${label}.jsonl`);
+    const result = spawnSync('bash', ['-c', renderExportedAsShell(exported)], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        XGG: fakeXgg,
+        XGG_CAPTURE: capture,
+        XGG_FAIL_SECOND: '0',
+        TMPDIR: root,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const calls = (await readFile(capture, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      calls.map((args) => {
+        if (args[0] === 'rule') return 'rule:set';
+        const id = args[args.indexOf('--id') + 1];
+        if (args[1] === 'get-config') return `global:${id}`;
+        return `${args.includes('--check-only') ? 'check' : 'create'}:${id}`;
+      }),
+      expected,
+      label,
+    );
+    assert.equal(calls[0].includes('--expect-type'), true);
+    assert.equal(calls[0][calls[0].indexOf('--expect-type') + 1], 'number');
+    assert.equal(calls[1][calls[1].indexOf('--expect-type') + 1], 'string');
+  }
+});
+
+test('renderer rejects untyped, inconsistent, duplicate, and injection-shaped global declarations', () => {
+  const body = {
+    ruleId: '123',
+    ruleName: 'invalid global metadata',
+    enable: false,
+    externalVariables: [{ scope: 'global', id: 'safe' }],
+    commands: [{ kind: 'external-variable-dependency', scope: 'global', id: 'safe' }],
+    warnings: [],
+  };
+  assert.throws(() => renderExportedAsShell(body), /no trusted expectedType/);
+  assert.throws(
+    () =>
+      renderExportedAsShell({
+        ...body,
+        externalVariables: [{ scope: 'global', id: 'safe', expectedType: 'string' }],
+        commands: [
+          {
+            kind: 'external-variable-dependency',
+            scope: 'global',
+            id: 'safe',
+            expectedType: 'number',
+          },
+        ],
+      }),
+    /declaration mismatch/,
+  );
+  assert.throws(
+    () =>
+      renderExportedAsShell({
+        ...body,
+        externalVariables: [
+          { scope: 'global', id: 'safe', expectedType: 'number' },
+          { scope: 'global', id: 'safe', expectedType: 'number' },
+        ],
+        commands: [
+          {
+            kind: 'external-variable-dependency',
+            scope: 'global',
+            id: 'safe',
+            expectedType: 'number',
+          },
+        ],
+      }),
+    /more than once/,
+  );
+  assert.throws(
+    () =>
+      renderExportedAsShell({
+        ...body,
+        externalVariables: [{ scope: 'global', id: "bad';touchPwned", expectedType: 'number' }],
+        commands: [
+          {
+            kind: 'external-variable-dependency',
+            scope: 'global',
+            id: "bad';touchPwned",
+            expectedType: 'number',
+          },
+        ],
+      }),
+    /ASCII alphanumeric/,
+  );
+
+  const undeclared = {
+    ruleId: '123',
+    ruleName: 'undeclared global metadata',
+    enable: false,
+    externalVariables: [],
+    commands: [
+      {
+        kind: 'node-add',
+        nodeId: 'globalGet',
+        type: 'varGet',
+        flags: [
+          { name: '--id', value: 'globalGet' },
+          { name: '--type', value: 'varGet' },
+          { name: '--var-scope', value: 'global' },
+          { name: '--var-id', value: 'mode' },
+          { name: '--var-type', value: 'number' },
+        ],
+        comment: 'global reference without metadata',
+      },
+    ],
+    warnings: [],
+  };
+  assert.throws(
+    () => renderExportedAsShell(undeclared),
+    (error) => error?.code === 'CONFIG' && /undeclared global.*global\.mode/.test(error.message),
+  );
+  assert.throws(
+    () => applyRename(undeclared, { targetId: '456' }),
+    (error) =>
+      error?.code === 'CONFIG' && /global dependencies are not explicit/.test(error.message),
+  );
 });
 
 test('shell preflights every local variable and a later conflict performs no create or rule write', async (t) => {

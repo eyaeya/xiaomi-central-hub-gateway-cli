@@ -25,6 +25,109 @@ test('package root import is side-effect free', () => {
   assert.equal(result.stderr, '');
 });
 
+test('JSON import keeps old no-global exports compatible but rejects untyped or inconsistent global metadata before rendering', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'xgg-import-global-preflight-'));
+  t.after(() => rm(root, { force: true, recursive: true }));
+  const body = {
+    id: '181',
+    nodes: [],
+    cfg: {
+      id: '181',
+      uiType: 'rule',
+      enable: false,
+      userData: { name: 'legacy', transform: { x: 0, y: 0, scale: 1, rotate: 0 } },
+    },
+  };
+  const base = {
+    ruleId: '181',
+    ruleName: 'legacy',
+    enable: false,
+    warnings: [],
+    commands: [
+      { kind: 'rule-set-body', bodyJson: JSON.stringify(body), description: 'empty rule' },
+    ],
+  };
+  const run = async (name, payload, ...extra) => {
+    const path = join(root, name);
+    await writeFile(path, JSON.stringify(payload));
+    return spawnSync(
+      process.execPath,
+      [cliPath, 'rule', 'import', '--from-file', path, ...extra, '--no-next-hint'],
+      { encoding: 'utf8' },
+    );
+  };
+
+  const legacyNoGlobals = await run('legacy.json', base);
+  assert.equal(legacyNoGlobals.status, 0, legacyNoGlobals.stderr);
+  assert.match(legacyNoGlobals.stdout, /rule set --body/);
+
+  const untyped = {
+    ...base,
+    externalVariables: [{ scope: 'global', id: 'mode' }],
+    commands: [
+      { kind: 'external-variable-dependency', scope: 'global', id: 'mode' },
+      ...base.commands,
+    ],
+  };
+  for (const extra of [[], ['--target-id', '182']]) {
+    const result = await run(`untyped-${extra.length}.json`, untyped, ...extra);
+    assert.equal(result.status, 5);
+    assert.match(result.stderr, /no trusted expectedType/);
+    assert.equal(result.stdout, '');
+  }
+
+  const inconsistent = await run('inconsistent.json', {
+    ...untyped,
+    externalVariables: [{ scope: 'global', id: 'mode', expectedType: 'number' }],
+    commands: [
+      {
+        kind: 'external-variable-dependency',
+        scope: 'global',
+        id: 'mode',
+        expectedType: 'string',
+      },
+      ...base.commands,
+    ],
+  });
+  assert.equal(inconsistent.status, 5);
+  assert.match(inconsistent.stderr, /declaration mismatch/);
+
+  const undeclaredGlobal = {
+    ...base,
+    externalVariables: [],
+    commands: [
+      ...base.commands,
+      {
+        kind: 'node-add',
+        nodeId: 'globalGet',
+        type: 'varGet',
+        comment: 'undeclared global dependency',
+        flags: [
+          { name: '--id', value: 'globalGet' },
+          { name: '--type', value: 'varGet' },
+          { name: '--var-scope', value: 'global' },
+          { name: '--var-id', value: 'mode' },
+          { name: '--var-type', value: 'number' },
+        ],
+      },
+    ],
+  };
+  const sameIdUndeclared = await run('undeclared-same.json', undeclaredGlobal);
+  assert.equal(sameIdUndeclared.status, 5);
+  assert.match(sameIdUndeclared.stderr, /undeclared global variable dependencies.*global\.mode/);
+  assert.equal(sameIdUndeclared.stdout, '');
+
+  const cloneUndeclared = await run(
+    'undeclared-clone.json',
+    undeclaredGlobal,
+    '--target-id',
+    '182',
+  );
+  assert.equal(cloneUndeclared.status, 5);
+  assert.match(cloneUndeclared.stderr, /global dependencies are not explicit.*global\.mode/);
+  assert.equal(cloneUndeclared.stdout, '');
+});
+
 test('JSON import renders complete comparison operands without shrinking arrays or v2', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'xgg-import-comparisons-'));
   t.after(() => rm(root, { force: true, recursive: true }));

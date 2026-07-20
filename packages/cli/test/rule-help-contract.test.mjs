@@ -52,7 +52,15 @@ test('export and import help cover all five modeled device families', () => {
     importHelp,
     /--target-name is applied to both a clone and an existing same-ID target/,
   );
-  assert.match(exportHelp, /Every replay first preflights the complete variable plan read-only/);
+  assert.match(
+    exportHelp,
+    /Every replay first asserts all global dependencies' existence and number\|string type read-only/,
+  );
+  assert.match(
+    exportHelp,
+    /never compares a global's value\/name and never creates or modifies one/,
+  );
+  assert.match(importHelp, /historical untyped global JSON fails closed and must be re-exported/);
   assert.match(
     exportHelp,
     /Same-id then prepares captured variables with compatibility guards before its first target-graph write/,
@@ -114,6 +122,14 @@ test('edge help exposes lossless split endpoints for legacy ids', () => {
     assert.match(edge, /--to-pin <pin>/);
     assert.match(edge, /legacy:id/);
   }
+});
+
+test('variable get-config help exposes the read-only replay type assertion', () => {
+  const getConfig = help(['variable', 'get-config']);
+  assert.match(getConfig, /--expect-type <type>/);
+  assert.match(getConfig, /require the variable to exist with type number\|string/);
+  assert.match(getConfig, /never compares value or display name/);
+  assert.match(getConfig, /never creates or modifies a variable/);
 });
 
 test('device replacement help makes ghost targets diagnostic-only and rechecks eligibility', () => {

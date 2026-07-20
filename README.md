@@ -297,7 +297,7 @@ XGG_NODE_ENTRY="/absolute/path/to/xgg/packages/cli/dist/cli.js" \
 
 脚本用 Bash argv array 直接执行，不使用 `eval` 或未加引号的 word splitting。`NODE_BIN` 可省略并默认使用 PATH 上的 `node`，`XGG_NODE_ENTRY` 应指向绝对的构建后入口。
 
-脚本先只读预检已捕获的规则内变量；若导出包含规则内变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 也在这里生效）。clone 保留 `--expect-absent`，先成功创建禁用空壳，再准备 `R<target-id>` 变量。此后所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，源规则禁用时保持禁用。same-ID 重放会替换目标图，而且整段脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg 进程或 API 客户端并发修改目标；staging 后失败会留下禁用的 partial graph，用逐写快照检查或恢复。
+脚本先对所有 `global` 外部依赖执行只读 `variable get-config --expect-type`，确认存在且类型为导出记录的 `number|string`；不比较全局变量的值或显示名，也绝不创建或修改它们。所有 global assertion 通过后，才只读预检已捕获的规则内变量；若导出包含规则内变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 也在这里生效）。clone 保留 `--expect-absent`，先成功创建禁用空壳，再准备 `R<target-id>` 变量。此后所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，源规则禁用时保持禁用。旧 JSON 若没有 global 依赖仍可重放；若声明了未携带 `expectedType` 的旧 global 依赖则在渲染前 fail closed，需用当前版本重新导出。same-ID 重放会替换目标图，而且整段脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg 进程或 API 客户端并发修改目标；预检后变量仍可能并发漂移，staging 后失败会留下禁用的 partial graph，用逐写快照检查或恢复。
 
 对当前 spec 有效、已建模的节点，完整 typed `include` / `between`、`preload`、`simplified`、`nop`、设备写入参数与规则内变量可在 `--strict-roundtrip` 下往返。strict export 会先核对持久化 property-write 的属性存在性/写权限、原生 literal/数值域和变量 metadata，并核对 `deviceOutput.props.ins` 与 `action.in` 的逐索引对应、PIID/short-name 唯一性及同类输入契约；它还会读取源网关 local/global 变量的实际类型，按每个引用路径拒绝类型不匹配或缺失的 global 依赖，避免重放在 staging 后才失败。任何 typed replay 无法复现的设备写入或其他语义损失 warning 都会拒绝导出。permissive export 会保留明确 warning，并用索引语义、唯一占位 key 及无原型参数字典避免乱序、重复 key 或 `__proto__` 造成静默丢值。未来新增但当前 CLI 尚未建模的节点会导出成 opaque `--cfg` 结构，允许同 ID 无损重放并给出信息性 warning；CLI 无法安全发现其中的规则内引用，因此带 opaque 节点的导出会拒绝 `--target-id` 克隆。
 
@@ -390,7 +390,7 @@ xgg rule device replace --rule-id <rule-id> --node-id <node-id> --target-did <di
 
 xgg variable list [--pretty]
 xgg variable get <scope> [--pretty]
-xgg variable get-config --scope global --id <id> [--pretty]
+xgg variable get-config --scope global --id <id> [--expect-type number|string] [--pretty]
 xgg variable create --scope global --id <id> --type number --value <value> --name "<name>"
 xgg variable get-value --scope global --id <id>
 xgg variable set-value --scope global --id <id> --value <value>
@@ -427,10 +427,10 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 - `xgg device list` 与默认 replacement discovery 都排除 ghost device。显式聚焦 ghost 的替换 dry-run 仅返回 `eligible:false` 诊断结果且没有 `planId`；不要把网页标为“设备已丢失”的设备作为规则目标。
 - 变量类型只有 `number` 和 `string`。规则引用会按使用点核对实际类型：`varChange` / `varGet` 使用卡片 `varType`，`varSetNumber` 的 target 与所有变量 operand 必须是 number，`varSetString` 的 target 必须是 string；固定 UI 对 `varSetString` operand 未做类型过滤，因此这里保守允许 number/string。设备 capture/output 则按 MIoT 投影 dtype 校验。开关状态建议用数字 `1/0` 或字符串表示。
 - 变量命令的 `--value` 按变量类型处理：`number` 使用数值转换；`string` 原样保存收到的 argv 文本。`--value Seed` 保存 `Seed`，而 `--value '"Seed"'` 会把双引号也作为数据保存；不要为字符串额外添加 JSON 引号。
-- `variable get-config` 读取单个变量的配置；`set-config` 只更新显示名，不改类型或当前值，并按其他写命令一样执行 snapshot guard。
+- `variable get-config` 读取单个变量的配置；加 `--expect-type number|string` 时成为纯读的存在性/类型断言，missing 或 mismatch 以 `ConfigError` 非零退出，不比较值/显示名，也不做任何写入。`set-config` 只更新显示名，不改类型或当前值，并按其他写命令一样执行 snapshot guard。
 - 变量 scope 默认用 `global`。规则本地变量使用当前规则的 `R<rule-id>`；变量写命令会确认其中的 rule id 确实存在，规则节点也只接受与自身 `--rule-id` 匹配的本地 scope。合法本地 scope 不需要 `--allow-unknown-scope`；跨规则、不存在或自定义 scope 会告警并在严格校验中失败。如果 rule id 含连字符，本地变量 scope 无法按该约定合法创建，建议改用 `global` 或使用纯字母数字 rule id。
 - `rule export` 会用当前表达式解析器回读生成的 `varSetNumber` / `varSetString --expr`；若源图的结构化 elements 无法用 DSL 无损表示（例如变量后紧跟会被吞入变量 ID 的字母或数字常量），导出会以 `ConfigError` 拒绝。请先在源表达式中加入显式分隔符，或改用 `rule view` 的整图 JSON 往返。
-- `rule export/import --target-id` 克隆时只把源规则的 `R<source-id>` 迁移为 `R<target-id>`。脚本先只读预检完整变量计划，再以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备规则内变量；已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前失败，绝不覆盖。兼容的已有变量会保留，类型/值/显示名冲突也会在首次写前失败。`global` 始终是明确的外部依赖，不会被创建或改写。
+- `rule export/import --target-id` 克隆时只把源规则的 `R<source-id>` 迁移为 `R<target-id>`。脚本先只读断言全部 `global` 依赖的存在性/类型，再预检完整本地变量计划；随后以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备规则内变量。已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前失败，绝不覆盖。兼容的已有本地变量会保留，类型/值/显示名冲突也会在首次写前失败。`global` 不会被创建或改写；预检与后续命令之间仍存在并发漂移窗口。
 - 在已审计 bundle 的调用面与当前 `xgg` 已建模接口中，未发现“客户端随时读取任意设备实时属性”的通用 RPC。需要观测实时值时，用 `deviceInputSetVar`（变化推送）或 `deviceGetSetVar`（由规则事件触发读取）写入变量，再用 `xgg variable watch --follow` 观察；不要把这个结论外推为所有固件都绝无其他私有接口。
 - `backup local-import` 同时接受完整 version-2 `.bak` 与官方旧版 rules-only 数组；旧版没有变量，解码后规范化为 `variables: {}`。`--confirm-replace-all` 会先删除当前全部规则和变量，再仅重建备份包含的内容，因此导入旧版文件不会保留或重建任何变量。固定先跑 `--dry-run` 并核对 `createVariables` 等计数；应用路径必须有 rollback snapshot，且不应在未授权的家庭网关上做恢复试验。
 - 从历史云备份取得可移植文件时优先用 `backup cloud-export`：它会在同一 mutation lease 内自动 download、确认进度并 generate，再于 lease 释放后原子发布官方 envelope 的 `.bak`，stdout 不包含完整规则/变量。低层 `backup generate` 只适合明确知道同一备份已在网关缓存中的高级流程。

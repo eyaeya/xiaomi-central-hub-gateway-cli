@@ -42,7 +42,13 @@ import { scanVariableReference } from './variable-reference.js';
  */
 export type ExportedCommand =
   | { kind: 'shell-prelude'; comment: string }
-  | { kind: 'external-variable-dependency'; scope: 'global'; id: string }
+  | {
+      kind: 'external-variable-dependency';
+      scope: 'global';
+      id: string;
+      /** Optional only for parsing historical JSON; current replay requires it. */
+      expectedType?: 'number' | 'string';
+    }
   | {
       kind: 'variable-create';
       scope: string;
@@ -95,7 +101,12 @@ export interface ExportedRule {
   enable: boolean;
   commands: ExportedCommand[];
   /** Global variables remain external dependencies and are never recreated. */
-  externalVariables: Array<{ scope: 'global'; id: string }>;
+  externalVariables: Array<{
+    scope: 'global';
+    id: string;
+    /** Optional only for parsing historical JSON; current replay requires it. */
+    expectedType?: 'number' | 'string';
+  }>;
   /** Warnings that should be surfaced to the user but don't block emission. */
   warnings: string[];
 }
@@ -339,7 +350,11 @@ interface VariableReference {
 interface VariablePlan {
   dependencyCommands: ExportedCommand[];
   createCommands: ExportedCommand[];
-  externalVariables: Array<{ scope: 'global'; id: string }>;
+  externalVariables: Array<{
+    scope: 'global';
+    id: string;
+    expectedType?: 'number' | 'string';
+  }>;
   warnings: string[];
 }
 
@@ -368,6 +383,7 @@ function checkExportVariableType(
   actualType: 'number' | 'string',
   strictRoundtrip: boolean,
   warnings: string[],
+  permissiveGuidance = 'typed replay will reject unless the graph or variable is repaired',
 ): void {
   const message = variableTypeContractMessage(ref, actualType);
   if (message === null) return;
@@ -379,7 +395,7 @@ function checkExportVariableType(
       expectations: ref.expectations,
     });
   }
-  warnings.push(`${message}; typed replay will reject unless the graph or variable is repaired`);
+  warnings.push(`${message}; ${permissiveGuidance}`);
 }
 
 async function prepareVariablePlan(
@@ -402,16 +418,8 @@ async function prepareVariablePlan(
   }
 
   const globalReferences = references.filter((ref) => ref.scope === 'global');
-  const externalVariables = globalReferences.map((ref) => ({
-    scope: 'global' as const,
-    id: ref.id,
-  }));
   const warnings: string[] = [];
-  const dependencyCommands: ExportedCommand[] = externalVariables.map(({ scope, id }) => ({
-    kind: 'external-variable-dependency',
-    scope,
-    id,
-  }));
+  const safeGlobalTypes = new Map<string, 'number' | 'string'>();
 
   const localReferences = references.filter((ref) => ref.scope === sourceScope);
   if (localReferences.length > 0 && !isValidVariableScopeName(sourceScope)) {
@@ -475,6 +483,12 @@ async function prepareVariablePlan(
   }
   for (const ref of globalReferences) {
     const entry = Object.hasOwn(globalVariables, ref.id) ? globalVariables[ref.id] : undefined;
+    const requiredTypes = new Set(ref.expectations.map(({ type }) => type));
+    const [requiredType] = requiredTypes;
+    const semanticExpectedType =
+      requiredTypes.size === 1 && (requiredType === 'number' || requiredType === 'string')
+        ? requiredType
+        : undefined;
     if (entry === undefined) {
       const message = `external variable dependency global.${ref.id} is missing on the source gateway at ${ref.paths.join(', ')}`;
       if (strictRoundtrip) {
@@ -483,16 +497,45 @@ async function prepareVariablePlan(
           { scope: 'global', id: ref.id, paths: ref.paths },
         );
       }
+      if (semanticExpectedType !== undefined) safeGlobalTypes.set(ref.id, semanticExpectedType);
       warnings.push(
-        `${message}; it is not recreated and must exist with a compatible type/value before replay`,
+        `${message}; it is not recreated, and the replay target must provide it${semanticExpectedType === undefined ? ' with a trustworthy number|string type before the script can be rendered' : ` with type "${semanticExpectedType}" before replay`}`,
       );
       continue;
     }
-    checkExportVariableType(ref, entry.type, strictRoundtrip, warnings);
+    checkExportVariableType(
+      ref,
+      entry.type,
+      strictRoundtrip,
+      warnings,
+      semanticExpectedType === undefined
+        ? 'rendering fails closed until the graph or variable is repaired'
+        : `replay asserts the graph-required target type "${semanticExpectedType}" before any write; repair the source variable separately`,
+    );
+    if (requiredTypes.size === 0) safeGlobalTypes.set(ref.id, entry.type);
+    else if (semanticExpectedType !== undefined) safeGlobalTypes.set(ref.id, semanticExpectedType);
+    const replayExpectedType = safeGlobalTypes.get(ref.id);
     warnings.push(
-      `external variable dependency global.${ref.id} is not recreated; source type is "${entry.type}" and the replay target must provide a compatible type/value`,
+      replayExpectedType === undefined
+        ? `external variable dependency global.${ref.id} is not recreated; source type is "${entry.type}", but no trustworthy replay type can be asserted. Repair the graph/type evidence and re-export before rendering`
+        : `external variable dependency global.${ref.id} is not recreated; source type is "${entry.type}" and replay asserts target type "${replayExpectedType}" before any write`,
     );
   }
+
+  const externalVariables: VariablePlan['externalVariables'] = globalReferences.map((ref) => {
+    const expectedType = safeGlobalTypes.get(ref.id);
+    return expectedType === undefined
+      ? { scope: 'global' as const, id: ref.id }
+      : { scope: 'global' as const, id: ref.id, expectedType };
+  });
+  const dependencyCommands: ExportedCommand[] = externalVariables.map(
+    ({ scope, id, expectedType }) => ({
+      kind: 'external-variable-dependency',
+      scope,
+      id,
+      ...(expectedType !== undefined && { expectedType }),
+    }),
+  );
 
   return { dependencyCommands, createCommands, externalVariables, warnings };
 }
@@ -2416,6 +2459,7 @@ export function renderExportedAsShell(
   exported: ExportedRule,
   opts: { baseUrl?: string; snapshotsDir?: string } = {},
 ): string {
+  const externalDependencies = validateReplayExternalDependencies(exported);
   const lines: string[] = ['#!/usr/bin/env bash', 'set -euo pipefail', ''];
   lines.push(...renderShellComment(`Auto-generated by \`xgg rule export ${exported.ruleId}\`.`));
   lines.push(
@@ -2459,10 +2503,21 @@ export function renderExportedAsShell(
     } else if (command.kind === 'external-variable-dependency') {
       lines.push(
         ...renderShellComment(
-          `EXTERNAL VARIABLE: ${command.scope}.${command.id} must already exist with a compatible type/value; this script does not create or modify global variables.`,
+          `EXTERNAL VARIABLE: ${command.scope}.${command.id} must already exist with type "${command.expectedType}"; this script only checks existence/type and never creates or modifies global variables.`,
         ),
       );
     }
+  }
+  if (externalDependencies.length > 0) {
+    lines.push(
+      ...renderShellComment(
+        'Preflight every global dependency read-only before local checks or any gateway write. A concurrent change after preflight can still stop a later command because the gateway has no replay-wide transaction.',
+      ),
+    );
+    for (const dependency of externalDependencies) {
+      lines.push(renderExternalVariableAssertion(dependency));
+    }
+    lines.push('');
   }
   if (variableCreates.length > 0) {
     lines.push(
@@ -2547,6 +2602,117 @@ export function renderExportedAsShell(
   }
 
   return `${lines.join('\n')}\n`;
+}
+
+type ReplayExternalDependency = {
+  scope: 'global';
+  id: string;
+  expectedType: 'number' | 'string';
+};
+
+function validateReplayExternalDependencies(exported: ExportedRule): ReplayExternalDependency[] {
+  if (
+    !Array.isArray(exported.commands) ||
+    exported.commands.some((command) => !isRecord(command))
+  ) {
+    throw new ConfigError('exported replay commands must be an array of command objects');
+  }
+  const commandDependencies = exported.commands.filter(
+    (command): command is Extract<ExportedCommand, { kind: 'external-variable-dependency' }> =>
+      command.kind === 'external-variable-dependency',
+  );
+  if (
+    exported.externalVariables !== undefined &&
+    (!Array.isArray(exported.externalVariables) ||
+      exported.externalVariables.some((entry) => !isRecord(entry)))
+  ) {
+    throw new ConfigError('exported replay externalVariables must be an array of objects');
+  }
+  const topLevel = Array.isArray(exported.externalVariables) ? exported.externalVariables : [];
+  const validate = (dependency: unknown, location: string): ReplayExternalDependency => {
+    if (!isRecord(dependency)) {
+      throw new ConfigError(`${location} must be an object`, { location });
+    }
+    if (dependency.scope !== 'global') {
+      throw new ConfigError(
+        `${location} must use scope "global"; replay never treats another scope as an external dependency`,
+        { location, scope: dependency.scope },
+      );
+    }
+    if (typeof dependency.id !== 'string' || !isValidVariableIdentifier(dependency.id)) {
+      throw new ConfigError(
+        `${location} id must be a non-empty ASCII alphanumeric variable identifier`,
+        { location, id: dependency.id },
+      );
+    }
+    if (dependency.expectedType !== 'number' && dependency.expectedType !== 'string') {
+      throw new ConfigError(
+        `${location} global.${dependency.id} has no trusted expectedType. Re-export from a current xgg version after repairing any missing, boolean, or conflicting variable type evidence; replay fails closed before any gateway write.`,
+        { location, scope: 'global', id: dependency.id, expectedType: dependency.expectedType },
+      );
+    }
+    return {
+      scope: 'global',
+      id: dependency.id,
+      expectedType: dependency.expectedType,
+    };
+  };
+  const validatedCommands = commandDependencies.map((entry, index) =>
+    validate(entry, `commands[external-variable-dependency:${index}]`),
+  );
+  const validatedTopLevel = topLevel.map((entry, index) =>
+    validate(entry, `externalVariables[${index}]`),
+  );
+  const toMap = (entries: ReplayExternalDependency[], location: string) => {
+    const map = new Map<string, 'number' | 'string'>();
+    for (const entry of entries) {
+      if (map.has(entry.id)) {
+        throw new ConfigError(`${location} declares global.${entry.id} more than once`, {
+          location,
+          id: entry.id,
+        });
+      }
+      map.set(entry.id, entry.expectedType);
+    }
+    return map;
+  };
+  const commandMap = toMap(validatedCommands, 'commands');
+  const topLevelMap = toMap(validatedTopLevel, 'externalVariables');
+  const inconsistent = new Set([...commandMap.keys(), ...topLevelMap.keys()]);
+  for (const id of inconsistent) {
+    if (commandMap.get(id) !== topLevelMap.get(id)) {
+      throw new ConfigError(
+        `external variable declaration mismatch for global.${id}; command and externalVariables must carry the same expectedType. Re-export instead of editing replay JSON by hand.`,
+        {
+          scope: 'global',
+          id,
+          commandExpectedType: commandMap.get(id),
+          topLevelExpectedType: topLevelMap.get(id),
+        },
+      );
+    }
+  }
+  const actualGlobalReferences = collectCommandVariableReferences(exported.commands).filter(
+    (ref) => ref.scope === 'global',
+  );
+  const undeclaredGlobals = actualGlobalReferences.filter(
+    (ref) => !commandMap.has(ref.id) || !topLevelMap.has(ref.id),
+  );
+  if (undeclaredGlobals.length > 0) {
+    throw new ConfigError(
+      `exported replay references undeclared global variable dependencies: ${undeclaredGlobals
+        .map((ref) => `global.${ref.id}`)
+        .join(
+          ', ',
+        )}. Re-export from a current xgg version so every discoverable global reference has matching typed command and externalVariables declarations; replay fails closed before emitting a script.`,
+      { references: undeclaredGlobals },
+    );
+  }
+  return validatedCommands;
+}
+
+function renderExternalVariableAssertion(dependency: ReplayExternalDependency): string {
+  return `"\${XGG_ARGV[@]}" variable get-config --scope ${shellQuote(dependency.scope)} --id ${shellQuote(dependency.id)} --expect-type ${shellQuote(dependency.expectedType)} --base-url "$BASE_URL"`;
 }
 
 function hasAmbiguousCompactEdgeRef(value: string): boolean {
