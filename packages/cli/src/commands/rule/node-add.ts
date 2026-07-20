@@ -107,6 +107,68 @@ function parseNopDeltaJson(raw: string): NonNullable<AddNodeShortcut['noteDelta'
   return ops as NonNullable<AddNodeShortcut['noteDelta']>;
 }
 
+function assertCfgShortcutExclusivity(opts: NodeAddOpts): void {
+  if (opts.cfg === undefined) return;
+
+  // --cfg selects the raw/full-tuple path for every node type. Keep identity
+  // and command-control flags available, but reject every shortcut authoring
+  // flag that the raw path would otherwise ignore.
+  const shortcutFlags = [
+    ...(opts.deviceDid !== undefined ? ['--device-did'] : []),
+    ...(opts.deviceSiid !== undefined ? ['--device-siid'] : []),
+    ...(opts.deviceProperty !== undefined ? ['--device-property'] : []),
+    ...(opts.deviceAction !== undefined ? ['--device-action'] : []),
+    ...(opts.deviceEvent !== undefined ? ['--device-event'] : []),
+    ...((opts.eventFilter?.length ?? 0) > 0 ? ['--event-filter'] : []),
+    ...((opts.eventFilterInclude?.length ?? 0) > 0 ? ['--event-filter-include'] : []),
+    ...((opts.eventFilterBetween?.length ?? 0) > 0 ? ['--event-filter-between'] : []),
+    ...((opts.eventArgVar?.length ?? 0) > 0 ? ['--event-arg-var'] : []),
+    ...(opts.threshold !== undefined ? ['--threshold'] : []),
+    ...(opts.propertyValue !== undefined ? ['--property-value'] : []),
+    ...(opts.propertyInclude !== undefined ? ['--property-include'] : []),
+    ...(opts.op !== undefined ? ['--op'] : []),
+    ...(opts.params !== undefined ? ['--params'] : []),
+    ...(opts.value !== undefined ? ['--value'] : []),
+    ...(opts.forceOutOfRange === true ? ['--force-out-of-range'] : []),
+    ...(opts.allowNoPush === true ? ['--allow-no-push'] : []),
+    ...(opts.preload !== undefined ? [opts.preload ? '--preload' : '--no-preload'] : []),
+    ...(opts.pos !== undefined ? ['--pos'] : []),
+    ...(opts.simplified !== undefined ? ['--simplified'] : []),
+    ...(opts.text !== undefined ? ['--text'] : []),
+    ...(opts.delta !== undefined ? ['--delta'] : []),
+    ...(opts.background !== undefined ? ['--background'] : []),
+    ...(opts.inputs !== undefined ? ['--inputs'] : []),
+    ...(opts.duration !== undefined ? ['--duration'] : []),
+    ...(opts.interval !== undefined ? ['--interval'] : []),
+    ...(opts.start !== undefined ? ['--start'] : []),
+    ...(opts.end !== undefined ? ['--end'] : []),
+    ...(opts.mingTextShow !== undefined ? ['--ming-text-show'] : []),
+    ...(opts.weekdayOnly === true ? ['--weekday-only'] : []),
+    ...(opts.holidayOnly === true ? ['--holiday-only'] : []),
+    ...(opts.days !== undefined ? ['--days'] : []),
+    ...(opts.varScope !== undefined ? ['--var-scope'] : []),
+    ...(opts.varId !== undefined ? ['--var-id'] : []),
+    ...(opts.varType !== undefined ? ['--var-type'] : []),
+    ...(opts.varValue !== undefined ? ['--var-value'] : []),
+    ...(opts.threshold2 !== undefined ? ['--threshold2'] : []),
+    ...(opts.allowUnknownScope === true ? ['--allow-unknown-scope'] : []),
+    ...(opts.at !== undefined ? ['--at'] : []),
+    ...(opts.sunrise === true ? ['--sunrise'] : []),
+    ...(opts.sunset === true ? ['--sunset'] : []),
+    ...(opts.offsetMin !== undefined ? ['--offset-min'] : []),
+    ...(opts.latitude !== undefined ? ['--latitude'] : []),
+    ...(opts.longitude !== undefined ? ['--longitude'] : []),
+    ...(opts.expr !== undefined ? ['--expr'] : []),
+    ...(opts.defaultExprScope !== undefined ? ['--default-expr-scope'] : []),
+    ...(opts.outputs !== undefined ? ['--outputs'] : []),
+  ];
+
+  if (shortcutFlags.length === 0) return;
+  throw new ConfigError(
+    `--cfg is mutually exclusive with shortcut option(s): ${shortcutFlags.join(', ')}. Put the complete {cfg, inputs, outputs, props} tuple in --cfg, or remove --cfg and use shortcut flags.`,
+  );
+}
+
 function assertNopOptionUsage(opts: NodeAddOpts): void {
   const hasNopOption =
     opts.text !== undefined || opts.delta !== undefined || opts.background !== undefined;
@@ -461,7 +523,7 @@ export function attachNodeAdd(cmd: Command): void {
     .requiredOption('--type <T>', 'node type (e.g. deviceInput)')
     .option(
       '--cfg <JSON>',
-      'raw/opaque node JSON — accepts the complete {cfg,inputs,outputs,props} tuple (preferred) or legacy cfg-only shape; strict modeled types generally require the complete tuple',
+      'raw/full-tuple node JSON for any type — accepts complete {cfg,inputs,outputs,props} (preferred) or legacy cfg-only shape; mutually exclusive with shortcut authoring flags, and modeled types require their strict schema unless --no-validate',
     )
     .option('--id <NID>', 'override node id (default: random)')
     .option('--no-snapshot', 'skip the pre-write dump snapshot')
@@ -746,13 +808,16 @@ Examples (M10 F17 non-device shortcut path):
   $ xgg rule node add --rule-id r1 --type alarmClock --sunset \\
       --latitude 30.46 --longitude 114.41 --offset-min -15
 
-Raw/opaque fallback:
-  All 25 modeled executable types plus nop have shortcuts. For an unmodeled
-  future card, preserve the exact {cfg,inputs,outputs,props} payload captured
-  from rule view/export instead of guessing or passing a partial object.`,
+Raw/full-tuple path:
+  All 25 modeled executable types plus nop have shortcuts. --cfg selects
+  raw/full-tuple handling for every type and cannot be combined with shortcut
+  authoring flags. Modeled types are checked against their strict schema unless
+  --no-validate; unmodeled future cards preserve the exact
+  {cfg,inputs,outputs,props} payload captured from rule view/export.`,
     )
     .action(
       wrap('rule.node.add', async (opts: NodeAddOpts) => {
+        assertCfgShortcutExclusivity(opts);
         const parsedParams = opts.params !== undefined ? parseParamsJson(opts.params) : undefined;
         const parsedCfg =
           opts.cfg !== undefined ? parseJsonInput<unknown>(opts.cfg, '--cfg') : undefined;
@@ -812,7 +877,7 @@ Raw/opaque fallback:
           'modeSwitch',
           'alarmClock',
         ]);
-        if (NON_DEVICE_TYPES.has(opts.type) && !(opts.type === 'nop' && parsedCfg !== undefined)) {
+        if (parsedCfg === undefined && NON_DEVICE_TYPES.has(opts.type)) {
           // M10 F17 — non-device shortcut: build from CLI flags only, no
           // gateway device/spec lookup
           const shortcut: AddNodeShortcut = {
@@ -871,7 +936,7 @@ Raw/opaque fallback:
             validate: opts.validate !== false,
             varCheck: opts.varCheck !== false,
           };
-        } else if (opts.deviceDid) {
+        } else if (parsedCfg === undefined && opts.deviceDid) {
           // Device shortcut path — synthesizes 4-piece node from device spec
           // B4 / F65a (2026-05-30) — --event-arg-var is deviceInputSetVar
           // event-mode-only; reject misuse up front so the synth doesn't
@@ -942,17 +1007,12 @@ Raw/opaque fallback:
             varCheck: opts.varCheck !== false,
           };
         } else {
-          // Legacy --cfg path
+          // Raw/full-tuple --cfg path. This branch has priority for every node
+          // type; assertCfgShortcutExclusivity above guarantees no shortcut
+          // authoring flag can be silently discarded here.
           if (parsedCfg === undefined) {
             throw new ConfigError(
-              'Either a non-device --type, --device-did (device shortcut), or --cfg (legacy) is required',
-            );
-          }
-          // B4 / F65a (2026-05-30) — --event-arg-var is shortcut-only;
-          // reject when the user mixes it with --cfg to avoid silent drop.
-          if ((opts.eventArgVar?.length ?? 0) > 0) {
-            throw new ConfigError(
-              '--event-arg-var is mutually exclusive with --cfg. Either drop --cfg and use the device shortcut path, or hand-craft the arguments[] elements inside --cfg.',
+              'Either a non-device --type, --device-did (device shortcut), or --cfg (raw/full tuple) is required',
             );
           }
           const parsed = parsedCfg;
