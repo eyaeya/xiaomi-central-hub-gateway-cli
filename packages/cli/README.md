@@ -117,7 +117,7 @@ xgg backup generate --from fds --did <did> --ts <ts> --file-name <name>
 xgg backup load --from fds --did <did> --ts <ts> --file-name <name> --snapshots-dir "$PWD/snapshots"
 xgg backup delete --from fds --did <did> --ts <ts> --file-name <name> --snapshots-dir "$PWD/snapshots"
 xgg backup config get --from fds
-xgg backup config set --from fds --auto-backup <true|false> --snapshots-dir "$PWD/snapshots"
+xgg backup config set --from fds --auto-backup <true|false> --auto-backup-limit <N> --snapshots-dir "$PWD/snapshots"
 ```
 
 Replacement discovery 默认排除 ghost device。显式用 `--target-did` 聚焦 ghost 时，只返回 `eligible:false` 的诊断候选，不生成可应用的 `planId`；`--apply` 会在快照后 fresh 读取设备清单，并在 `setGraph` 前拒绝已经或新近变成 ghost 的目标。

@@ -399,7 +399,7 @@ xgg backup delete --from fds --did <did> --ts <ts> --file-name <name> --snapshot
 xgg backup config get --from fds
 xgg backup create --from fds --file-name <name> [--snapshots-dir <dir>] [--wait]
 xgg backup download --from fds --did <did> --ts <ts> --file-name <name> [--snapshots-dir <dir>] [--wait]
-xgg backup config set --from fds --auto-backup <true|false> [--snapshots-dir <dir>]
+xgg backup config set --from fds --auto-backup <true|false> [--auto-backup-limit <N>] [--snapshots-dir <dir>]
 
 xgg api <method> [--kind read] [--params '<json>']
 xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
