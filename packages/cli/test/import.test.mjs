@@ -104,6 +104,15 @@ appendFileSync(process.env.XGG_CAPTURE, JSON.stringify(process.argv.slice(2)) + 
   );
   assert.equal(imported.status, 0, imported.stderr);
   assert.equal(imported.stderr, '');
+  assert.equal((imported.stdout.match(/--allow-legacy-id/g) ?? []).length, 2);
+
+  const cloned = spawnSync(
+    process.execPath,
+    [cliPath, 'rule', 'import', '--from-file', exportPath, '--target-id', '202', '--no-next-hint'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(cloned.status, 0, cloned.stderr);
+  assert.equal((cloned.stdout.match(/--allow-legacy-id/g) ?? []).length, 2);
 
   const replayed = spawnSync('bash', ['-c', imported.stdout], {
     encoding: 'utf8',
@@ -121,4 +130,97 @@ appendFileSync(process.env.XGG_CAPTURE, JSON.stringify(process.argv.slice(2)) + 
   assert.equal(nodeCalls[0][nodeCalls[0].indexOf('--property-include') + 1], '1,2,3');
   assert.equal(nodeCalls[1][nodeCalls[1].indexOf('--event-filter-include') + 1], '2=1,2');
   assert.equal(nodeCalls[1][nodeCalls[1].indexOf('--event-filter-between') + 1], '3=1.5,2.5');
+});
+
+test('pre-167 JSON import upgrades typed ids and colon-bearing edges for replay and clone', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'xgg-import-legacy-ids-'));
+  t.after(() => rm(root, { force: true, recursive: true }));
+  const exportPath = join(root, 'export.json');
+  const capturePath = join(root, 'calls.jsonl');
+  const fakeXgg = join(root, 'fake-xgg.mjs');
+  const body = {
+    id: '301',
+    nodes: [],
+    cfg: {
+      id: '301',
+      uiType: 'rule',
+      enable: false,
+      userData: {
+        name: 'legacy ids',
+        transform: { x: 0, y: 0, scale: 1, rotate: 0 },
+        lastUpdateTime: 0,
+      },
+    },
+  };
+  await writeFile(
+    exportPath,
+    JSON.stringify({
+      ruleId: '301',
+      ruleName: 'legacy ids',
+      enable: false,
+      warnings: [],
+      commands: [
+        { kind: 'rule-set-body', bodyJson: JSON.stringify(body), description: 'empty rule' },
+        {
+          kind: 'node-add',
+          nodeId: 'old:source',
+          type: 'onLoad',
+          flags: [
+            { name: '--id', value: 'old:source' },
+            { name: '--type', value: 'onLoad' },
+          ],
+          comment: 'old source',
+        },
+        {
+          kind: 'node-add',
+          nodeId: 'old:sink',
+          type: 'delay',
+          flags: [
+            { name: '--id', value: 'old:sink' },
+            { name: '--type', value: 'delay' },
+            { name: '--duration', value: '1s' },
+          ],
+          comment: 'old sink',
+        },
+        { kind: 'edge-add', from: 'old:source:output', to: 'old:sink:input' },
+      ],
+    }),
+  );
+  await writeFile(
+    fakeXgg,
+    `#!/usr/bin/env node
+import { appendFileSync } from 'node:fs';
+appendFileSync(process.env.XGG_CAPTURE, JSON.stringify(process.argv.slice(2)) + '\\n');
+`,
+  );
+  await chmod(fakeXgg, 0o700);
+
+  for (const extraArgs of [[], ['--target-id', '302']]) {
+    const imported = spawnSync(
+      process.execPath,
+      [cliPath, 'rule', 'import', '--from-file', exportPath, ...extraArgs, '--no-next-hint'],
+      { encoding: 'utf8' },
+    );
+    assert.equal(imported.status, 0, imported.stderr);
+    assert.equal((imported.stdout.match(/--allow-legacy-id/g) ?? []).length, 2);
+    assert.match(imported.stdout, /--from-node-id 'old:source' --from-pin 'output'/);
+    assert.match(imported.stdout, /--to-node-id 'old:sink' --to-pin 'input'/);
+
+    await rm(capturePath, { force: true });
+    const replayed = spawnSync('bash', ['-c', imported.stdout], {
+      encoding: 'utf8',
+      env: { ...process.env, XGG: fakeXgg, XGG_CAPTURE: capturePath },
+    });
+    assert.equal(replayed.status, 0, replayed.stderr);
+    const calls = (await readFile(capturePath, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    const edgeCall = calls.find(
+      (argv) => argv[0] === 'rule' && argv[1] === 'edge' && argv[2] === 'add',
+    );
+    assert.ok(edgeCall);
+    assert.equal(edgeCall[edgeCall.indexOf('--from-node-id') + 1], 'old:source');
+    assert.equal(edgeCall[edgeCall.indexOf('--to-node-id') + 1], 'old:sink');
+  }
 });

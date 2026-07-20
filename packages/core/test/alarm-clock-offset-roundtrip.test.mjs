@@ -101,7 +101,7 @@ function alarmWireState(node) {
 const cases = [
   {
     label: 'negative sunrise offset',
-    id: 'sunrise-before',
+    id: 'sunriseBefore',
     form: 'sunrise',
     offsetMin: -15,
     happenType: 'before',
@@ -110,7 +110,7 @@ const cases = [
   },
   {
     label: 'positive sunset offset',
-    id: 'sunset-after',
+    id: 'sunsetAfter',
     form: 'sunset',
     offsetMin: 20,
     happenType: 'after',
@@ -119,7 +119,7 @@ const cases = [
   },
   {
     label: 'zero sunrise offset',
-    id: 'sunrise-now',
+    id: 'sunriseNow',
     form: 'sunrise',
     offsetMin: 0,
     happenType: 'now',

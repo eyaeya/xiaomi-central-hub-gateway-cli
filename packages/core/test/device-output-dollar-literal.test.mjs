@@ -140,6 +140,12 @@ function flagValue(command, name) {
   return command.flags.find((flag) => flag.name === name)?.value;
 }
 
+function legacyReplayIntentFromExport(command) {
+  return command.flags.some((flag) => flag.name === '--allow-legacy-id')
+    ? { legacyNodeIdReplay: true }
+    : {};
+}
+
 function nodeCommand(exported, nodeId) {
   return exported.commands.find(
     (command) => command.kind === 'node-add' && command.nodeId === nodeId,
@@ -179,10 +185,10 @@ test('deviceOutput decodes one doubled dollar while preserving variable-referenc
   const gateway = createGateway();
   await addValue(gateway, 'plain', 'hello');
   await addValue(gateway, 'variable', '$global.foo');
-  await addValue(gateway, 'literal-unqualified', '$$hello');
-  await addValue(gateway, 'literal-qualified', '$$global.foo');
-  await addValue(gateway, 'literal-double', '$$$foo');
-  await addValue(gateway, 'literal-dollar', '$$');
+  await addValue(gateway, 'literalUnqualified', '$$hello');
+  await addValue(gateway, 'literalQualified', '$$global.foo');
+  await addValue(gateway, 'literalDouble', '$$$foo');
+  await addValue(gateway, 'literalDollar', '$$');
   await addValue(gateway, 'number', '7', 'count');
   await addValue(gateway, 'boolean', 'true', 'on');
 
@@ -196,10 +202,10 @@ test('deviceOutput decodes one doubled dollar while preserving variable-referenc
     id: 'foo',
     dtype: 'string',
   });
-  assert.equal(props['literal-unqualified'].value, '$hello');
-  assert.equal(props['literal-qualified'].value, '$global.foo');
-  assert.equal(props['literal-double'].value, '$$foo');
-  assert.equal(props['literal-dollar'].value, '$');
+  assert.equal(props.literalUnqualified.value, '$hello');
+  assert.equal(props.literalQualified.value, '$global.foo');
+  assert.equal(props.literalDouble.value, '$$foo');
+  assert.equal(props.literalDollar.value, '$');
   assert.equal(props.number.value, 7);
   assert.equal(props.boolean.value, true);
 });
@@ -207,11 +213,11 @@ test('deviceOutput decodes one doubled dollar while preserving variable-referenc
 test('unescaped malformed dollars and escaped non-string values still fail closed', async () => {
   const gateway = createGateway();
   await assert.rejects(
-    addValue(gateway, 'bad-string', '$hello'),
+    addValue(gateway, 'badString', '$hello'),
     (error) => error?.code === 'CONFIG' && /variable reference must be/.test(error.message),
   );
   await assert.rejects(
-    addValue(gateway, 'bad-number', '$$1', 'count'),
+    addValue(gateway, 'badNumber', '$$1', 'count'),
     (error) => error?.code === 'CONFIG' && /requires numeric value/.test(error.message),
   );
   assert.deepEqual(gateway.state.nodes, []);
@@ -270,6 +276,7 @@ test('export, clone, shell rendering, and shortcut replay preserve dollar-prefix
       {
         ruleId: '123',
         shortcut: shortcutFromExport(command),
+        ...legacyReplayIntentFromExport(command),
         getDeviceSpec: replay.deps.getDeviceSpec,
         validate: false,
         varCheck: false,

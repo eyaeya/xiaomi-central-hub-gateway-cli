@@ -9,12 +9,10 @@ import {
   runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
-import { parseEdgeRef } from './_helpers.js';
+import { type EdgeEndpointOpts, parseEdgeEndpoints } from './_helpers.js';
 
-interface EdgeRemoveOpts extends RuleOpts {
+interface EdgeRemoveOpts extends RuleOpts, EdgeEndpointOpts {
   ruleId: string;
-  from: string;
-  to: string;
   snapshot?: boolean;
   snapshotsDir?: string;
   refreshHint?: boolean;
@@ -29,8 +27,12 @@ export function attachEdgeRemove(cmd: Command): void {
     .command('remove')
     .description("Remove an edge from a rule's graph")
     .requiredOption('--rule-id <id>', 'rule id')
-    .requiredOption('--from <NID:pin>', 'source endpoint as nodeId:pin')
-    .requiredOption('--to <NID:pin>', 'target endpoint as nodeId:pin')
+    .option('--from <NID:pin>', 'source endpoint as nodeId:pin (canonical ids)')
+    .option('--to <NID:pin>', 'target endpoint as nodeId:pin (canonical ids)')
+    .option('--from-node-id <id>', 'lossless source node id (requires all split endpoint flags)')
+    .option('--from-pin <pin>', 'lossless source pin (requires all split endpoint flags)')
+    .option('--to-node-id <id>', 'lossless target node id (requires all split endpoint flags)')
+    .option('--to-pin <pin>', 'lossless target pin (requires all split endpoint flags)')
     .option('--no-snapshot', 'skip the pre-write dump snapshot')
     .option(
       '--no-var-check',
@@ -44,15 +46,14 @@ export function attachEdgeRemove(cmd: Command): void {
   addRefreshHintFlag(sub)
     .addHelpText(
       'after',
-      '\nExample:\n  $ xgg rule edge remove --rule-id r1 --from n1:output --to n2:trigger --snapshots-dir ./snapshots/',
+      '\nExamples:\n  $ xgg rule edge remove --rule-id r1 --from n1:output --to n2:trigger --snapshots-dir ./snapshots/\n  $ xgg rule edge remove --rule-id r1 --from-node-id legacy:id --from-pin output --to-node-id n2 --to-pin trigger --snapshots-dir ./snapshots/',
     )
     .action(
       wrap('rule.edge.remove', async (opts: EdgeRemoveOpts) => {
+        const { from, to } = parseEdgeEndpoints(opts);
         const guard = assertAgentModeOrSnapshotsDir(opts);
         const { snapshotsDir } = guard;
         const deps = makeDeps(opts);
-        const from = parseEdgeRef(opts.from, '--from');
-        const to = parseEdgeRef(opts.to, '--to');
 
         const { snapshotPath, result } = await runMutationWorkflow(
           'rule.edge.remove',
@@ -79,7 +80,7 @@ export function attachEdgeRemove(cmd: Command): void {
         );
         printRefreshHint(opts, {
           baseUrl: deps.baseUrl,
-          context: `rule ${opts.ruleId} (edge-remove ${opts.from}→${opts.to})`,
+          context: `rule ${opts.ruleId} (edge-remove ${from.nodeId}:${from.pin}→${to.nodeId}:${to.pin})`,
         });
       }),
     );

@@ -13,6 +13,7 @@ import { buildProgram } from '../dist/program.js';
 const AUTHORING_FIELDS = [
   'cfg',
   'id',
+  'allowLegacyId',
   'deviceDid',
   'deviceSiid',
   'deviceProperty',
@@ -77,7 +78,7 @@ const OPERATIONAL_FIELDS = [
   'nextHint',
 ];
 
-const EXECUTABLE = ['id', 'pos', 'simplified'];
+const EXECUTABLE = ['id', 'allowLegacyId', 'pos', 'simplified'];
 const DEVICE = [...EXECUTABLE, 'deviceDid', 'deviceSiid'];
 const PROPERTY_COMPARISON = [
   'deviceProperty',
@@ -226,7 +227,7 @@ const ROUTES = [
   {
     label: 'nop',
     base: { type: 'nop' },
-    allowed: ['id', 'pos', 'text', 'delta', 'background'],
+    allowed: ['id', 'allowLegacyId', 'pos', 'text', 'delta', 'background'],
   },
 ];
 
@@ -262,6 +263,7 @@ const MODELED_TYPES = [
 const SENTINEL = {
   cfg: '{}',
   id: 'node-id',
+  allowLegacyId: true,
   deviceDid: 'did',
   deviceSiid: 2,
   deviceProperty: 'temperature',

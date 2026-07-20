@@ -29,6 +29,11 @@ import {
   projectMiotComparisonDtype,
 } from '../schemas/miot-comparison.js';
 import {
+  EDITOR_NODE_ID_CONSTRAINT,
+  createEditorCompatibleNodeId,
+  isEditorCompatibleNodeId,
+} from '../schemas/node-identifier.js';
+import {
   type CanonicalDurationUnit,
   type DurationRange,
   parseDurationLiteral,
@@ -1219,7 +1224,8 @@ export interface AddNodeShortcut {
     | NonDeviceNodeType;
   // Optional node id override — used by `xgg rule export` round-trip and
   // by callers that need stable ids referenced by `rule edge add`. When
-  // omitted, the synth functions mint a new `n-<epoch-ms>` id.
+  // omitted, the synth functions mint a collision-resistant ASCII-
+  // alphanumeric id accepted by the official editor validator.
   id?: string;
   // Optional canvas position override — `xgg rule export` sets this so a
   // round-trip preserves the user's web-UI layout. Without it the synth
@@ -1388,6 +1394,15 @@ export interface AddNodeInput {
   ruleId: string;
   node?: unknown;
   shortcut?: AddNodeShortcut;
+  /**
+   * Export/import-only compatibility intent for replaying an existing typed
+   * node whose persisted id predates the official editor grammar.
+   *
+   * The preflight rejects this intent for raw nodes, generated ids, and
+   * already-compatible ids so ordinary SDK authoring cannot silently widen
+   * the grammar.
+   */
+  legacyNodeIdReplay?: true;
   /** Optional pure fake-spec seam for offline tests and embedders. */
   getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
   validate?: boolean;
@@ -1396,6 +1411,22 @@ export interface AddNodeInput {
   // to false for raw probes / restore flows that knowingly touch a graph
   // whose var refs the gateway has not yet materialised.
   varCheck?: boolean;
+}
+
+/**
+ * Reject a caller-supplied id for a newly typed node before any session,
+ * snapshot, mutation lease, spec lookup, or gateway access.
+ *
+ * This is intentionally not part of the persisted Node schema: raw nodes and
+ * legacy graphs retain their exact ids for read/export compatibility.
+ */
+export function assertEditorCompatibleNodeId(id: string, label = 'node id'): void {
+  if (isEditorCompatibleNodeId(id)) return;
+  throw new ConfigError(`${label} ${EDITOR_NODE_ID_CONSTRAINT}`, {
+    id,
+    expected: '[A-Za-z0-9]+',
+    compatibility: 'official-web-editor',
+  });
 }
 
 function assertShortcutVariableIdentifiers(shortcut: AddNodeShortcut): void {
@@ -1687,6 +1718,20 @@ export function assertExplicitBetweenBounds(shortcut: {
 function preflightAddNode(input: AddNodeInput): void {
   let localNode: unknown;
   if (input.shortcut !== undefined) {
+    if (input.legacyNodeIdReplay === true) {
+      if (input.shortcut.id === undefined) {
+        throw new ConfigError(
+          'legacyNodeIdReplay requires an explicit shortcut.id from an existing export',
+        );
+      }
+      if (isEditorCompatibleNodeId(input.shortcut.id)) {
+        throw new ConfigError(
+          'legacyNodeIdReplay is unnecessary for an editor-compatible shortcut.id',
+        );
+      }
+    } else if (input.shortcut.id !== undefined) {
+      assertEditorCompatibleNodeId(input.shortcut.id, 'shortcut.id');
+    }
     assertShortcutVariableIdentifiers(input.shortcut);
     assertShortcutPositionUsage(input.shortcut);
     assertShortcutSimplified(input.shortcut);
@@ -1706,8 +1751,14 @@ function preflightAddNode(input: AddNodeInput): void {
       return;
     }
   } else if (input.node !== undefined) {
+    if (input.legacyNodeIdReplay === true) {
+      throw new ConfigError('legacyNodeIdReplay applies only to typed shortcut replay');
+    }
     localNode = input.node;
   } else {
+    if (input.legacyNodeIdReplay === true) {
+      throw new ConfigError('legacyNodeIdReplay requires a typed shortcut');
+    }
     throw new ConfigError('addNode requires either `node` or `shortcut`');
   }
   parseOrThrow(NodeUnion, localNode, 'AddNodeInput.node');
@@ -2913,7 +2964,7 @@ function synthesizeNodeFromShortcut(
   // M12: honor caller-supplied shortcut.id so `xgg rule export` round-trips
   // preserve the original node ids (otherwise `rule edge add` further down
   // the exported script can't resolve PRHsizi7JL etc.).
-  const id = shortcut.id ?? `n-${Date.now()}`;
+  const id = shortcut.id ?? createEditorCompatibleNodeId();
 
   if (shortcut.type === 'deviceInput') {
     // F11 (M9): event-driven trigger (e.g. BLE button click). Codex M8
@@ -3489,7 +3540,7 @@ function buildDayFilter(shortcut: AddNodeShortcut): Record<string, unknown> {
 
 function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, unknown> {
   // M12: same id + pos passthrough as device shortcut for export round-trips.
-  const id = shortcut.id ?? `n-${Date.now()}`;
+  const id = shortcut.id ?? createEditorCompatibleNodeId();
   const baseCfg = (name: string) => ({
     pos: shortcut.pos ?? sizedPos(shortcut.type),
     name,

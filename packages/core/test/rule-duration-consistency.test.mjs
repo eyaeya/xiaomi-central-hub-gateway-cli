@@ -264,6 +264,12 @@ function flagValue(command, name) {
   return command.flags.find((flag) => flag.name === name)?.value;
 }
 
+function legacyReplayIntentFromExport(command) {
+  return command.flags.some((flag) => flag.name === '--allow-legacy-id')
+    ? { legacyNodeIdReplay: true }
+    : {};
+}
+
 function shortcutFromExport(command) {
   const rawPos = flagValue(command, '--pos');
   const posParts = rawPos?.split(',').map(Number);
@@ -300,19 +306,19 @@ test('duration shortcut synthesis accepts m/h aliases but writes canonical min/h
   const gateway = createStatefulGateway(id);
   const cases = [
     {
-      shortcut: { type: 'delay', id: 'delay-alias-m', duration: '2m' },
+      shortcut: { type: 'delay', id: 'delayAliasM', duration: '2m' },
       expected: { unit: 'min', value: 2, props: { timeout: 120_000 } },
     },
     {
-      shortcut: { type: 'statusLast', id: 'status-hour', duration: '1hour' },
+      shortcut: { type: 'statusLast', id: 'statusHour', duration: '1hour' },
       expected: { unit: 'hour', value: 1, props: { timeout: 3_600_000 } },
     },
     {
-      shortcut: { type: 'loop', id: 'loop-min', interval: '3min' },
+      shortcut: { type: 'loop', id: 'loopMin', interval: '3min' },
       expected: { unit: 'min', value: 3, props: { interval: 180_000 } },
     },
     {
-      shortcut: { type: 'eventSequence', id: 'sequence-alias-h', duration: '2h' },
+      shortcut: { type: 'eventSequence', id: 'sequenceAliasH', duration: '2h' },
       expected: { unit: 'hour', value: 2, props: { timeout: 7_200_000 } },
     },
   ];
@@ -359,6 +365,7 @@ test('export replay preserves canonical display units and runtime milliseconds',
       {
         ruleId: id,
         shortcut: shortcutFromExport(command),
+        ...legacyReplayIntentFromExport(command),
         varCheck: false,
       },
       gateway.deps,
@@ -380,7 +387,12 @@ test('export replay upgrades a legacy raw m node to canonical min cfg', async ()
   assert.ok(command);
 
   await addNode(
-    { ruleId: id, shortcut: shortcutFromExport(command), varCheck: false },
+    {
+      ruleId: id,
+      shortcut: shortcutFromExport(command),
+      ...legacyReplayIntentFromExport(command),
+      varCheck: false,
+    },
     gateway.deps,
   );
 

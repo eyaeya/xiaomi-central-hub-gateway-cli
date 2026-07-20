@@ -1,9 +1,12 @@
 import {
   ConfigError,
   addNode,
+  assertEditorCompatibleNodeId,
   assertExplicitBetweenBounds,
+  createEditorCompatibleNodeId,
   dumpBeforeWrite,
   getDevice,
+  isEditorCompatibleNodeId,
   nodeSchemaForType,
   parseEventArgVarTarget,
   parseFiniteDecimalLiteral,
@@ -345,6 +348,7 @@ interface NodeAddOpts extends RuleOpts {
   value?: string;
   forceOutOfRange?: boolean;
   allowNoPush?: boolean;
+  allowLegacyId?: boolean;
   preload?: boolean;
   pos?: { x: number; y: number; width: number; height: number; exprHeight?: number };
   simplified?: boolean;
@@ -399,7 +403,14 @@ export function attachNodeAdd(cmd: Command): void {
       '--cfg <JSON>',
       'raw/full-tuple node JSON for any type — accepts complete {cfg,inputs,outputs,props} (preferred) or legacy cfg-only shape; mutually exclusive with shortcut authoring flags, and modeled types require their strict schema unless --no-validate',
     )
-    .option('--id <NID>', 'override node id (default: random)')
+    .option(
+      '--id <NID>',
+      'override node id; typed shortcuts require non-empty ASCII alphanumeric [A-Za-z0-9]+ (default: auto-generated editor-compatible id). Raw --cfg replay preserves legacy/opaque ids verbatim',
+    )
+    .option(
+      '--allow-legacy-id',
+      'export-replay compatibility only: preserve an explicit typed --id that is not editor-compatible; requires such an --id and cannot be combined with --cfg',
+    )
     .option('--no-snapshot', 'skip the pre-write dump snapshot')
     .option('--no-validate', 'skip the web-UI save-button validator (NOT recommended)')
     .option(
@@ -699,6 +710,30 @@ Raw/full-tuple path:
           preload: preloadSpellingSeen,
           noPreload: noPreloadSpellingSeen,
         });
+        // `--cfg` is the explicit raw/opaque compatibility path. Every other
+        // modeled type uses typed shortcut authoring, whose id must pass the
+        // official editor's fixed validator. Keep this check ahead of all
+        // session/snapshot/RPC setup so auth state cannot mask it.
+        const typedNode = nodeSchemaForType(opts.type) !== undefined;
+        if (opts.allowLegacyId === true) {
+          if (opts.cfg !== undefined) {
+            throw new ConfigError(
+              '--allow-legacy-id applies only to typed shortcut replay, not raw --cfg',
+            );
+          }
+          if (opts.id === undefined || !typedNode) {
+            throw new ConfigError(
+              '--allow-legacy-id requires an explicit --id on a modeled typed shortcut',
+            );
+          }
+          if (isEditorCompatibleNodeId(opts.id)) {
+            throw new ConfigError(
+              '--allow-legacy-id is unnecessary for an editor-compatible --id; remove the flag',
+            );
+          }
+        } else if (opts.cfg === undefined && opts.id !== undefined && typedNode) {
+          assertEditorCompatibleNodeId(opts.id, '--id');
+        }
         // Raw/full-tuple routing wins for every type. Validate its authoring
         // exclusivity before parsing even --params/--cfg so a deterministic
         // ignored-flag error can never depend on JSON, session, or gateway state.
@@ -825,6 +860,7 @@ Raw/full-tuple path:
           addNodeInput = {
             ruleId: opts.ruleId,
             shortcut,
+            ...(opts.allowLegacyId === true && { legacyNodeIdReplay: true }),
             validate: opts.validate !== false,
             varCheck: opts.varCheck !== false,
           };
@@ -895,6 +931,7 @@ Raw/full-tuple path:
           addNodeInput = {
             ruleId: opts.ruleId,
             shortcut,
+            ...(opts.allowLegacyId === true && { legacyNodeIdReplay: true }),
             validate: opts.validate !== false,
             varCheck: opts.varCheck !== false,
           };
@@ -919,7 +956,7 @@ Raw/full-tuple path:
           const obj = parsed as Record<string, unknown>;
           const looksLikeFullNode =
             'cfg' in obj || 'inputs' in obj || 'outputs' in obj || 'props' in obj;
-          const idFallback = opts.id ?? `n-${Date.now()}`;
+          const idFallback = opts.id ?? createEditorCompatibleNodeId();
           const node = looksLikeFullNode
             ? {
                 ...obj,

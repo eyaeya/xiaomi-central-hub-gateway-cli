@@ -2,6 +2,7 @@ import {
   type AvailableVariable,
   ConfigError,
   type LintIssue,
+  editorNodeIdCompatibilityIssues,
   getDeviceSpec,
   getRule,
   listAvailVarsForRule,
@@ -147,6 +148,9 @@ Local input contract:
             getDeviceSpec: (urn: string) => getDeviceSpec(urn, { timeoutMs }),
           }),
         });
+        if (Array.isArray(graph.nodes)) {
+          issues.push(...editorNodeIdCompatibilityIssues(graph.nodes));
+        }
         const payload = {
           ok: !issues.some((i) => i.severity === 'error'),
           ruleId: graph.id,

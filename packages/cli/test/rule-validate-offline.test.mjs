@@ -44,7 +44,7 @@ function variableGraph(scope) {
     id: '123',
     nodes: [
       {
-        id: 'mode-change',
+        id: 'modechange',
         type: 'varChange',
         cfg: {
           pos: { x: 0, y: 0, width: 532, height: 160 },
@@ -197,6 +197,58 @@ test('--spec-aware is an explicit public-spec entry while local input stays daem
   const requestUrl = new URL(requests[0]);
   assert.equal(requestUrl.hostname, 'miot-spec.org');
   assert.equal(requestUrl.searchParams.get('type'), urn);
+});
+
+test('offline validate reports legacy modeled node ids without rejecting or rewriting them', async (t) => {
+  const paths = await fixture(t, 'reject');
+  const legacy = {
+    id: 'legacy-rule',
+    nodes: [
+      {
+        id: 'legacy-node',
+        type: 'onLoad',
+        cfg: {
+          pos: { x: 0, y: 0, width: 320, height: 80 },
+          name: 'onLoad',
+          version: 1,
+        },
+        inputs: {},
+        outputs: { output: ['legacy-sink.input'] },
+        props: {},
+      },
+      {
+        id: 'legacy-sink',
+        type: 'delay',
+        cfg: {
+          pos: { x: 400, y: 0, width: 320, height: 80 },
+          name: 'delay',
+          version: 1,
+          unit: 's',
+          value: 1,
+        },
+        inputs: { input: null },
+        outputs: { output: [] },
+        props: { timeout: 1000 },
+      },
+    ],
+  };
+  const result = runCli(
+    ['rule', 'validate', '--stdin', '--no-next-hint'],
+    paths,
+    JSON.stringify(legacy),
+  );
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.stderr, '');
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.summary, { errors: 0, warnings: 3 });
+  assert.deepEqual(
+    payload.issues.map(({ path }) => path),
+    ['nodes[0].id', 'nodes[1].id', 'nodes[0].outputs.output[0]'],
+  );
+  assert.match(payload.issues[0]?.message ?? '', /not editor-compatible/);
+  assert.match(payload.issues[2]?.message ?? '', /legacy-node\.output -> legacy-sink\.input/);
+  assert.equal(existsSync(paths.markerPath), false);
 });
 
 test('validate help states the offline contract and explicit spec-aware option', () => {

@@ -105,6 +105,12 @@ function flagValue(command, name) {
   return command.flags.find((flag) => flag.name === name)?.value;
 }
 
+function legacyReplayIntentFromExport(command) {
+  return command.flags.some((flag) => flag.name === '--allow-legacy-id')
+    ? { legacyNodeIdReplay: true }
+    : {};
+}
+
 function shortcutFromExport(command) {
   const rawPos = flagValue(command, '--pos');
   const parts = rawPos?.split(',').map(Number);
@@ -217,6 +223,7 @@ test('strict export replay preserves custom exprHeight for number and string exp
       {
         ruleId: 'rule1',
         shortcut: shortcutFromExport(command),
+        ...legacyReplayIntentFromExport(command),
         validate: false,
         varCheck: false,
       },
@@ -259,6 +266,7 @@ test('strict export replay keeps legacy four-part expression positions unchanged
     {
       ruleId: 'rule1',
       shortcut: shortcutFromExport(command),
+      ...legacyReplayIntentFromExport(command),
       validate: false,
       varCheck: false,
     },

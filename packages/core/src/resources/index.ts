@@ -47,6 +47,7 @@ export type {
 export {
   addEdge,
   addNode,
+  assertEditorCompatibleNodeId,
   assertExplicitBetweenBounds,
   createRule,
   deleteGraph,

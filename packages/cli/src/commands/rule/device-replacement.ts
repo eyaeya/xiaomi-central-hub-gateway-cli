@@ -146,8 +146,8 @@ export function attachDeviceReplacement(cmd: Command): void {
         'as eligible=false with no planId and remains diagnostic-only.',
         '',
         'Examples:',
-        '  $ xgg rule device replacements --rule-id 123 --node-id light-on --pretty',
-        '  $ xgg rule device replacements --rule-id 123 --node-id light-on --target-did lumi.target --pretty',
+        '  $ xgg rule device replacements --rule-id 123 --node-id lightOn --pretty',
+        '  $ xgg rule device replacements --rule-id 123 --node-id lightOn --target-did lumi.target --pretty',
       ].join('\n'),
     )
     .action(
@@ -192,8 +192,8 @@ export function attachDeviceReplacement(cmd: Command): void {
         'Node id, inputs, outputs, edges, comparison values, and variable settings are preserved.',
         '',
         'Examples:',
-        '  $ xgg rule device replace --rule-id 123 --node-id light-on --target-did lumi.target --pretty',
-        '  $ xgg rule device replace --rule-id 123 --node-id light-on --target-did lumi.target \\',
+        '  $ xgg rule device replace --rule-id 123 --node-id lightOn --target-did lumi.target --pretty',
+        '  $ xgg rule device replace --rule-id 123 --node-id lightOn --target-did lumi.target \\',
         '      --target-siid 2 --target-piid 1 --apply --confirm-target-did lumi.target \\',
         '      --snapshots-dir ./snapshots/',
       ].join('\n'),

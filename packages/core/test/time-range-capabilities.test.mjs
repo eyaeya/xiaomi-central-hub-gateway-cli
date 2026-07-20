@@ -91,6 +91,12 @@ function flagValue(command, name) {
   return command.flags.find((flag) => flag.name === name)?.value;
 }
 
+function legacyReplayIntentFromExport(command) {
+  return command.flags.some((flag) => flag.name === '--allow-legacy-id')
+    ? { legacyNodeIdReplay: true }
+    : {};
+}
+
 function shortcutFromExport(command) {
   const rawPos = flagValue(command, '--pos');
   const posParts = rawPos?.split(',').map(Number);
@@ -145,7 +151,7 @@ test('timeRange shortcut derives the bundle next-day marker only for start later
   await addNode(
     {
       ruleId: 'rule-1',
-      shortcut: { type: 'timeRange', id: 'same-day', start: '08:00', end: '22:00' },
+      shortcut: { type: 'timeRange', id: 'sameDay', start: '08:00', end: '22:00' },
       validate: false,
       varCheck: false,
     },
@@ -190,6 +196,7 @@ test('timeRange export replay preserves explicit mingTextShow true and false val
       {
         ruleId: id,
         shortcut: shortcutFromExport(command),
+        ...legacyReplayIntentFromExport(command),
         validate: false,
         varCheck: false,
       },

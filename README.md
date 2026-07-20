@@ -206,12 +206,12 @@ xgg device spec <did> --pretty
 
 xgg rule new --name "<自动化名称>"
 xgg rule node add --rule-id <rule-id> --type deviceInput \
-  --device-did <button-did> --device-event click --id n-click
+  --device-did <button-did> --device-event click --id nclick
 xgg rule node add --rule-id <rule-id> --type deviceOutput \
-  --device-did <target-did> --device-property <property> --value <value> --id n-action
+  --device-did <target-did> --device-property <property> --value <value> --id naction
 xgg rule node add --rule-id <rule-id> --type nop \
-  --text "按钮单击后执行目标动作" --background '#FFD966' --id n-note
-xgg rule edge add --rule-id <rule-id> --from n-click:output --to n-action:trigger
+  --text "按钮单击后执行目标动作" --background '#FFD966' --id nnote
+xgg rule edge add --rule-id <rule-id> --from nclick:output --to naction:trigger
 xgg rule layout <rule-id>
 xgg rule validate --rule-id <rule-id> --spec-aware
 xgg rule lint --rule-id <rule-id> --strict
@@ -220,6 +220,7 @@ xgg rule lint --rule-id <rule-id> --strict
 要点：
 
 - 先跑 `xgg device spec <did> --pretty`，按输出中的用途选择能力：事件与 notify 属性用于 `deviceInput` / `deviceInputSetVar`，read 属性用于 `deviceGet` / `deviceGetSetVar`，write 属性与 action 用于 `deviceOutput`；不要凭设备名猜字段。
+- CLI 与 Core SDK 的 typed `rule node add` 显式 `--id` 只能使用非空 ASCII 字母数字 `[A-Za-z0-9]+`；省略时会生成满足该约束的 ID。旧图中的其他 ID 不会被静默改名，`rule validate` / `rule lint` 会逐节点列出告警及受影响的 edge 引用；`rule export` 会显式加入 `--allow-legacy-id`，旧 JSON export 也会在 render/import 时仅对 modeled typed 节点补齐该 replay intent。含 `:` 的旧 ID 由导出脚本使用 `--from-node-id/--from-pin/--to-node-id/--to-pin` 分离传递，避免 `NID:pin` 歧义。所有兼容 intent 都会拒绝新建、raw 与已兼容 ID；未来/opaque 卡片仍走保留完整 tuple 的 raw `--cfg` 路径。
 - `deviceInput` 的 `--device-property` 属性模式和 `--device-event` 事件模式二选一，不能混用。事件参数比较只用 `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--op`、`--threshold`、`--threshold2`、`--property-value`、`--property-include`、`--force-out-of-range` 只属于属性模式，event 模式传入时会在读取 session/spec、快照或写网关前拒绝。
 - `deviceOutput --value '$scope.id'` 表示变量引用；字符串字面值若以 `$` 开头，需要把第一个 `$` 写两次，例如 `--value '$$hello'` 实际写入 `$hello`。`rule export` 会自动添加这一层转义。
 - 连线完成后跑 `xgg rule layout <rule-id>`，让可执行卡片按数据流排布；`nop` 的自由位置会保留，避免备注离开它所说明的区域。

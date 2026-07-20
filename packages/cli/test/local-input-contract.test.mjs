@@ -124,6 +124,119 @@ test('Commander failures use one CONFIG JSON line while help and version stay su
   }
 });
 
+test('typed node ids fail before Agent access while explicit legacy and raw replay stay available', async (t) => {
+  const agent = await startFakeAgent(t);
+  const invalidSnapshotsDir = join(agent.root, 'invalid-node-id-must-not-snapshot');
+  const typed = await runCli(
+    ['rule', 'node', 'add', '--rule-id', 'r', '--type', 'onLoad', '--id', 'legacy-node'],
+    agent,
+    { XGG_SNAPSHOTS_DIR: invalidSnapshotsDir },
+  );
+  const payload = assertSingleConfig(typed);
+  assert.match(payload.error.message, /ASCII alphanumeric \[A-Za-z0-9\]\+/);
+  assert.deepEqual(agent.frames, []);
+  await assert.rejects(access(invalidSnapshotsDir), (error) => error?.code === 'ENOENT');
+
+  const replay = await runCli(
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'onLoad',
+      '--id',
+      'legacy-node',
+      '--allow-legacy-id',
+      '--snapshots-dir',
+      agent.root,
+      '--no-validate',
+    ],
+    agent,
+  );
+  assert.doesNotMatch(replay.stderr, /ASCII alphanumeric \[A-Za-z0-9\]\+/);
+  assert.ok(agent.frames.length > 0, 'legacy replay opt-in was rejected before Agent access');
+  agent.frames.length = 0;
+
+  const rawTuple = {
+    cfg: {
+      pos: { x: 0, y: 0, width: 320, height: 80 },
+      name: 'onLoad',
+      version: 1,
+    },
+    inputs: {},
+    outputs: { output: [] },
+    props: {},
+  };
+  const raw = await runCli(
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'onLoad',
+      '--id',
+      'legacy-node',
+      '--cfg',
+      JSON.stringify(rawTuple),
+      '--snapshots-dir',
+      agent.root,
+      '--no-validate',
+    ],
+    agent,
+  );
+  assert.doesNotMatch(raw.stderr, /ASCII alphanumeric \[A-Za-z0-9\]\+/);
+  assert.ok(agent.frames.length > 0, `raw path was rejected before Agent access: ${raw.stderr}`);
+});
+
+test('legacy-id opt-in rejects every non-replay use before snapshots or IPC', async (t) => {
+  const agent = await startFakeAgent(t);
+  const snapshotsDir = join(agent.root, 'legacy-id-opt-in-must-not-snapshot');
+  const rawTuple = JSON.stringify({
+    cfg: {
+      pos: { x: 0, y: 0, width: 320, height: 80 },
+      name: 'onLoad',
+      version: 1,
+    },
+    inputs: {},
+    outputs: { output: [] },
+    props: {},
+  });
+  const scenarios = [
+    {
+      args: ['--type', 'onLoad', '--allow-legacy-id'],
+      message: /requires an explicit --id on a modeled typed shortcut/,
+    },
+    {
+      args: ['--type', 'onLoad', '--id', 'validNode1', '--allow-legacy-id'],
+      message: /unnecessary for an editor-compatible --id/,
+    },
+    {
+      args: ['--type', 'futureNode', '--id', 'legacy-node', '--allow-legacy-id'],
+      message: /requires an explicit --id on a modeled typed shortcut/,
+    },
+    {
+      args: ['--type', 'onLoad', '--id', 'legacy-node', '--cfg', rawTuple, '--allow-legacy-id'],
+      message: /applies only to typed shortcut replay, not raw --cfg/,
+    },
+  ];
+
+  for (const { args, message } of scenarios) {
+    agent.frames.length = 0;
+    const payload = assertSingleConfig(
+      await runCli(['rule', 'node', 'add', '--rule-id', 'r', ...args], agent, {
+        XGG_SNAPSHOTS_DIR: snapshotsDir,
+      }),
+    );
+    assert.match(payload.error.message, message);
+    assert.deepEqual(agent.frames, []);
+    await assert.rejects(access(snapshotsDir), (error) => error?.code === 'ENOENT');
+  }
+});
+
 test('property comparison flag misuse fails before Agent guards, snapshots, or IPC', async (t) => {
   const agent = await startFakeAgent(t);
   const scenarios = [

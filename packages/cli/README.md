@@ -60,6 +60,8 @@ xgg rule validate --rule-id <rule-id> --spec-aware
 xgg rule lint --rule-id <rule-id> --strict
 ```
 
+typed 节点显式 `--id` 只允许 `[A-Za-z0-9]+`，省略时自动生成兼容 ID。旧图 ID 保持可读且会由 validate/lint 列出节点与受影响 edge；export/import 仅为 modeled typed 旧节点补 replay intent，并用分离 endpoint flags 无歧义传递含 `:` 的旧 ID。该兼容路径不能用于新建或 raw node。
+
 只有用户授权运行时才继续 `xgg rule enable <rule-id>`，触发后用 `rule logs` 验收；否则用 `rule view` 确认保持 `enable=false`。
 
 `device list/get/spec --pretty` 都显示 spec URN 的稳定 `deviceType` token 和公共 `device-template` 的中文 `deviceTypeDescription`；目录失败会明示并只回退 token，不会误用 `modelName` 或 spec 产品描述，列表对整份清单只加载一次目录。`device spec --pretty` 再按自动化用途分组：事件与 notify 属性对应 `deviceInput` / `deviceInputSetVar`，read 属性对应 `deviceGet` / `deviceGetSetVar`，write 属性与 action 对应 `deviceOutput`；每组内部再分标准与 proprietary/vendor，且排除 `device-information` 元数据。property 会完整显示 selector/URN、raw format、UI 投影 dtype、value-list/range，action input 与 event argument 的 PIID 会解析成 property selector/name/type/domain；`action.out` 只显示为不可绑定的 MIoT 元数据，不代表规则图输出 pin。其他中文语义使用 best-effort 的 Bundle 优先级：值标签 `multiLanguage → normalization → raw`，service/property/event 名称 `multiLanguage → template → raw`，action 名称 `multiLanguage → raw → template`，action input 属性名 `multiLanguage → raw`；目录失败会在 `Catalog status` 明示并回退。跨 service 重复 short-name 会全部保留；按对应 `siid` 传 `--device-siid` 消歧。长行按 120 个终端显示列完整换行，中文、组合字符、emoji 和长 URN 不会误切或截断。三条 device 命令省略 `--pretty` 时原有紧凑 JSON shape 不变且不请求语义目录，供脚本解析。

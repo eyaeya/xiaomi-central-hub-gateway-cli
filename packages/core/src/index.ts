@@ -18,6 +18,13 @@ export * from './session/index.js';
 export * from './transport/errors.js';
 export * from './usecases/index.js';
 export { nodeSchemaForType } from './schemas/nodes/registry.js';
+export {
+  EDITOR_NODE_ID_CONSTRAINT,
+  EDITOR_NODE_ID_PATTERN,
+  createEditorCompatibleNodeId,
+  editorNodeIdCompatibilityMessage,
+  isEditorCompatibleNodeId,
+} from './schemas/node-identifier.js';
 export { isGhostDevice } from './schemas/device.js';
 export type { DeviceEligibilityFields } from './schemas/device.js';
 export {

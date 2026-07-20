@@ -50,7 +50,7 @@ test('node-add hints follow the authoritative pin direction for all 25 executabl
     assert.deepEqual(modeledNodePinNames(expected.type, 'input'), expected.inputs, expected.type);
     assert.deepEqual(modeledNodePinNames(expected.type, 'output'), expected.outputs, expected.type);
 
-    const nodeId = `node-${expected.type}`;
+    const nodeId = `node${expected.type}`;
     const hints = buildNextSteps(
       'rule.node.add',
       { nodeId, ruleId: 'rule-80', type: expected.type },
@@ -78,6 +78,18 @@ test('node-add hints follow the authoritative pin direction for all 25 executabl
     assert.ok(expected.inputs.length > 0, `${expected.type} needs a modeled input`);
     assert.match(edgeHint.cmd, new RegExp(`--to ${nodeId}:${expected.inputs[0]}(?: |$)`));
   }
+});
+
+test('legacy node hints use lossless split endpoint flags', () => {
+  const incoming = buildNextSteps(
+    'rule.node.add',
+    { nodeId: 'legacy:action', ruleId: 'rule-80', type: 'deviceOutput' },
+    { type: 'deviceOutput' },
+  ).find(({ cmd }) => cmd.startsWith('xgg rule edge add '));
+  assert.ok(incoming);
+  assert.match(incoming.cmd, /--from-node-id '<trigger>' --from-pin 'output'/);
+  assert.match(incoming.cmd, /--to-node-id 'legacy:action' --to-pin 'trigger'/);
+  assert.doesNotMatch(incoming.cmd, /--to legacy:action:trigger/);
 });
 
 test('nop is modeled as a connector-free note and never receives an edge hint', () => {

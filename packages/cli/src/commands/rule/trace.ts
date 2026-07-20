@@ -72,9 +72,9 @@ export function attachTrace(cmd: Command): void {
       `
 Examples:
   $ xgg rule trace 1779888258312
-  $ xgg rule trace 1779888258312 --node n-condition --node n-action --pretty
-  $ xgg rule trace 1779888258312 --edge 'n-loop.output->n-loop.stop' --since 2026-07-20T00:00:00Z
-  $ xgg rule trace 1779888258312 --watch 'node:n-action' --next-from 10
+  $ xgg rule trace 1779888258312 --node nCondition --node nAction --pretty
+  $ xgg rule trace 1779888258312 --edge 'nLoop.output->nLoop.stop' --since 2026-07-20T00:00:00Z
+  $ xgg rule trace 1779888258312 --watch 'node:nAction' --next-from 10
   $ xgg rule trace 1779888258312 --max-blocks 32 --max-steps 100 --pretty
 
 Boundary: this is a client-derived projection of bounded retained log blocks onto
