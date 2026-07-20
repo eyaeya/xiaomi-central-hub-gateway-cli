@@ -89,6 +89,7 @@ export type { GetDeviceSpecOptions } from './get-device-spec.js';
 export {
   DeviceSpecSemanticCache,
   projectDeviceSpecSemantics,
+  projectDeviceTypesSemantics,
 } from './device-spec-semantics.js';
 export type {
   DeviceSpecSemanticCatalogName,
@@ -103,6 +104,8 @@ export type {
   SemanticDevicePropertyReference,
   SemanticDevicePropertyValue,
   SemanticDeviceSpecProjection,
+  SemanticDeviceType,
+  SemanticDeviceTypesProjection,
 } from './device-spec-semantics.js';
 export {
   fetchRuleLogs,

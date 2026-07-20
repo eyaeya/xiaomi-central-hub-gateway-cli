@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent needs to operate a Xiaomi Gateway Geek Edition (中枢网关极客版) through the xgg CLI — login, device discovery/partitions/replacement, authoring/validating/enabling automation rule graphs, the 25 executable cards plus the nop canvas note, variables, expressions, snapshots, logs, and cloud/local backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-1806f17cb18cb68dfe98a8a2072106470ce8db7ae3fb14473cd52fb1870ed165 -->
+<!-- xgg-skill-content-build: sha256-db66c826b90c383777fd0e0db593c3c4c0d05ad895ca84e2dda3cda40877a683 -->
 
 # xgg 自动化编写 Skill
 
@@ -81,14 +81,14 @@ xgg rule delete <rid>
 帮用户在真实清单上做规划，而不是空想。先用只读命令建立全貌：
 
 ```bash
-xgg device list --pretty                    # 家里有哪些可用设备（默认排除 ghost）
-xgg device get <did> --pretty               # 从设备清单精确读取一个 DID 的元数据
+xgg device list --pretty                    # 可用设备 + 稳定品类 token/中文品类（默认排除 ghost）
+xgg device get <did> --pretty               # 精确读取 DID 元数据 + 同一组品类语义
 xgg rule list --pretty                      # 已经配了哪些自动化
 xgg rule view <rule-id> --pretty            # 逐条看现有自动化做了什么
-xgg device spec <did> --pretty              # 某设备具体能力
+xgg device spec <did> --pretty              # 同一组品类语义 + 某设备具体能力
 ```
 
-据此判断哪些设备还没被任何规则用上、现有自动化是否有覆盖空白或互相冲突，再向用户提出更有价值的点子并说明依据。方案聊定后，直接走第 1 类的标准流程把它落地——盘点与创建在同一会话内衔接，不必让用户在设备列表和画布之间来回抄标识。
+三条 pretty 入口都显示 spec URN 的稳定 `deviceType` token 与公共 `device-template` 的 `zh_cn` 品类；目录失败只回退 token，不得改用 `modelName` 或 spec 产品描述，列表对整份清单只加载一次目录。省略 `--pretty` 时保持原始 JSON shape 且不请求语义目录。据此判断哪些设备还没被任何规则用上、现有自动化是否有覆盖空白或互相冲突，再向用户提出更有价值的点子并说明依据。方案聊定后，直接走第 1 类的标准流程把它落地——盘点与创建在同一会话内衔接，不必让用户在设备列表和画布之间来回抄标识。
 
 > 收尾时提醒用户：CLI 的改动需要在网关网页 **F5 刷新**才能看到（见「避坑：网页端变量缓存」）。
 
@@ -197,11 +197,11 @@ xgg rule lint --rule-id <rid> --strict                          # 边拓扑 + pi
 
 优先级从高到低：
 
-1. **设备参数：** 先跑 `xgg device spec <did> --pretty`；`device-information` 仅是元数据，不会列为可自动化能力。
+1. **设备参数：** 先跑 `xgg device spec <did> --pretty`；头部的稳定 `deviceType` 与中文 `deviceTypeDescription` 和 `device list/get --pretty` 同源，`device-information` 仅是元数据，不会列为可自动化能力。
    - **事件/状态更新：** 从 Events 或 Notify properties 选择 `deviceInput` / `deviceInputSetVar`；property/event 模式严格二选一。event 模式只用 `--event-filter*` 比较事件参数，不能混入 `--op`、`--threshold*`、`--property-*` 或 `--force-out-of-range`。
    - **当前状态查询：** 从 Readable properties 选择 `deviceGet` / `deviceGetSetVar`。
    - **写入/动作执行：** 从 Writable properties 或 Actions 选择 `deviceOutput`。`action.out` 只是 MIoT 元数据，不能绑定到 `deviceOutput`，也不是规则图 output pin；action inputs 才是参数契约。
-   - 每个用途内部仍按标准/`Proprietary/vendor` 分组；property 保留完整 URN、raw format、UI dtype、value-list/range，action input 与 event argument 按 PIID 解析。中文语义按 best-effort 的 Bundle 顺序：值标签 `multiLanguage → normalization → raw`，service/property/event 名称 `multiLanguage → template → raw`，action 名称 `multiLanguage → raw → template`，action input 属性名 `multiLanguage → raw`；目录失败会明示 fallback。跨 service 重复 short-name 不会合并，按对应 `siid` 加 `--device-siid` 消歧；长行以 120 个终端显示列按 grapheme 完整换行，中文、组合字符、emoji 和长 URN 不截断。省略 `--pretty` 时仍是 raw spec 紧凑 JSON envelope，且不请求语义目录。
+   - 每个用途内部仍按标准/`Proprietary/vendor` 分组；property 保留完整 URN、raw format、UI dtype、value-list/range，action input 与 event argument 按 PIID 解析。品类只按 `device-template → raw token`，不得回退产品名；其他中文语义按 best-effort 的 Bundle 顺序：值标签 `multiLanguage → normalization → raw`，service/property/event 名称 `multiLanguage → template → raw`，action 名称 `multiLanguage → raw → template`，action input 属性名 `multiLanguage → raw`；目录失败会明示 fallback。跨 service 重复 short-name 不会合并，按对应 `siid` 加 `--device-siid` 消歧；长行以 120 个终端显示列按 grapheme 完整换行，中文、组合字符、emoji 和长 URN 不截断。省略 `--pretty` 时仍是 raw spec 紧凑 JSON envelope，且不请求语义目录。
 2. **CLI shortcut 参数：** `xgg rule node add --help`。这是各卡片**参数名**的当前事实来源；25 种执行卡片和 `nop` 都有 shortcut，包括 `--type eventSequence --duration 5s`、`--type register`、`--type modeSwitch --outputs N`。
 3. **学已有规则：** `xgg rule view <id> --pretty` 用有界、稳定排序的 JSON 型摘要看节点 `props/inputs/outputs`；字符串带引号，number/boolean/null 保持原生类型，数组/对象结构明确，嵌套标量数组保留前若干实际值，省略时会标出数量。固定列宽按终端显示宽度处理中文、组合字符和 emoji；`nodeId` 与精确节点 `type` 无损多行显示、不丢字符，供后续命令复用。它只供紧凑审查，不是可重放格式。`xgg rule export <id> --format shell` 可反译成可复现的 CLI 命令。
 4. **机器处理、没有 shortcut、要保留额外字段、或一次原子推整张图时才用默认 JSON。** 不带 `--pretty` 的 `rule view` 是包含未知/扩展字段的无损来源；不要解析 pretty 表格。`rule node add --cfg` 接受完整 `{cfg,inputs,outputs,props}`（推荐）或历史 cfg-only 形状；后者不能替代需要完整四段的卡片。`rule set --body <整图JSON文件>` 原子写整图。不要手拼残缺 payload；先从 `rule view` 取得现有全量 JSON，或按 [node catalog](references/node-catalog.md) 的 envelope/逐类结构构造，再用离线 `rule validate --body` 检查。设备卡 cfg 必须带 `urn`。

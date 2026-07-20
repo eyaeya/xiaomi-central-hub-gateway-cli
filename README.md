@@ -52,7 +52,7 @@ GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaey
 
 > 「天黑回家自动开玄关灯，半夜起夜把灯调到 10% 亮度。」
 
-Agent 会先 `xgg device list` / `xgg device spec <did> --pretty` 看清你有哪些设备、它们能做什么，再按上文「创建自动化的标准流程」`rule new → node add → edge add → layout → validate → lint --strict` 把规则图建好。用户要求运行时才继续 enable，并在真实触发后查 logs；否则 readback 确认 `enable=false`。你只描述想要的效果，不必关心节点、边、表达式这些细节。
+Agent 会先 `xgg device list --pretty` / `xgg device spec <did> --pretty` 看清你有哪些设备、它们的稳定品类 token、中文品类和具体能力，再按上文「创建自动化的标准流程」`rule new → node add → edge add → layout → validate → lint --strict` 把规则图建好。用户要求运行时才继续 enable，并在真实触发后查 logs；否则 readback 确认 `enable=false`。你只描述想要的效果，不必关心节点、边、表达式这些细节。
 
 ### 诊断与修复既有自动化
 
@@ -82,7 +82,7 @@ xgg rule list --pretty
 xgg rule view <rule-id> --pretty
 ```
 
-在这份真实清单的基础上，Agent 能和你一起头脑风暴：哪些设备还没被用起来、哪些场景值得自动化、现有规则有没有可以合并或补强的地方。聊定有价值的新点子后，直接接上「主用法」的标准流程落地——盘点、构思、实现连成一条线，不用你在设备列表和画布之间来回抄标识。
+`device list/get/spec --pretty` 都同时显示从 spec URN 得到的稳定 `deviceType` token 和公共 MIoT `device-template` 的 `zh_cn` 品类；目录失败只回退 token，不会误用 `modelName` 或 spec 产品描述。列表对整份清单只加载一次目录。Agent 据此能更准确地一起头脑风暴：哪些设备还没被用起来、哪些场景值得自动化、现有规则有没有可以合并或补强的地方。聊定有价值的新点子后，直接接上「主用法」的标准流程落地——盘点、构思、实现连成一条线，不用你在设备列表和画布之间来回抄标识。
 
 > 提示：CLI 写入不会自动同步到已打开的网关网页。Agent 完成改动后，请在网页 **F5 刷新**再查看（见「重要限制」）。
 
@@ -407,7 +407,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 
 默认 stdout 输出 JSON，适合 Agent 解析；需要人读表格时加 `--pretty`。例外：`xgg rule logs` 默认输出人类表格，需要 JSON 时显式加 `--json`。
 
-`xgg device spec <did> --pretty` 是设备卡片的能力选择入口。输出按规则用途分成三组：事件与 notify 属性对应 `deviceInput` / `deviceInputSetVar`，read 属性对应 `deviceGet` / `deviceGetSetVar`，write 属性与 action 对应 `deviceOutput`；每组内部仍按标准与 proprietary/vendor 分组，`device-information` 元数据不会混入可自动化能力。property 显示 selector short-name、完整 URN、原始 format、UI 投影 dtype、value-list/range，action input 与 event argument 会按 PIID 解析成 property 详情；`action.out` 仅标作 MIoT 元数据，不能绑定到 `deviceOutput`，也不是规则图输出 pin。中文语义采用 best-effort 的 Bundle 优先级：值标签为 `multiLanguage → normalization → raw`，service/property/event 名称为 `multiLanguage → template → raw`，action 名称为 `multiLanguage → raw → template`，action input 属性名为 `multiLanguage → raw`；目录请求失败会在 `Catalog status` 明示并回退。跨 service 重复 short-name 不会合并，创建卡片时按对应 service 的 `siid` 加 `--device-siid` 消歧；长行按 120 个终端显示列完整换行，中文、组合字符、emoji 和长 URN 不会被误切或截断。省略 `--pretty` 时紧凑 JSON envelope 与 raw spec 保持不变，也不会发起语义目录请求。
+`xgg device spec <did> --pretty` 是设备卡片的能力选择入口；它与 `device list/get --pretty` 都显示 spec URN 的稳定 `deviceType` token 和 `device-template` 的中文 `deviceTypeDescription`，目录失败会明示并只回退 token。spec 输出按规则用途分成三组：事件与 notify 属性对应 `deviceInput` / `deviceInputSetVar`，read 属性对应 `deviceGet` / `deviceGetSetVar`，write 属性与 action 对应 `deviceOutput`；每组内部仍按标准与 proprietary/vendor 分组，`device-information` 元数据不会混入可自动化能力。property 显示 selector short-name、完整 URN、原始 format、UI 投影 dtype、value-list/range，action input 与 event argument 会按 PIID 解析成 property 详情；`action.out` 仅标作 MIoT 元数据，不能绑定到 `deviceOutput`，也不是规则图输出 pin。其他中文语义采用 best-effort 的 Bundle 优先级：值标签为 `multiLanguage → normalization → raw`，service/property/event 名称为 `multiLanguage → template → raw`，action 名称为 `multiLanguage → raw → template`，action input 属性名为 `multiLanguage → raw`；目录请求失败会在 `Catalog status` 明示并回退。跨 service 重复 short-name 不会合并，创建卡片时按对应 service 的 `siid` 加 `--device-siid` 消歧；长行按 120 个终端显示列完整换行，中文、组合字符、emoji 和长 URN 不会被误切或截断。三条 device 命令省略 `--pretty` 时原有紧凑 JSON shape 保持不变，也不会发起语义目录请求。
 
 ## 重要限制
 

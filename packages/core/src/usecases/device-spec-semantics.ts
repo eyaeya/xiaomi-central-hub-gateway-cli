@@ -14,7 +14,8 @@ export type DeviceSpecSemanticCatalogName =
   | 'service-template'
   | 'property-template'
   | 'event-template'
-  | 'action-template';
+  | 'action-template'
+  | 'device-template';
 
 export interface DeviceSpecSemanticCatalogStatus {
   catalog: DeviceSpecSemanticCatalogName;
@@ -84,9 +85,23 @@ export interface SemanticDeviceExcludedService {
   reason: 'device-information-not-automatable';
 }
 
+export interface SemanticDeviceType {
+  urn: string;
+  deviceType: string;
+  deviceTypeDescription: string;
+}
+
+export interface SemanticDeviceTypesProjection {
+  locale: 'zh_cn';
+  deviceTypes: SemanticDeviceType[];
+  catalogs: DeviceSpecSemanticCatalogStatus[];
+}
+
 export interface SemanticDeviceSpecProjection {
   urn: string;
   description: string;
+  deviceType: string;
+  deviceTypeDescription: string;
   locale: 'zh_cn';
   propertyNotify: SemanticDeviceProperty[];
   propertyGet: SemanticDeviceProperty[];
@@ -140,6 +155,7 @@ const CATALOG_URLS = {
   properties: 'https://miot-spec.org/miot-spec-v2/template/list/property',
   events: 'https://miot-spec.org/miot-spec-v2/template/list/event',
   actions: 'https://miot-spec.org/miot-spec-v2/template/list/action',
+  devices: 'https://miot-spec.org/miot-spec-v2/template/list/device',
 } as const;
 
 const UNIT_LABELS: Readonly<Record<string, string>> = {
@@ -257,6 +273,22 @@ function parseTemplateCatalog(raw: unknown): Map<string, string> {
     if (!isRecord(entry) || !nonEmptyString(entry.type) || !isRecord(entry.description)) continue;
     const description = entry.description.zh_cn;
     if (nonEmptyString(description)) result.set(entry.type, description);
+  }
+  return result;
+}
+
+function parseDeviceTemplateCatalog(raw: unknown): Map<string, string> {
+  if (!isRecord(raw) || !Array.isArray(raw.result)) {
+    throw new Error('invalid device template catalog');
+  }
+  const result = new Map<string, string>();
+  for (const entry of raw.result) {
+    if (!isRecord(entry) || !nonEmptyString(entry.type) || !isRecord(entry.description)) continue;
+    const deviceType = entry.type.split(':')[3];
+    const description = entry.description.zh_cn;
+    if (nonEmptyString(deviceType) && nonEmptyString(description)) {
+      result.set(deviceType, description);
+    }
   }
   return result;
 }
@@ -430,6 +462,16 @@ interface SemanticSources {
   properties: Map<string, string>;
   events: Map<string, string>;
   actions: Map<string, string>;
+  devices: Map<string, string>;
+}
+
+function semanticDeviceType(urn: string, devices: ReadonlyMap<string, string>): SemanticDeviceType {
+  const deviceType = urn.split(':')[3] ?? '';
+  return {
+    urn,
+    deviceType,
+    deviceTypeDescription: devices.get(deviceType) ?? deviceType,
+  };
 }
 
 function semanticProperty(
@@ -499,6 +541,7 @@ function projectWithSources(
   sources: SemanticSources,
   catalogs: DeviceSpecSemanticCatalogStatus[],
 ): SemanticDeviceSpecProjection {
+  const deviceType = semanticDeviceType(spec.type, sources.devices);
   const propertyNotify: SemanticDeviceProperty[] = [];
   const propertyGet: SemanticDeviceProperty[] = [];
   const propertySet: SemanticDeviceProperty[] = [];
@@ -577,6 +620,8 @@ function projectWithSources(
   return {
     urn: spec.type,
     description: spec.description,
+    deviceType: deviceType.deviceType,
+    deviceTypeDescription: deviceType.deviceTypeDescription,
     locale: 'zh_cn',
     propertyNotify,
     propertyGet,
@@ -589,9 +634,36 @@ function projectWithSources(
 }
 
 /**
+ * Resolve Bundle-compatible stable device type tokens and their best-effort
+ * zh_cn labels without fetching per-device MIoT instance specs.
+ */
+export async function projectDeviceTypesSemantics(
+  urns: readonly string[],
+  opts: ProjectDeviceSpecSemanticsOptions = {},
+): Promise<SemanticDeviceTypesProjection> {
+  const fetchFn = opts.fetch ?? globalThis.fetch;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const cache = cacheFor(fetchFn, opts.cache);
+  const devices = await loadCatalog(
+    cache,
+    fetchFn,
+    CATALOG_URLS.devices,
+    'device-template',
+    timeoutMs,
+    parseDeviceTemplateCatalog,
+  );
+  return {
+    locale: 'zh_cn',
+    deviceTypes: urns.map((urn) => semanticDeviceType(urn, devices.values)),
+    catalogs: [devices.status],
+  };
+}
+
+/**
  * Best-effort semantic projection used by human-facing device capability views.
- * Every catalog is independently bounded and falls back to the raw instance
- * description; the input spec is never mutated.
+ * Every catalog is independently bounded. Capability labels fall back to raw
+ * instance descriptions, while the device type label falls back to its stable
+ * short token; the input spec is never mutated.
  */
 export async function projectDeviceSpecSemantics(
   spec: DeviceSpec,
@@ -603,7 +675,7 @@ export async function projectDeviceSpecSemantics(
   const multiUrl = new URL(MULTI_LANGUAGE_URL);
   multiUrl.searchParams.set('urn', spec.type);
 
-  const [multi, values, services, properties, events, actions] = await Promise.all([
+  const [multi, values, services, properties, events, actions, devices] = await Promise.all([
     loadCatalog(
       cache,
       fetchFn,
@@ -652,6 +724,14 @@ export async function projectDeviceSpecSemantics(
       timeoutMs,
       parseTemplateCatalog,
     ),
+    loadCatalog(
+      cache,
+      fetchFn,
+      CATALOG_URLS.devices,
+      'device-template',
+      timeoutMs,
+      parseDeviceTemplateCatalog,
+    ),
   ]);
 
   return projectWithSources(
@@ -663,6 +743,7 @@ export async function projectDeviceSpecSemantics(
       properties: properties.values,
       events: events.values,
       actions: actions.values,
+      devices: devices.values,
     },
     [
       multi.status,
@@ -671,6 +752,7 @@ export async function projectDeviceSpecSemantics(
       properties.status,
       events.status,
       actions.status,
+      devices.status,
     ],
   );
 }
