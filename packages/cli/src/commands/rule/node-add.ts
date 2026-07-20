@@ -30,6 +30,7 @@ import {
   runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
+import { assertNodeAddAuthoringFlagUsage } from './node-add-authoring-flags.js';
 
 function collectShortcutVariableScopes(
   opts: NodeAddOpts,
@@ -833,6 +834,7 @@ Raw/full-tuple path:
         assertSimplifiedUsage(opts);
         assertPreloadUsage(opts);
         assertNopOptionUsage(opts);
+        assertNodeAddAuthoringFlagUsage(opts);
         assertExplicitBetweenBounds({
           type: opts.type,
           ...(opts.op !== undefined && { op: opts.op }),
