@@ -30,6 +30,10 @@ import {
   runMutationWorkflow,
 } from '../_mutation-guard.js';
 import { type RuleOpts, makeDeps } from './_deps.js';
+import {
+  assertExclusivePreloadSpellings,
+  assertNodeAddAuthoringFlagUsage,
+} from './node-add-authoring-flags.js';
 
 function collectShortcutVariableScopes(
   opts: NodeAddOpts,
@@ -107,68 +111,6 @@ function parseNopDeltaJson(raw: string): NonNullable<AddNodeShortcut['noteDelta'
   return ops as NonNullable<AddNodeShortcut['noteDelta']>;
 }
 
-function assertCfgShortcutExclusivity(opts: NodeAddOpts): void {
-  if (opts.cfg === undefined) return;
-
-  // --cfg selects the raw/full-tuple path for every node type. Keep identity
-  // and command-control flags available, but reject every shortcut authoring
-  // flag that the raw path would otherwise ignore.
-  const shortcutFlags = [
-    ...(opts.deviceDid !== undefined ? ['--device-did'] : []),
-    ...(opts.deviceSiid !== undefined ? ['--device-siid'] : []),
-    ...(opts.deviceProperty !== undefined ? ['--device-property'] : []),
-    ...(opts.deviceAction !== undefined ? ['--device-action'] : []),
-    ...(opts.deviceEvent !== undefined ? ['--device-event'] : []),
-    ...((opts.eventFilter?.length ?? 0) > 0 ? ['--event-filter'] : []),
-    ...((opts.eventFilterInclude?.length ?? 0) > 0 ? ['--event-filter-include'] : []),
-    ...((opts.eventFilterBetween?.length ?? 0) > 0 ? ['--event-filter-between'] : []),
-    ...((opts.eventArgVar?.length ?? 0) > 0 ? ['--event-arg-var'] : []),
-    ...(opts.threshold !== undefined ? ['--threshold'] : []),
-    ...(opts.propertyValue !== undefined ? ['--property-value'] : []),
-    ...(opts.propertyInclude !== undefined ? ['--property-include'] : []),
-    ...(opts.op !== undefined ? ['--op'] : []),
-    ...(opts.params !== undefined ? ['--params'] : []),
-    ...(opts.value !== undefined ? ['--value'] : []),
-    ...(opts.forceOutOfRange === true ? ['--force-out-of-range'] : []),
-    ...(opts.allowNoPush === true ? ['--allow-no-push'] : []),
-    ...(opts.preload !== undefined ? [opts.preload ? '--preload' : '--no-preload'] : []),
-    ...(opts.pos !== undefined ? ['--pos'] : []),
-    ...(opts.simplified !== undefined ? ['--simplified'] : []),
-    ...(opts.text !== undefined ? ['--text'] : []),
-    ...(opts.delta !== undefined ? ['--delta'] : []),
-    ...(opts.background !== undefined ? ['--background'] : []),
-    ...(opts.inputs !== undefined ? ['--inputs'] : []),
-    ...(opts.duration !== undefined ? ['--duration'] : []),
-    ...(opts.interval !== undefined ? ['--interval'] : []),
-    ...(opts.start !== undefined ? ['--start'] : []),
-    ...(opts.end !== undefined ? ['--end'] : []),
-    ...(opts.mingTextShow !== undefined ? ['--ming-text-show'] : []),
-    ...(opts.weekdayOnly === true ? ['--weekday-only'] : []),
-    ...(opts.holidayOnly === true ? ['--holiday-only'] : []),
-    ...(opts.days !== undefined ? ['--days'] : []),
-    ...(opts.varScope !== undefined ? ['--var-scope'] : []),
-    ...(opts.varId !== undefined ? ['--var-id'] : []),
-    ...(opts.varType !== undefined ? ['--var-type'] : []),
-    ...(opts.varValue !== undefined ? ['--var-value'] : []),
-    ...(opts.threshold2 !== undefined ? ['--threshold2'] : []),
-    ...(opts.allowUnknownScope === true ? ['--allow-unknown-scope'] : []),
-    ...(opts.at !== undefined ? ['--at'] : []),
-    ...(opts.sunrise === true ? ['--sunrise'] : []),
-    ...(opts.sunset === true ? ['--sunset'] : []),
-    ...(opts.offsetMin !== undefined ? ['--offset-min'] : []),
-    ...(opts.latitude !== undefined ? ['--latitude'] : []),
-    ...(opts.longitude !== undefined ? ['--longitude'] : []),
-    ...(opts.expr !== undefined ? ['--expr'] : []),
-    ...(opts.defaultExprScope !== undefined ? ['--default-expr-scope'] : []),
-    ...(opts.outputs !== undefined ? ['--outputs'] : []),
-  ];
-
-  if (shortcutFlags.length === 0) return;
-  throw new ConfigError(
-    `--cfg is mutually exclusive with shortcut option(s): ${shortcutFlags.join(', ')}. Put the complete {cfg, inputs, outputs, props} tuple in --cfg, or remove --cfg and use shortcut flags.`,
-  );
-}
-
 function assertNopOptionUsage(opts: NodeAddOpts): void {
   const hasNopOption =
     opts.text !== undefined || opts.delta !== undefined || opts.background !== undefined;
@@ -183,61 +125,8 @@ function assertNopOptionUsage(opts: NodeAddOpts): void {
   if (opts.text !== undefined && opts.delta !== undefined) {
     throw new ConfigError('--text and --delta are mutually exclusive for --type nop');
   }
-  if (opts.cfg !== undefined && hasNopOption) {
-    throw new ConfigError(
-      '--cfg is mutually exclusive with nop shortcut flags --text/--delta/--background',
-    );
-  }
   if (opts.background !== undefined && opts.background.length === 0) {
     throw new ConfigError('--background must not be empty');
-  }
-  const unsupported = [
-    ...(opts.deviceDid !== undefined ? ['--device-did'] : []),
-    ...(opts.deviceSiid !== undefined ? ['--device-siid'] : []),
-    ...(opts.deviceProperty !== undefined ? ['--device-property'] : []),
-    ...(opts.deviceAction !== undefined ? ['--device-action'] : []),
-    ...(opts.deviceEvent !== undefined ? ['--device-event'] : []),
-    ...((opts.eventFilter?.length ?? 0) > 0 ? ['--event-filter'] : []),
-    ...((opts.eventFilterInclude?.length ?? 0) > 0 ? ['--event-filter-include'] : []),
-    ...((opts.eventFilterBetween?.length ?? 0) > 0 ? ['--event-filter-between'] : []),
-    ...((opts.eventArgVar?.length ?? 0) > 0 ? ['--event-arg-var'] : []),
-    ...(opts.threshold !== undefined ? ['--threshold'] : []),
-    ...(opts.propertyValue !== undefined ? ['--property-value'] : []),
-    ...(opts.propertyInclude !== undefined ? ['--property-include'] : []),
-    ...(opts.op !== undefined ? ['--op'] : []),
-    ...(opts.params !== undefined ? ['--params'] : []),
-    ...(opts.value !== undefined ? ['--value'] : []),
-    ...(opts.forceOutOfRange === true ? ['--force-out-of-range'] : []),
-    ...(opts.allowNoPush === true ? ['--allow-no-push'] : []),
-    ...(opts.inputs !== undefined ? ['--inputs'] : []),
-    ...(opts.duration !== undefined ? ['--duration'] : []),
-    ...(opts.interval !== undefined ? ['--interval'] : []),
-    ...(opts.start !== undefined ? ['--start'] : []),
-    ...(opts.end !== undefined ? ['--end'] : []),
-    ...(opts.mingTextShow !== undefined ? ['--ming-text-show'] : []),
-    ...(opts.weekdayOnly === true ? ['--weekday-only'] : []),
-    ...(opts.holidayOnly === true ? ['--holiday-only'] : []),
-    ...(opts.days !== undefined ? ['--days'] : []),
-    ...(opts.varScope !== undefined ? ['--var-scope'] : []),
-    ...(opts.varId !== undefined ? ['--var-id'] : []),
-    ...(opts.varType !== undefined ? ['--var-type'] : []),
-    ...(opts.varValue !== undefined ? ['--var-value'] : []),
-    ...(opts.threshold2 !== undefined ? ['--threshold2'] : []),
-    ...(opts.allowUnknownScope === true ? ['--allow-unknown-scope'] : []),
-    ...(opts.at !== undefined ? ['--at'] : []),
-    ...(opts.sunrise === true ? ['--sunrise'] : []),
-    ...(opts.sunset === true ? ['--sunset'] : []),
-    ...(opts.offsetMin !== undefined ? ['--offset-min'] : []),
-    ...(opts.latitude !== undefined ? ['--latitude'] : []),
-    ...(opts.longitude !== undefined ? ['--longitude'] : []),
-    ...(opts.expr !== undefined ? ['--expr'] : []),
-    ...(opts.defaultExprScope !== undefined ? ['--default-expr-scope'] : []),
-    ...(opts.outputs !== undefined ? ['--outputs'] : []),
-  ];
-  if (unsupported.length > 0) {
-    throw new ConfigError(
-      `--type nop does not accept executable-card option(s): ${unsupported.join(', ')}`,
-    );
   }
 }
 
@@ -286,11 +175,10 @@ function assertPropertyValueUsage(opts: NodeAddOpts): void {
   if (
     opts.deviceDid === undefined ||
     opts.deviceProperty === undefined ||
-    opts.deviceEvent !== undefined ||
-    opts.cfg !== undefined
+    opts.deviceEvent !== undefined
   ) {
     throw new ConfigError(
-      '--property-value requires --device-did plus --device-property and is not valid with --device-event or legacy --cfg',
+      '--property-value requires --device-did plus --device-property and is not valid with --device-event',
     );
   }
   if (opts.propertyValue.length === 0) {
@@ -314,11 +202,10 @@ function assertPropertyIncludeUsage(opts: NodeAddOpts): void {
   if (
     opts.deviceDid === undefined ||
     opts.deviceProperty === undefined ||
-    opts.deviceEvent !== undefined ||
-    opts.cfg !== undefined
+    opts.deviceEvent !== undefined
   ) {
     throw new ConfigError(
-      '--property-include requires --device-did plus --device-property and is not valid with --device-event or legacy --cfg',
+      '--property-include requires --device-did plus --device-property and is not valid with --device-event',
     );
   }
   if (
@@ -349,11 +236,6 @@ function assertEventFilterUsage(opts: NodeAddOpts): void {
       'event comparison filters require --device-event. Property-mode triggers use --op/--threshold or --property-include.',
     );
   }
-  if (opts.cfg !== undefined) {
-    throw new ConfigError(
-      'event comparison filters are mutually exclusive with --cfg. Drop --cfg or hand-craft props.arguments.',
-    );
-  }
 }
 
 function assertForceOutOfRangeUsage(opts: NodeAddOpts): void {
@@ -362,8 +244,7 @@ function assertForceOutOfRangeUsage(opts: NodeAddOpts): void {
     (opts.type !== 'deviceInput' && opts.type !== 'deviceGet') ||
     opts.deviceDid === undefined ||
     opts.deviceProperty === undefined ||
-    opts.deviceEvent !== undefined ||
-    opts.cfg !== undefined
+    opts.deviceEvent !== undefined
   ) {
     throw new ConfigError(
       '--force-out-of-range only applies to typed deviceInput/deviceGet property comparisons',
@@ -384,19 +265,10 @@ function assertSimplifiedUsage(opts: NodeAddOpts): void {
   if (opts.type === 'nop') {
     throw new ConfigError('--simplified applies to executable cards, not the nop canvas note');
   }
-  if (opts.cfg === undefined) return;
-  throw new ConfigError(
-    '--simplified is a shortcut flag and is mutually exclusive with --cfg; set cfg.simplified in the JSON instead',
-  );
 }
 
 function assertPreloadUsage(opts: NodeAddOpts): void {
   if (opts.preload === undefined) return;
-  if (opts.cfg !== undefined) {
-    throw new ConfigError(
-      '--preload/--no-preload is typed-shortcut-only and cannot be combined with --cfg',
-    );
-  }
   if (opts.type === 'varChange') return;
   if (
     (opts.type === 'deviceInput' || opts.type === 'deviceInputSetVar') &&
@@ -516,6 +388,8 @@ interface NodeAddOpts extends RuleOpts {
 export function attachNodeAdd(cmd: Command): void {
   const node = cmd.commands.find((c) => c.name() === 'node') ?? cmd.command('node');
   if (!node.description()) node.description('Node operations within a rule');
+  let preloadSpellingSeen = false;
+  let noPreloadSpellingSeen = false;
   const sub = node
     .command('add')
     .description('Add a node to a rule graph')
@@ -817,7 +691,20 @@ Raw/full-tuple path:
     )
     .action(
       wrap('rule.node.add', async (opts: NodeAddOpts) => {
-        assertCfgShortcutExclusivity(opts);
+        // Commander intentionally folds --preload and --no-preload into one
+        // last-wins boolean. Preserve their distinct parse events so a
+        // contradictory command cannot silently author different graphs based
+        // on argv order.
+        assertExclusivePreloadSpellings({
+          preload: preloadSpellingSeen,
+          noPreload: noPreloadSpellingSeen,
+        });
+        // Raw/full-tuple routing wins for every type. Validate its authoring
+        // exclusivity before parsing even --params/--cfg so a deterministic
+        // ignored-flag error can never depend on JSON, session, or gateway state.
+        if (opts.cfg !== undefined) {
+          assertNodeAddAuthoringFlagUsage(opts);
+        }
         const parsedParams = opts.params !== undefined ? parseParamsJson(opts.params) : undefined;
         const parsedCfg =
           opts.cfg !== undefined ? parseJsonInput<unknown>(opts.cfg, '--cfg') : undefined;
@@ -833,6 +720,11 @@ Raw/full-tuple path:
         assertSimplifiedUsage(opts);
         assertPreloadUsage(opts);
         assertNopOptionUsage(opts);
+        // Preserve the established typed, option-specific diagnostics above;
+        // the central registry then rejects every remaining unconsumed flag.
+        if (opts.cfg === undefined) {
+          assertNodeAddAuthoringFlagUsage(opts);
+        }
         assertExplicitBetweenBounds({
           type: opts.type,
           ...(opts.op !== undefined && { op: opts.op }),
@@ -1008,8 +900,8 @@ Raw/full-tuple path:
           };
         } else {
           // Raw/full-tuple --cfg path. This branch has priority for every node
-          // type; assertCfgShortcutExclusivity above guarantees no shortcut
-          // authoring flag can be silently discarded here.
+          // type; the early registry preflight guarantees no shortcut authoring
+          // flag can be silently discarded here.
           if (parsedCfg === undefined) {
             throw new ConfigError(
               'Either a non-device --type, --device-did (device shortcut), or --cfg (raw/full tuple) is required',
@@ -1110,4 +1002,11 @@ Raw/full-tuple path:
         });
       }),
     );
+
+  sub.on('option:preload', () => {
+    preloadSpellingSeen = true;
+  });
+  sub.on('option:no-preload', () => {
+    noPreloadSpellingSeen = true;
+  });
 }

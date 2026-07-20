@@ -313,6 +313,95 @@ test('between shortcuts reject either omitted bound before snapshots or IPC', as
   }
 });
 
+test('scalar device threshold2 and contradictory preload flags fail before snapshots or IPC', async (t) => {
+  const agent = await startFakeAgent(t);
+  const snapshotsDir = join(agent.root, 'node-authoring-must-not-snapshot');
+  const scenarios = [
+    {
+      args: [
+        '--type',
+        'deviceInput',
+        '--device-did',
+        'd',
+        '--device-property',
+        'temperature',
+        '--op',
+        'eq',
+        '--threshold',
+        '1',
+        '--threshold2',
+        '2',
+      ],
+      message: /--threshold2 only applies to --op between/,
+    },
+    {
+      args: [
+        '--type',
+        'deviceGet',
+        '--device-did',
+        'd',
+        '--device-property',
+        'temperature',
+        '--threshold',
+        '1',
+        '--threshold2',
+        '2',
+      ],
+      message: /--threshold2 only applies to --op between/,
+    },
+    {
+      args: [
+        '--type',
+        'varChange',
+        '--var-scope',
+        'global',
+        '--var-id',
+        'mode',
+        '--var-type',
+        'number',
+        '--op',
+        'eq',
+        '--threshold',
+        '1',
+        '--preload',
+        '--no-preload',
+      ],
+      message: /--preload and --no-preload are mutually exclusive/,
+    },
+    {
+      args: [
+        '--type',
+        'varChange',
+        '--var-scope',
+        'global',
+        '--var-id',
+        'mode',
+        '--var-type',
+        'number',
+        '--op',
+        'eq',
+        '--threshold',
+        '1',
+        '--no-preload',
+        '--preload',
+      ],
+      message: /--preload and --no-preload are mutually exclusive/,
+    },
+  ];
+
+  for (const { args, message } of scenarios) {
+    agent.frames.length = 0;
+    const payload = assertSingleConfig(
+      await runCli(['rule', 'node', 'add', '--rule-id', 'r', ...args], agent, {
+        XGG_SNAPSHOTS_DIR: snapshotsDir,
+      }),
+    );
+    assert.match(payload.error.message, message);
+    assert.deepEqual(agent.frames, []);
+    await assert.rejects(access(snapshotsDir), (error) => error?.code === 'ENOENT');
+  }
+});
+
 test('preload flag misuse fails before Agent guards, snapshots, or IPC', async (t) => {
   const agent = await startFakeAgent(t);
   const scenarios = [
@@ -373,7 +462,7 @@ test('preload flag misuse fails before Agent guards, snapshots, or IPC', async (
   }
 });
 
-test('--cfg rejects every shortcut authoring flag before Agent guards or IPC', async (t) => {
+test('--cfg rejects every shortcut authoring flag before JSON parsing, Agent guards, or IPC', async (t) => {
   const agent = await startFakeAgent(t);
   const shortcutCases = [
     ['--device-did', 'd'],
@@ -389,7 +478,7 @@ test('--cfg rejects every shortcut authoring flag before Agent guards or IPC', a
     ['--property-value', 'open'],
     ['--property-include', '1,2'],
     ['--op', 'eq'],
-    ['--params', '{}'],
+    ['--params', '{'],
     ['--value', 'true'],
     ['--force-out-of-range'],
     ['--allow-no-push'],
@@ -439,13 +528,13 @@ test('--cfg rejects every shortcut authoring flag before Agent guards or IPC', a
           '--type',
           'onLoad',
           '--cfg',
-          '{}',
+          '{',
           ...shortcutArgs,
         ],
         agent,
       ),
     );
-    assert.match(payload.error.message, /--cfg is mutually exclusive with shortcut option/);
+    assert.match(payload.error.message, /--type onLoad raw does not accept authoring option\(s\)/);
     assert.equal(payload.error.message.includes(shortcutArgs[0]), true, shortcutArgs[0]);
     assert.deepEqual(agent.frames, [], shortcutArgs[0]);
   }
@@ -472,11 +561,203 @@ test('nop rejects executable-card flags before Agent guards, snapshots, or IPC',
   ];
 
   const payload = assertSingleConfig(await runCli(args, agent));
-  assert.match(payload.error.message, /--type nop does not accept executable-card option/);
+  assert.match(payload.error.message, /--type nop shortcut does not accept authoring option\(s\)/);
   assert.match(payload.error.message, /--duration/);
   assert.match(payload.error.message, /--interval/);
   assert.match(payload.error.message, /--inputs/);
   assert.deepEqual(agent.frames, []);
+});
+
+test('node-add rejects flags not consumed by the selected modeled type or mode before IPC', async (t) => {
+  const agent = await startFakeAgent(t);
+  const snapshotsDir = join(agent.root, 'unused-authoring-flag-must-not-snapshot');
+  const scenarios = [
+    {
+      args: ['--type', 'onLoad', '--duration', '5s'],
+      message: /--type onLoad shortcut does not accept authoring option\(s\): --duration/,
+    },
+    {
+      args: ['--type', 'delay', '--duration', '5s', '--interval', '1s'],
+      message: /--type delay shortcut does not accept authoring option\(s\): --interval/,
+    },
+    {
+      args: ['--type', 'logicNot', '--inputs', '2'],
+      message: /--type logicNot shortcut does not accept authoring option\(s\): --inputs/,
+    },
+    {
+      args: [
+        '--type',
+        'deviceOutput',
+        '--device-did',
+        'did',
+        '--device-action',
+        'toggle',
+        '--params',
+        '{}',
+        '--device-property',
+        'on',
+        '--value',
+        'true',
+      ],
+      message: /action mode.*property mode.*mutually exclusive/,
+    },
+    {
+      args: [
+        '--type',
+        'deviceInput',
+        '--device-did',
+        'did',
+        '--device-property',
+        'temperature',
+        '--event-filter',
+        '1=1',
+      ],
+      message: /event comparison filters require --device-event/,
+    },
+    {
+      args: [
+        '--type',
+        'deviceInput',
+        '--device-did',
+        'did',
+        '--device-event',
+        'changed',
+        '--allow-no-push',
+      ],
+      message: /deviceInput event mode does not accept authoring option\(s\): --allow-no-push/,
+    },
+    {
+      args: [
+        '--type',
+        'deviceInputSetVar',
+        '--device-did',
+        'did',
+        '--device-property',
+        'temperature',
+        '--device-event',
+        'changed',
+      ],
+      message: /cannot mix --device-property with --device-event/,
+    },
+    {
+      args: [
+        '--type',
+        'deviceInputSetVar',
+        '--device-did',
+        'did',
+        '--device-property',
+        'temperature',
+        '--event-arg-var',
+        '1=global.value',
+      ],
+      message: /property mode does not accept authoring option\(s\): --event-arg-var/,
+    },
+    {
+      args: [
+        '--type',
+        'deviceInputSetVar',
+        '--device-did',
+        'did',
+        '--device-event',
+        'changed',
+        '--event-arg-var',
+        '1=global.value',
+        '--var-scope',
+        'global',
+        '--var-id',
+        'value',
+      ],
+      message: /cannot mix --event-arg-var with --var-scope\/--var-id/,
+    },
+  ];
+
+  for (const { args, message } of scenarios) {
+    agent.frames.length = 0;
+    const result = await runCli(['rule', 'node', 'add', '--rule-id', 'r', ...args], agent, {
+      XGG_SNAPSHOTS_DIR: snapshotsDir,
+    });
+    const payload = assertSingleConfig(result);
+    assert.match(payload.error.message, message, args.join(' '));
+    assert.deepEqual(agent.frames, [], args.join(' '));
+    await assert.rejects(access(snapshotsDir), (error) => error?.code === 'ENOENT');
+  }
+});
+
+test('node-add operational and shared UI flags pass the authoring allowlist', async (t) => {
+  const agent = await startFakeAgent(t);
+  const snapshotsDir = join(agent.root, 'operational-flags-must-not-be-authoring-flags');
+  const result = await runCli(
+    [
+      'rule',
+      'node',
+      'add',
+      '--rule-id',
+      'r',
+      '--type',
+      'onLoad',
+      '--id',
+      'load',
+      '--pos',
+      '1,2,200,120',
+      '--simplified',
+      'false',
+      '--no-snapshot',
+      '--no-validate',
+      '--no-var-check',
+      '--snapshots-dir',
+      snapshotsDir,
+      '--base-url',
+      baseUrl,
+      '--session-file',
+      agent.sessionFile,
+      '--timeout',
+      'NaN',
+      '--pretty',
+      '--no-refresh-hint',
+      '--no-next-hint',
+    ],
+    agent,
+    { XGG_AGENT_MODE: '0' },
+  );
+  const payload = assertSingleConfig(result);
+
+  assert.equal(payload.error.details.flag, '--timeout');
+  assert.doesNotMatch(payload.error.message, /authoring option/);
+  assert.deepEqual(agent.frames, []);
+  await assert.rejects(access(snapshotsDir), (error) => error?.code === 'ENOENT');
+});
+
+test('node-add fallback modes retain downstream selector and variable-type diagnostics', async (t) => {
+  const agent = await startFakeAgent(t);
+  const scenarios = [
+    {
+      args: ['--type', 'deviceOutput', '--device-did', 'did'],
+      message: /deviceOutput shortcut requires either --device-action or --device-property/,
+    },
+    {
+      args: ['--type', 'varChange', '--var-type', 'boolean', '--threshold', '1'],
+      message: /--var-type "boolean" is not a valid gateway variable type/,
+    },
+    {
+      args: ['--type', 'varGet', '--var-type', 'boolean', '--var-value', 'open'],
+      message: /--var-type "boolean" is not a valid gateway variable type/,
+    },
+  ];
+
+  for (const { args, message } of scenarios) {
+    agent.frames.length = 0;
+    const payload = assertSingleConfig(
+      await runCli(['rule', 'node', 'add', '--rule-id', 'r', ...args, '--no-snapshot'], agent, {
+        XGG_AGENT_MODE: '0',
+      }),
+    );
+    assert.match(payload.error.message, message);
+    assert.doesNotMatch(payload.error.message, /authoring option/);
+    assert.equal(
+      agent.frames.some(({ method }) => method !== '$ping'),
+      false,
+    );
+  }
 });
 
 test('exprHeight position rejects unsupported card types before Agent guards or IPC', async (t) => {

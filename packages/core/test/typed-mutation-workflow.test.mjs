@@ -13,6 +13,7 @@ import {
   addEdge,
   addNode,
   agentCall,
+  assertExplicitBetweenBounds,
   createBackup,
   createInMemoryMutationLeaseCoordinator,
   createIpcServer,
@@ -586,6 +587,61 @@ test('between shortcuts require both explicit bounds before session, spec, lease
     }
   }
 
+  assert.deepEqual(effects, { session: 0, spec: 0, ipcClient: 0 });
+});
+
+test('scalar device comparisons reject threshold2 before session while variable replay keeps v2', async () => {
+  const effects = { session: 0, spec: 0, ipcClient: 0 };
+  const deps = {
+    baseUrl,
+    store: {
+      async read() {
+        effects.session += 1;
+        throw new Error('session access must not happen');
+      },
+    },
+    ipcClient: () => {
+      effects.ipcClient += 1;
+      throw new Error('lease or graph access must not happen');
+    },
+  };
+  const getDeviceSpec = async () => {
+    effects.spec += 1;
+    throw new Error('spec access must not happen');
+  };
+
+  for (const type of ['deviceInput', 'deviceGet']) {
+    for (const op of [undefined, 'eq', 'gt']) {
+      await assert.rejects(
+        addNode(
+          {
+            ruleId,
+            shortcut: {
+              type,
+              deviceDid: 'device1',
+              deviceProperty: 'temperature',
+              ...(op === undefined ? {} : { op }),
+              threshold: 1,
+              threshold2: 2,
+            },
+            getDeviceSpec,
+            varCheck: false,
+          },
+          deps,
+        ),
+        (error) =>
+          error instanceof ConfigError &&
+          /--threshold2 only applies to --op between/.test(error.message),
+        `${type}: ${String(op)}`,
+      );
+    }
+  }
+
+  for (const type of ['varChange', 'varGet']) {
+    assert.doesNotThrow(() =>
+      assertExplicitBetweenBounds({ type, op: 'eq', threshold: 1, threshold2: 2 }),
+    );
+  }
   assert.deepEqual(effects, { session: 0, spec: 0, ipcClient: 0 });
 });
 
