@@ -224,6 +224,12 @@ const HINTS: HintRule[] = [
   {
     code: 'CONFIG',
     command: '*',
+    messageMatches: '卡片变量类型不匹配',
+    hint: 'The referenced gateway variable exists, but its stored number/string type does not match this card. Point the card at a compatible variable or recreate it with the required type; error.details.issues lists every exact reference path.',
+  },
+  {
+    code: 'CONFIG',
+    command: '*',
     messageMatches: '卡片配置有误',
     hint: 'A card failed the save-button validator (field/pin/schema). Fix the field at the path in error.message; every issue is in error.details.issues. Dry-run with `xgg rule validate --rule-id <id>`.',
   },

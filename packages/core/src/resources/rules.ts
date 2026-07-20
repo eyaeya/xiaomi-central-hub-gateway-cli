@@ -10,6 +10,7 @@ import type {
 import { Device as DeviceSchema, isGhostDevice } from '../schemas/device.js';
 import {
   type MiotActionVariableDtype,
+  deviceOutputVariableRefUnsupportedReason,
   findDuplicateMiotActionInputPiids,
   findMiotActionInputParamCollisions,
   isMiotActionIntegerFormat,
@@ -87,7 +88,10 @@ import { layoutGraph } from '../usecases/layout-graph.js';
 import { lintGraph } from '../usecases/lint-graph.js';
 import { arePinColorsCompatible, resolvePinColor } from '../usecases/pin-colors.js';
 import { checkReachability } from '../usecases/reachability.js';
-import { validateGraphOrThrow } from '../usecases/validate-graph.js';
+import {
+  validateCanonicalDeviceOutputVariableRefsOrThrow,
+  validateGraphOrThrow,
+} from '../usecases/validate-graph.js';
 import { scanVariableReference } from '../usecases/variable-reference.js';
 import { nextCardPosition, sizedPos } from './card-geometry.js';
 import { annotateServiceDescription } from './device-partitions.js';
@@ -684,7 +688,7 @@ async function setRuleEnable(
 export interface EnableRuleOptions {
   // F23 enable-gate (2026-05-30): default true. Before flipping `enable` on,
   // fetch the live graph + avail-vars and run the save()-equivalent validator
-  // (per-card config + variable existence/scope). The official UI has no
+  // (per-card config + variable existence/scope/type). The official UI has no
   // separate "enable" step — save() is the only path to an enabled rule and it
   // refuses a graph with lost/ghost vars. The CLI split save into set + enable,
   // so enable is the universal funnel where we restore that invariant: an AI
@@ -693,6 +697,26 @@ export interface EnableRuleOptions {
   // (`--no-validate`). disableRule is never gated.
   validate?: boolean;
   getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
+}
+
+function graphHasDeviceOutputVariableRef(nodes: readonly unknown[]): boolean {
+  const isVariableRef = (value: unknown): boolean =>
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>).scope === 'string' &&
+    typeof (value as Record<string, unknown>).id === 'string' &&
+    typeof (value as Record<string, unknown>).dtype === 'string';
+
+  return nodes.some((rawNode) => {
+    if (rawNode === null || typeof rawNode !== 'object' || Array.isArray(rawNode)) return false;
+    const node = rawNode as Record<string, unknown>;
+    if (node.type !== 'deviceOutput' || node.props === null || typeof node.props !== 'object') {
+      return false;
+    }
+    const props = node.props as Record<string, unknown>;
+    return isVariableRef(props) || (Array.isArray(props.ins) && props.ins.some(isVariableRef));
+  });
 }
 
 async function enableRuleWithinWorkflow(
@@ -734,11 +758,25 @@ async function enableRuleWithinWorkflow(
     // Keep the purely local reachability gate before variable/spec lookups so
     // a statically dead graph is rejected after getGraph and before any
     // follow-up gateway RPC (especially before the enable write funnel).
+    const requireCanonicalDeviceOutputVariableRefs = graphHasDeviceOutputVariableRef(body.nodes);
     await validateGraphOrThrow({
       graph: { id, nodes: body.nodes },
       listAvailVars: (ruleId: string) => listAvailVarsForRule(ruleId, deps),
       ...(opts.getDeviceSpec !== undefined && { getDeviceSpec: opts.getDeviceSpec }),
+      ...(opts.getDeviceSpec !== undefined &&
+        requireCanonicalDeviceOutputVariableRefs && {
+          requireCanonicalDeviceOutputVariableRefs: true,
+        }),
     });
+    if (opts.getDeviceSpec === undefined && requireCanonicalDeviceOutputVariableRefs) {
+      await validateCanonicalDeviceOutputVariableRefsOrThrow({
+        graph: { nodes: body.nodes },
+        getDeviceSpec: (urn: string) =>
+          getDeviceSpec(urn, {
+            ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+          }),
+      });
+    }
   }
   return setRuleEnable(id, true, deps);
 }
@@ -888,7 +926,7 @@ async function setGraphWithinWorkflow(
         });
       }
     }
-    // F23: opt-in for the variable-existence check. The CLI `rule set` /
+    // F23/#173: opt in to the variable existence/scope/type check. The CLI `rule set` /
     // `rule node add` paths chain many setGraph calls; auto-fetching the
     // avail-vars list twice per write would double the per-write RPC count
     // on common authoring flows. Use `xgg rule validate --rule-id <id>` for
@@ -1008,7 +1046,7 @@ async function upsertGraphWithinWorkflow(
 
   const { allowCfgOverwrite: _allowCfgOverwrite, expectAbsent: _expectAbsent, ...setOpts } = opts;
   // F23 save()-parity (2026-05-30): `rule set` is the CLI analog of the UI Save
-  // button, and the official save() runs the variable-existence check. Build
+  // button, and the official save() runs the variable inventory/type check. Build
   // listAvailVars by default (unless validation is off or the caller already
   // supplied one) so a copied / stale body whose var cards reference a foreign
   // rule's local scope is rejected at the write — not silently shipped to
@@ -1416,7 +1454,7 @@ export interface AddNodeInput {
   /** Optional pure fake-spec seam for offline tests and embedders. */
   getDeviceSpec?: (urn: string) => Promise<DeviceSpec>;
   validate?: boolean;
-  // F66f (2026-05-31) — opt-out of the incremental var-existence sweep.
+  // F66f/#173 — opt out of the incremental online variable existence/type sweep.
   // Defaults to ON (mirrors the UI save() nodeCheckTool variable phase). Set
   // to false for raw probes / restore flows that knowingly touch a graph
   // whose var refs the gateway has not yet materialised.
@@ -1880,7 +1918,7 @@ async function addNodeWithinWorkflow(
       // timeRange / varChange / alarmClock) build a node entirely from
       // user-supplied flags — no gateway device lookup or MIoT spec fetch.
       rawNode = synthesizeNonDeviceShortcut(input.shortcut);
-      // (2026-05-29 save-flow parity) var-existence pre-check for the four
+      // (2026-05-29 save-flow parity) variable inventory pre-check for the four
       // var-referencing shortcuts, mirroring the device*SetVar guard below and
       // the official save() variable pass. Runs AFTER synthesis so field/op/
       // required-flag errors surface first — matching the official save() order
@@ -1890,7 +1928,7 @@ async function addNodeWithinWorkflow(
       const sc = input.shortcut;
       // F66h2 (2026-05-31 live probe): honor input.varCheck === false so
       // the CLI --no-var-check escape hatch actually bypasses ALL three
-      // var-existence pre-checks (this one, deviceInputSetVar/deviceGetSetVar
+      // variable inventory pre-checks (this one, deviceInputSetVar/deviceGetSetVar
       // below, and the multi-arg event-arg-var path). Pre-F66h2 the F66f
       // commit wired only the F66f sweep (validate-graph layer) to the flag,
       // leaving these three legacy pre-checks unconditional — so the
@@ -2049,7 +2087,7 @@ async function addNodeWithinWorkflow(
   // parsed; nothing new to lint at the canvas-edge level.
   //
   // F66f (2026-05-31) — wire listAvailVars so validateGraphOrThrow's
-  // var-existence pass fires on every additive write (default-on, matches
+  // online variable existence/type pass fires on every additive write (default-on, matches
   // the UI save() nodeCheckTool variable phase). Opt out via varCheck:
   // false for raw probes / restore flows.
   await setGraph({ id: current.id, nodes: updatedNodes, cfg: refreshTimestamp(summary) }, deps, {
@@ -2424,6 +2462,18 @@ function parseVariableParamObject(
   const marker = (raw as Record<string, unknown>).$var;
   if (typeof marker !== 'string') return null;
   return parseVariableReference(marker, dtype);
+}
+
+function assertCanonicalDeviceOutputVariableTarget(property: MiotProperty, context: string): void {
+  const reason = deviceOutputVariableRefUnsupportedReason(property);
+  if (reason !== null) {
+    throw new ConfigError(`${context}: ${reason}`, {
+      context,
+      property: property.type,
+      format: property.format,
+      valueList: property['value-list'],
+    });
+  }
 }
 
 function propertyRangeFields(property: MiotProperty): Record<string, number> {
@@ -3135,13 +3185,17 @@ function synthesizeNodeFromShortcut(
       for (const { piid, property, paramKey } of actionInputs) {
         const rawValue = suppliedParams[paramKey];
         const varRef = parseVariableParamObject(rawValue, miotActionVariableDtype(property.format));
-        if (varRef)
+        if (varRef) {
+          assertCanonicalDeviceOutputVariableTarget(
+            property,
+            `action input "${paramKey}" (piid=${piid})`,
+          );
           ins.push({
             piid,
             ...varRef,
             ...variableRangeFields(varRef, property, `action input "${paramKey}" (piid=${piid})`),
           });
-        else
+        } else {
           ins.push({
             piid,
             value: coerceDeviceOutputLiteral(
@@ -3150,6 +3204,7 @@ function synthesizeNodeFromShortcut(
               `action input "${paramKey}" (piid=${piid})`,
             ),
           });
+        }
       }
       return {
         id,
@@ -3198,6 +3253,12 @@ function synthesizeNodeFromShortcut(
         escapedLiteral === null && shortcut.value.startsWith('$')
           ? parseVariableReference(shortcut.value, miotActionVariableDtype(property.format))
           : null;
+      if (varRef !== null) {
+        assertCanonicalDeviceOutputVariableTarget(
+          property,
+          `property "${shortcut.deviceProperty}"`,
+        );
+      }
       const coerced =
         varRef === null
           ? coerceDeviceOutputLiteral(
@@ -4182,7 +4243,7 @@ export interface UpdateNodeInput {
   ruleId: string;
   nodeId: string;
   patch: Record<string, unknown>;
-  // F66f (2026-05-31) — see AddNodeInput.varCheck. Default-on var-existence
+  // F66f/#173 — see AddNodeInput.varCheck. Default-on online variable inventory/type
   // sweep; opt out for raw probes.
   varCheck?: boolean;
 }
@@ -4266,6 +4327,10 @@ export interface RemoveNodeInput {
   ruleId: string;
   nodeId: string;
   cascadeEdges?: boolean;
+  // F66f/#173 — opt out of the default online variable existence/type sweep.
+  // Validation runs against the remaining graph, so removing the offending
+  // reference itself stays possible without an escape hatch.
+  varCheck?: boolean;
 }
 
 // Cascade is opt-in: by default we leave dangling edge strings in place so
@@ -4333,6 +4398,9 @@ async function removeNodeWithinWorkflow(
   // only way out). Cascade=true already scrubs incoming references.
   await setGraph({ id: current.id, nodes: remainingNodes, cfg: refreshTimestamp(summary) }, deps, {
     skipLint: true,
+    ...(input.varCheck !== false && {
+      listAvailVars: (ruleId: string) => listAvailVarsForRule(ruleId, deps),
+    }),
   });
   return { nodeId: input.nodeId, removedEdges };
 }
@@ -4764,7 +4832,7 @@ async function relayoutGraphWithinWorkflow(
   // pre-existing lint error (authored before the gate), blocking layout
   // would prevent the visual cleanup the user is asking for.
   // F66f (2026-05-31) — wire listAvailVars (default-on). Even a pos-only
-  // write is still an authoring touchpoint, so the var-existence sweep
+  // write is still an authoring touchpoint, so the variable inventory/type sweep
   // gives the agent symmetric coverage with the rest of the F66f surface.
   await setGraph({ id: current.id, nodes: updatedNodes, cfg: refreshTimestamp(summary) }, deps, {
     validate: opts.validate !== false,

@@ -222,7 +222,8 @@ xgg rule lint --rule-id <rule-id> --strict
 - 先跑 `xgg device spec <did> --pretty`，按输出中的用途选择能力：事件与 notify 属性用于 `deviceInput` / `deviceInputSetVar`，read 属性用于 `deviceGet` / `deviceGetSetVar`，write 属性与 action 用于 `deviceOutput`；typed 创建会在写图前硬检对应的 `notify` / `read` / `write` access，不要凭设备名猜字段。两类 push source 还要求设备 `pushAvailable=true`；只有明确在目标网关做运行时探针时才加 `--allow-no-push`。该 flag 只放行本次 typed node-add 的设备级 push gate，不持久化、不绕过任何 property access，也不证明目标固件会发出事件；随后在线 `validate --spec-aware` 仍会如实诊断该 no-push 节点。含 access mismatch 或 no-push source 的 strict export 会在生成重放脚本前拒绝；permissive export 对 no-push source 会明确 warning 并补回 transient `--allow-no-push`，不会把它伪装成持久能力。
 - CLI 与 Core SDK 的 typed `rule node add` 显式 `--id` 只能使用非空 ASCII 字母数字 `[A-Za-z0-9]+`；省略时会生成满足该约束的 ID。旧图中的其他 ID 不会被静默改名，`rule validate` / `rule lint` 会逐节点列出告警及受影响的 edge 引用；`rule export` 会显式加入 `--allow-legacy-id`，旧 JSON export 也会在 render/import 时仅对 modeled typed 节点补齐该 replay intent。含 `:` 的旧 ID 由导出脚本使用 `--from-node-id/--from-pin/--to-node-id/--to-pin` 分离传递，避免 `NID:pin` 歧义。所有兼容 intent 都会拒绝新建、raw 与已兼容 ID；未来/opaque 卡片仍走保留完整 tuple 的 raw `--cfg` 路径。
 - `deviceInput` 的 `--device-property` 属性模式和 `--device-event` 事件模式二选一，不能混用。事件参数比较只用 `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--op`、`--threshold`、`--threshold2`、`--property-value`、`--property-include`、`--force-out-of-range` 只属于属性模式，event 模式传入时会在读取 session/spec、快照或写网关前拒绝。
-- `deviceOutput --value '$scope.id'` 表示变量引用；字符串字面值若以 `$` 开头，需要把第一个 `$` 写两次，例如 `--value '$$hello'` 实际写入 `$hello`。`rule export` 会自动添加这一层转义。数值 property-write 严格解析完整十进制/scientific token：float/double 必须有限，整数必须是精确 safe integer，并服从非空 value-list 与有效 value-range/step。
+- `deviceOutput --value '$scope.id'` 表示变量引用；字符串字面值若以 `$` 开头，需要把第一个 `$` 写两次，例如 `--value '$$hello'` 实际写入 `$hello`。`rule export` 会自动添加这一层转义。数值 property-write literal 严格解析完整十进制/scientific token：float/double 必须有限，整数必须是精确 safe integer，并服从非空 value-list 与有效 value-range/step。变量引用只支持不含 `value-list` 字段的 string 目标，或不含该字段且带有效 value-range 的 number 目标；boolean 与任何存在 `value-list` 字段的目标（包括空数组 `[]`）在固定网页 UI 中都是 literal-only，下发 typed `$var` 会被拒绝。boolean 动态状态应先把 number 0/1 分支，再分别连到 literal `false` / `true` 的两个 `deviceOutput`。
+- 在线 `rule validate` 及默认图写路径会按精确 `scope + id` 读取变量清单，并按引用位置核对实际 `number|string` 类型；`--no-var-check` 只为明确 raw probe 保留，会跳过需要在线清单的变量存在性和类型检查，但合法 scope 仍是本地图不变量，也不会关闭其他 schema、spec 或 enable gate。
 - 连线完成后跑 `xgg rule layout <rule-id>`，让可执行卡片按数据流排布；`nop` 的自由位置会保留，避免备注离开它所说明的区域。
 - 启用前跑 `xgg rule validate --rule-id <rule-id> --spec-aware` 和 `xgg rule lint --rule-id <rule-id> --strict`。`deviceOutput` 必须使用 spec-aware 校验，才能核对当前 property-write 或 `action.in` 契约。只有用户授权运行时才执行 `xgg rule enable <rule-id>`，触发后用 `xgg rule logs` 验收；否则用 `rule view` 确认保持 `enable=false`。
 - 对专门构造、完整下游均为纯软件 marker 的 Agent 探针，可用 `onLoad` 配合 `rule disable` + `rule enable` 重放，不需要人类物理按按钮；既有规则可能从 onLoad 驱动物理动作或业务变量，先审查完整下游并取得授权再重放。
@@ -271,7 +272,7 @@ xgg rule node add --rule-id <rule-id> --type deviceOutput \
   --params '{"level":4,"enabled":true,"label":"hello","volume":{"$var":"global.targetVolume"}}'
 ```
 
-`--params` 的 key 必须与 `action.in` 引用的 property short-name 一一对应，不能缺失、额外或重复；`action.in` 不能重复 PIID，不同 PIID 的 short-name 也必须唯一。持久化 `props.ins[i].piid` 必须严格等于 `action.in[i]`，因为网关 bundle 按索引绑定参数。原生 JSON 类型完全由 MIoT format 决定；只有数值 format 才应用数值 value-list/value-range/step，即使异常或厂商扩展 spec 给 bool/string 附带 numeric value-list，也不能把它们持久化成 number。非有限边界、`min > max` 或 `step <= 0` 的 range 会拒绝，number 变量还必须有同一份有效 min/max/step。整数动作入参只接受 JavaScript 安全整数，避免 `int64` / `uint64` 在 JSON number 中静默舍入；超出范围时命令会拒绝，不能声称已无损覆盖 64 位整数全集。
+`--params` 的 key 必须与 `action.in` 引用的 property short-name 一一对应，不能缺失、额外或重复；`action.in` 不能重复 PIID，不同 PIID 的 short-name 也必须唯一。持久化 `props.ins[i].piid` 必须严格等于 `action.in[i]`，因为网关 bundle 按索引绑定参数。原生 JSON 类型完全由 MIoT format 决定；只有数值 format 才应用数值 value-list/value-range/step，即使异常或厂商扩展 spec 给 bool/string 附带 numeric value-list，也不能把它们持久化成 number。非有限边界、`min > max` 或 `step <= 0` 的 range 会拒绝，number 变量还必须有同一份有效 min/max/step。action 的变量参数与 property-write 一样不支持 boolean 或任何存在 `value-list` 字段的目标（包括空数组）；网关保存 shape 能容纳旧 `dtype:"boolean"` ref，不等于执行器行为已有证据。整数动作入参只接受 JavaScript 安全整数，避免 `int64` / `uint64` 在 JSON number 中静默舍入；超出范围时命令会拒绝，不能声称已无损覆盖 64 位整数全集。
 
 数值 property 比较确需越过有效 spec 的 range/step 时，`deviceInput` / `deviceGet` 可显式用 `--force-out-of-range`；它不绕过无效 range metadata（非有限、min>max、step<=0）、value-list、finite/safe-integer、operator 或 operand shape 校验，不能当作通用关闭校验。
 
@@ -289,7 +290,7 @@ xgg rule import --from-file rule-export.json --target-id <new-rule-id> > clone.s
 
 脚本先只读预检已捕获的规则内变量；若导出包含规则内变量，same-ID 重放会在 staging 前用兼容性保护准备这些变量，随后第一笔 **target-graph write** 用 `rule set --allow-cfg-overwrite` 原子写入空图和 `enable=false`（`--target-name` 也在这里生效）。clone 保留 `--expect-absent`，先成功创建禁用空壳，再准备 `R<target-id>` 变量。此后所有 node/edge 都在禁用状态下重建；源规则启用时只在完整组装后执行末尾 `rule enable`，源规则禁用时保持禁用。same-ID 重放会替换目标图，而且整段脚本是逐命令事务，不是 replay-wide lease：执行期间禁止网页画布、其他 xgg 进程或 API 客户端并发修改目标；staging 后失败会留下禁用的 partial graph，用逐写快照检查或恢复。
 
-对当前 spec 有效、已建模的节点，完整 typed `include` / `between`、`preload`、`simplified`、`nop`、设备写入参数与规则内变量可在 `--strict-roundtrip` 下往返。strict export 会先核对持久化 property-write 的属性存在性/写权限、原生 literal/数值域和变量 metadata，并核对 `deviceOutput.props.ins` 与 `action.in` 的逐索引对应、PIID/short-name 唯一性及同类输入契约；任何 typed replay 无法复现的设备写入或其他语义损失 warning 都会拒绝导出。permissive export 会保留明确 warning，并用索引语义、唯一占位 key 及无原型参数字典避免乱序、重复 key 或 `__proto__` 造成静默丢值。未来新增但当前 CLI 尚未建模的节点会导出成 opaque `--cfg` 结构，允许同 ID 无损重放并给出信息性 warning；CLI 无法安全发现其中的规则内引用，因此带 opaque 节点的导出会拒绝 `--target-id` 克隆。
+对当前 spec 有效、已建模的节点，完整 typed `include` / `between`、`preload`、`simplified`、`nop`、设备写入参数与规则内变量可在 `--strict-roundtrip` 下往返。strict export 会先核对持久化 property-write 的属性存在性/写权限、原生 literal/数值域和变量 metadata，并核对 `deviceOutput.props.ins` 与 `action.in` 的逐索引对应、PIID/short-name 唯一性及同类输入契约；它还会读取源网关 local/global 变量的实际类型，按每个引用路径拒绝类型不匹配或缺失的 global 依赖，避免重放在 staging 后才失败。任何 typed replay 无法复现的设备写入或其他语义损失 warning 都会拒绝导出。permissive export 会保留明确 warning，并用索引语义、唯一占位 key 及无原型参数字典避免乱序、重复 key 或 `__proto__` 造成静默丢值。未来新增但当前 CLI 尚未建模的节点会导出成 opaque `--cfg` 结构，允许同 ID 无损重放并给出信息性 warning；CLI 无法安全发现其中的规则内引用，因此带 opaque 节点的导出会拒绝 `--target-id` 克隆。
 
 ### 分区设备与能力感知替换
 
@@ -332,14 +333,14 @@ xgg rule validate --body candidate.json
 jq '.' candidate.json | xgg rule validate --stdin
 ```
 
-需要额外核对设备 property/event 参数与 dtype、各 property 卡所需的 `notify` / `read` / `write` access，以及 `deviceOutput` 的 property-write 或 `action.in`/`props.ins` 输入契约时，显式加 `--spec-aware`；设备卡图的主验收流程必须使用它。property-write 检查覆盖属性存在性、write access、literal 原生类型/统一数值域及变量 dtype/有效 range metadata；action 检查另覆盖 missing/extra/duplicate PIID、逐索引顺序和重复 short-name。该选项会访问公网 MIoT spec registry；`--rule-id` 模式还会读取一次当前设备清单，对 property/event push source 报路径化 `pushAvailable` 诊断。离线 `--body` / `--stdin` 没有设备实例清单，不能证明 push 可用。registry 404 会作为 warning 告知该 URN 的 spec 检查已跳过，超时、5xx 或无效 spec 会作为独立 error issue 返回，同时保留同一次运行已发现的本地结构/表达式问题：
+需要额外核对设备 property/event 参数与 dtype、各 property 卡所需的 `notify` / `read` / `write` access，以及 `deviceOutput` 的 property-write 或 `action.in` / `props.ins` 输入契约时，显式加 `--spec-aware`；设备卡图的主验收流程必须使用它。property-write 检查覆盖属性存在性、write access、literal 原生类型/统一数值域、变量实际类型与有效 range metadata，以及 boolean/value-list-backed output ref 的 literal-only 边界；action 检查另覆盖 missing/extra/duplicate PIID、逐索引顺序、重复 short-name 和同一 literal/变量契约。`--rule-id` 模式还会读取一次当前设备清单，对 property/event push source 报路径化 `pushAvailable` 诊断；离线 `--body` / `--stdin` 既没有设备实例清单，也没有网关变量清单，不能证明 push 可用或变量实际类型正确。显式 spec-aware validation 中 registry 404 是 warning，超时、5xx 或无效 spec 是独立 error，并保留同次运行发现的本地问题：
 
 ```bash
 xgg rule validate --body candidate.json --spec-aware
 xgg rule validate --rule-id <rule-id> --spec-aware
 ```
 
-`--rule-id` 模式本身会从已登录 daemon 读取网关规则与可用变量；是否访问公网 spec、以及是否追加 live `pushAvailable` 复核，仍只由 `--spec-aware` 决定。`--allow-no-push` waiver 不写入图，因此探针节点在这里仍会得到 no-push error；这是有意保留的事实诊断，不代表之前的单次 probe flag 被扩大成持久能力声明。
+`--rule-id` 模式本身会从已登录 daemon 读取网关规则与可用变量。上述“是否访问 registry 由 `--spec-aware` 决定”只针对 `rule validate`；`rule enable` 对 persisted `deviceOutput` variable ref 另做聚焦、fail-closed 的 spec 证明，只查询实际含 output ref 的 URN，不查询无关旧节点，且 404、网络失败或无效 spec 都会在 enable 写入前停止。`--allow-no-push` waiver 不写入图，因此在线 spec-aware validation 仍会如实报告 no-push；这是有意保留的事实诊断，不代表之前的单次 probe flag 被扩大成持久能力声明。
 
 ## 常用命令
 
@@ -415,7 +416,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 - 在已审计的极客版网页 bundle 控制路径中，规则、变量、设备与备份操作走加密 WebSocket 二进制协议承载的 RPC；`xgg` 复用了这条路径，登录使用米家 App 提供的 6 位码。这不是对所有固件、服务或未来版本“绝不存在 HTTP API”的证明。
 - 已打开的网关网页不会自动看到 CLI 写入的规则、变量或 scope。CLI 写入后请刷新网页，再判断 UI 是否同步。
 - `xgg device list` 与默认 replacement discovery 都排除 ghost device。显式聚焦 ghost 的替换 dry-run 仅返回 `eligible:false` 诊断结果且没有 `planId`；不要把网页标为“设备已丢失”的设备作为规则目标。
-- 变量类型只有 `number` 和 `string`。开关状态建议用数字 `1/0` 或字符串表示。
+- 变量类型只有 `number` 和 `string`。规则引用会按使用点核对实际类型：`varChange` / `varGet` 使用卡片 `varType`，`varSetNumber` 的 target 与所有变量 operand 必须是 number，`varSetString` 的 target 必须是 string；固定 UI 对 `varSetString` operand 未做类型过滤，因此这里保守允许 number/string。设备 capture/output 则按 MIoT 投影 dtype 校验。开关状态建议用数字 `1/0` 或字符串表示。
 - 变量命令的 `--value` 按变量类型处理：`number` 使用数值转换；`string` 原样保存收到的 argv 文本。`--value Seed` 保存 `Seed`，而 `--value '"Seed"'` 会把双引号也作为数据保存；不要为字符串额外添加 JSON 引号。
 - `variable get-config` 读取单个变量的配置；`set-config` 只更新显示名，不改类型或当前值，并按其他写命令一样执行 snapshot guard。
 - 变量 scope 默认用 `global`。规则本地变量使用当前规则的 `R<rule-id>`；变量写命令会确认其中的 rule id 确实存在，规则节点也只接受与自身 `--rule-id` 匹配的本地 scope。合法本地 scope 不需要 `--allow-unknown-scope`；跨规则、不存在或自定义 scope 会告警并在严格校验中失败。如果 rule id 含连字符，本地变量 scope 无法按该约定合法创建，建议改用 `global` 或使用纯字母数字 rule id。

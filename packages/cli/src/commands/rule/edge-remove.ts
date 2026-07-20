@@ -16,7 +16,7 @@ interface EdgeRemoveOpts extends RuleOpts, EdgeEndpointOpts {
   snapshot?: boolean;
   snapshotsDir?: string;
   refreshHint?: boolean;
-  // F66f (2026-05-31) — opt out of the incremental var-existence sweep.
+  // F66f/#173 — opt out of the incremental online variable existence/type sweep.
   varCheck?: boolean;
 }
 
@@ -36,7 +36,7 @@ export function attachEdgeRemove(cmd: Command): void {
     .option('--no-snapshot', 'skip the pre-write dump snapshot')
     .option(
       '--no-var-check',
-      'skip the F66f incremental var-existence sweep (raw probes / cleanup of broken graphs)',
+      'skip the incremental online variable existence/type sweep (raw probes / cleanup of broken graphs)',
     )
     .option('--snapshots-dir <path>', 'directory for pre-write snapshots (env: XGG_SNAPSHOTS_DIR)')
     .option('--base-url <url>', 'gateway base URL')

@@ -280,7 +280,7 @@ export const NEXT_STEP_RULES: NextStepRule[] = [
   {
     command: 'rule.layout',
     cmd: (r) => `xgg rule validate --rule-id ${readRuleId(r)}`,
-    why: 'layout only changes executable-card pos.x/y and preserves free-form nop note positions; `rule validate` runs the same per-card schema + variable-existence + scope-whitelist pre-flight that `rule set` / `rule enable` use, and must pass before enable',
+    why: 'layout only changes executable-card pos.x/y and preserves free-form nop note positions; `rule validate` runs the same per-card schema + variable existence/scope/type pre-flight that `rule set` / `rule enable` use, and must pass before enable',
     lifecycle: 'laid-out → validated',
   },
 

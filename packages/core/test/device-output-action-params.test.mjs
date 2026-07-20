@@ -143,6 +143,25 @@ function createGateway(deviceSpec = spec) {
         if (method === '$mutation.acquire') return { leaseId: 'test-lease' };
         if (method === '$mutation.release' || method === '$mutation.fence') return { ok: true };
         if (method === '/api/getDevList') return { devList: { [did]: device } };
+        if (method === '/api/getVarList') {
+          assert.equal(params.scope, 'global');
+          return {
+            targetLevel: {
+              type: 'number',
+              value: 4,
+              userData: { name: 'target level' },
+            },
+            targetLabel: {
+              type: 'string',
+              value: 'hello',
+              userData: { name: 'target label' },
+            },
+            level: { type: 'number', value: 4, userData: { name: 'level' } },
+            label: { type: 'string', value: 'hello', userData: { name: 'label' } },
+            'bad-id': { type: 'number', value: 4, userData: { name: 'bad id' } },
+            counter: { type: 'number', value: 0, userData: { name: 'counter' } },
+          };
+        }
         if (method === '/api/getGraphList') return [structuredClone(state.summary)];
         if (method === '/api/getGraph') {
           return { id: ruleId, nodes: structuredClone(state.nodes) };
@@ -457,13 +476,12 @@ test('action variables retain their wire shape and native literals round-trip th
   assert.deepEqual(await validateNodes(source.state.nodes), []);
 });
 
-test('valid number, boolean, and string action variable refs survive strict export/replay', async () => {
+test('canonical number and string action variable refs survive strict export/replay', async () => {
   const source = createGateway();
   await addAction(
     source,
     completeParams({
       level: { $var: 'global.targetLevel' },
-      enabled: { $var: 'global.targetEnabled' },
       label: { $var: 'global.targetLabel' },
     }),
   );
@@ -477,7 +495,7 @@ test('valid number, boolean, and string action variable refs survive strict expo
   const params = JSON.parse(flagValue(nodeCommand(exported), '--params'));
   assert.deepEqual(params, {
     level: { $var: 'global.targetLevel' },
-    enabled: { $var: 'global.targetEnabled' },
+    enabled: true,
     label: { $var: 'global.targetLabel' },
     mode: 2,
     ratio: 0.5,
@@ -548,8 +566,8 @@ test('spec-aware validation checks action variable dtype and exact numeric range
   const cases = [
     {
       name: 'dtype',
-      input: { piid: 2, scope: 'global', id: 'enabled', dtype: 'number', min: 0, max: 1, step: 1 },
-      message: /expects variable dtype "boolean"/i,
+      input: { piid: 3, scope: 'global', id: 'label', dtype: 'boolean' },
+      message: /expects variable dtype "string"/i,
     },
     {
       name: 'range',
@@ -627,7 +645,7 @@ test('strict export rejects persisted action mapping, literal, and variable cont
       ins: validIns({
         3: { piid: 3, scope: 'global', id: 'label', dtype: 'boolean' },
       }),
-      message: /expects variable dtype "string"/i,
+      message: /unsupported deviceOutput variable dtype "boolean".*native dtype/i,
     },
     {
       name: 'variable range',
@@ -1045,13 +1063,13 @@ test('number variables without ranges and non-number variables with ranges are r
     ],
     { aiid: 11 },
   );
-  const boolWithRange = actionNode(
+  const stringWithRange = actionNode(
     validIns({
-      2: {
-        piid: 2,
+      3: {
+        piid: 3,
         scope: 'global',
-        id: 'enabled',
-        dtype: 'boolean',
+        id: 'label',
+        dtype: 'string',
         min: 0,
         max: 1,
         step: 1,
@@ -1065,7 +1083,7 @@ test('number variables without ranges and non-number variables with ranges are r
       /number-dtype variable requires numeric min\/max\/step|declares no value-range/i,
     ],
     [
-      boolWithRange,
+      stringWithRange,
       /must not carry numeric range metadata/i,
       /must not carry numeric range metadata/i,
     ],

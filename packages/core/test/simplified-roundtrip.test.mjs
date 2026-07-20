@@ -85,6 +85,11 @@ function createGateway() {
         if (method === '/api/getGraph') {
           return { id: ruleId, nodes: structuredClone(state.nodes) };
         }
+        if (method === '/api/getVarList' && params.scope === 'global') {
+          return {
+            target: { type: 'number', value: 0, userData: { name: 'target' } },
+          };
+        }
         if (method === '/api/setGraph') {
           state.summary = structuredClone(params.cfg);
           state.nodes = structuredClone(params.nodes);

@@ -49,6 +49,10 @@ const localVariables = {
   text: { type: 'string', value: 'captured', userData: { name: 'Text' } },
 };
 
+const globalVariables = {
+  shared: { type: 'number', value: 1, userData: { name: 'Shared' } },
+};
+
 const spec = {
   type: urn,
   description: 'fixture',
@@ -125,7 +129,7 @@ function device() {
   };
 }
 
-function fakeDeps(variableMap = localVariables) {
+function fakeDeps(variableMap = localVariables, globalVariableMap = globalVariables) {
   const calls = [];
   return {
     calls,
@@ -147,6 +151,9 @@ function fakeDeps(variableMap = localVariables) {
           calls.push({ method, params });
           if (method === '/api/getVarList' && params.scope === sourceScope) {
             return structuredClone(variableMap);
+          }
+          if (method === '/api/getVarList' && params.scope === 'global') {
+            return structuredClone(globalVariableMap);
           }
           if (method === '/api/getDevList') return { devList: { device: device() } };
           throw new Error(`unexpected RPC: ${method}`);
@@ -371,7 +378,7 @@ test('clone snapshots referenced local variables, remaps every supported referen
 
   assert.deepEqual(
     fake.calls.map((call) => call.method),
-    ['/api/getVarList', '/api/getDevList'],
+    ['/api/getVarList', '/api/getVarList', '/api/getDevList'],
   );
 
   const shell = renderExportedAsShell(exported);
@@ -389,6 +396,142 @@ test('clone snapshots referenced local variables, remaps every supported referen
   assert.equal(
     createLines.every((line) => !line.includes(' --allow-unknown-scope')),
     true,
+  );
+});
+
+test('strict export rejects actual variable-type mismatches before staging while permissive export warns', async () => {
+  const byId = new Map(sourceNodes().map((node) => [node.id, node]));
+  const cases = [
+    {
+      name: 'local target',
+      node: byId.get('change'),
+      local: {
+        ...localVariables,
+        count: { type: 'string', value: 'wrong', userData: { name: 'Count' } },
+      },
+      path: /node change\.props requires "number"/,
+    },
+    {
+      name: 'number expression operand',
+      node: byId.get('set-number'),
+      local: {
+        ...localVariables,
+        123: { type: 'string', value: 'wrong', userData: { name: 'Numeric id' } },
+      },
+      path: /node set-number\.props\.elements\[4\] requires "number"/,
+    },
+    {
+      name: 'device capture',
+      node: byId.get('input-property'),
+      local: {
+        ...localVariables,
+        inputTop: { type: 'string', value: 'wrong', userData: { name: 'Input top' } },
+      },
+      path: /node input-property\.props requires "number"/,
+    },
+    {
+      name: 'device output',
+      node: byId.get('output-property'),
+      local: {
+        ...localVariables,
+        outputProp: { type: 'string', value: 'wrong', userData: { name: 'Output prop' } },
+      },
+      path: /node output-property\.props requires "number"/,
+    },
+    {
+      name: 'global target',
+      node: byId.get('get-global'),
+      local: localVariables,
+      globals: {
+        shared: { type: 'string', value: 'wrong', userData: { name: 'Shared' } },
+      },
+      path: /node get-global\.props requires "number"/,
+    },
+  ];
+
+  for (const current of cases) {
+    assert.ok(current.node, current.name);
+    const fake = fakeDeps(current.local, current.globals ?? globalVariables);
+    fake.deps.getDeviceSpec = async () => spec;
+    const view = { id: sourceId, cfg: summary(), nodes: [current.node] };
+
+    await assert.rejects(
+      exportRuleFromView(view, fake.deps, undefined, true),
+      (error) =>
+        error?.code === 'CONFIG' &&
+        /strict round-trip cannot preserve variable .* stored as/.test(error.message) &&
+        current.path.test(error.message),
+      current.name,
+    );
+
+    const permissive = await exportRuleFromView(view, fake.deps);
+    assert.equal(
+      permissive.warnings.some(
+        (warning) =>
+          /stored as .*typed replay will reject/.test(warning) && current.path.test(warning),
+      ),
+      true,
+      current.name,
+    );
+  }
+});
+
+test('boolean variable refs keep canonical capture/output repair guidance in strict and permissive export', async () => {
+  const byId = new Map(sourceNodes().map((node) => [node.id, node]));
+  const cases = [
+    {
+      name: 'device capture',
+      node: structuredClone(byId.get('input-property')),
+      message: /device-capture dtype "boolean".*number variable.*dtype "number" \(0\/1\)/,
+    },
+    {
+      name: 'device output',
+      node: structuredClone(byId.get('output-property')),
+      message:
+        /deviceOutput variable dtype "boolean".*literal-only.*branch a number 0\/1.*literal false\/true/,
+    },
+  ];
+
+  for (const current of cases) {
+    assert.ok(current.node, current.name);
+    current.node.props.dtype = 'boolean';
+    const fake = fakeDeps();
+    fake.deps.getDeviceSpec = async () => spec;
+    const view = { id: sourceId, cfg: summary(), nodes: [current.node] };
+
+    await assert.rejects(
+      exportRuleFromView(view, fake.deps, undefined, true),
+      (error) => error?.code === 'CONFIG' && current.message.test(error.message),
+      current.name,
+    );
+
+    const permissive = await exportRuleFromView(view, fake.deps);
+    assert.equal(
+      permissive.warnings.some((warning) => current.message.test(warning)),
+      true,
+      current.name,
+    );
+  }
+});
+
+test('strict export accepts number and string operands in a varSetString concatenation', async () => {
+  const node = structuredClone(sourceNodes().find((candidate) => candidate.id === 'set-string'));
+  assert.ok(node);
+  node.props.elements = [
+    { type: 'var', scope: sourceScope, id: 'count' },
+    { type: 'const', value: ':' },
+    { type: 'var', scope: sourceScope, id: 'text' },
+  ];
+
+  const exported = await exportRuleFromView(
+    { id: sourceId, cfg: summary(), nodes: [node] },
+    fakeDeps({ count: localVariables.count, text: localVariables.text }).deps,
+    undefined,
+    true,
+  );
+  assert.equal(
+    exported.warnings.some((warning) => /stored as/.test(warning)),
+    false,
   );
 });
 

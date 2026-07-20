@@ -47,10 +47,12 @@ Example:
   $ xgg rule enable 1748234567890
 
 Before flipping enable on, xgg checks modeled card config, variable
-existence/scope, strict topology and required inputs, then directed sink
-reachability. Validation failures are ConfigError (exit 5), preventing a lost-var,
-broken, or statically dead graph from being activated silently. --no-validate is
-only for an explicit raw probe and does not bypass request/envelope parsing.`,
+existence/scope/type, canonical deviceOutput variable targets, strict topology
+and required inputs, then directed sink reachability. Validation failures are
+ConfigError (exit 5), preventing a lost/wrong-type variable, unsupported output
+ref, broken, or statically dead graph from being activated silently.
+--no-validate is only for an explicit raw probe and does not bypass
+request/envelope parsing.`,
     )
     .action(
       wrap('rule.enable', async (id: string, opts: EnableOpts) => {

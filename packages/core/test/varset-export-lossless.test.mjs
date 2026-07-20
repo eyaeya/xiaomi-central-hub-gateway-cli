@@ -34,11 +34,30 @@ function view(elements, type = 'varSetString') {
   };
 }
 
+function variableEntry(type, name) {
+  return {
+    type,
+    value: type === 'number' ? 0 : '',
+    userData: { name },
+  };
+}
+
+function inventoryForExpression(elements, type) {
+  const operandType = type === 'varSetNumber' ? 'number' : 'string';
+  const variables = {
+    target: variableEntry(operandType, 'target'),
+  };
+  for (const element of elements) {
+    if (element.type === 'var' && element.scope === 'global') {
+      variables[element.id] ??= variableEntry(operandType, `operand ${element.id}`);
+    }
+  }
+  return variables;
+}
+
 async function exportedExpression(elements, type = 'varSetString') {
-  const exported = await exportRuleFromView(view(elements, type), {
-    baseUrl: 'http://gateway.invalid',
-    store: {},
-  });
+  const gateway = statefulGateway('rule1', inventoryForExpression(elements, type));
+  const exported = await exportRuleFromView(view(elements, type), gateway.deps);
   const node = exported.commands.find(
     (command) => command.kind === 'node-add' && command.nodeId === 'set1',
   );
@@ -60,7 +79,13 @@ function summary(id = 'rule1') {
   };
 }
 
-function statefulGateway(id = 'rule1') {
+function statefulGateway(
+  id = 'rule1',
+  globalVariables = {
+    numberTarget: variableEntry('number', 'number target'),
+    stringTarget: variableEntry('string', 'string target'),
+  },
+) {
   const calls = [];
   const state = { summary: summary(id), nodes: [] };
   return {
@@ -84,6 +109,10 @@ function statefulGateway(id = 'rule1') {
           if (method === '$mutation.acquire') return { leaseId: 'test-lease' };
           if (method === '$mutation.release' || method === '$mutation.fence') return { ok: true };
           calls.push({ method, params });
+          if (method === '/api/getVarList') {
+            assert.deepEqual(params, { scope: 'global' });
+            return structuredClone(globalVariables);
+          }
           if (method === '/api/getGraphList') return [structuredClone(state.summary)];
           if (method === '/api/getGraph') {
             return { id, nodes: structuredClone(state.nodes) };

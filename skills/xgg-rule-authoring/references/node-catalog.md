@@ -97,9 +97,11 @@ pin 颜色有 event、state、event|state。只有源输出可以是 event|state
 
 `--force-out-of-range` 只适用于 typed `deviceInput` / `deviceGet` 数值属性比较，只跳过有效 value-range 的边界与 step 对齐检查；它不绕过无效 range metadata（非有限、min>max、step<=0）、value-list、finite/safe-integer、operator 或 operand shape 校验。strict export 会在需要时重放该 flag。
 
-变量 number 比较使用标量 `operator:"="`，不要套用设备 int 的 include 编码；string 变量只支持 `eq --var-value`。
+变量 number 比较使用标量 `operator:"="`，不要套用设备 int 的 include 编码；string 变量只支持 `eq --var-value`。在线 validate 与默认图写路径按精确 `scope + id` 读取网关变量的实际 `number|string` 类型，并逐引用点匹配：`varSetNumber` 目标/operand 必须是 number，`varSetString` 目标必须是 string，但其拼接 operand 按固定 UI 可接受 number 或 string；设备 capture/output ref 则按各自 `dtype`。strict export 同样读取源网关 local/global 变量，在 staging 前拒绝路径化 mismatch 或缺失 global；permissive export 明确 warning。`--no-var-check` 只跳过在线清单，不关闭合法 scope、schema、spec 或 enable gate。
 
 property-write 与动作参数共用原生类型和数值域契约：数值 `--value` 必须是完整十进制/scientific token，float/double 必须有限，整数必须是精确 safe integer；非空 value-list 与有效 value-range/step 都会执行。字符串首个 `$` 仍用 `$$` 转义，bool `0|1|true|false` 会持久化成 canonical boolean，spec-aware 读取时也兼容历史 numeric `0/1`。
+
+`deviceOutput` variable ref 只支持不含 `value-list` 字段的 string 目标，或不含该字段且带有效 value-range 的 number 目标。boolean 与任何存在 `value-list` 字段的目标（包括 `[]`）按固定网页 UI 的 literal-only 路径处理；不要把 gateway 能保存旧 ref shape 误当成 executor 证据。动态 boolean 应先把 number 0/1 分支，再分别连到 literal false/true output。spec-aware validate 会诊断 legacy ref，strict export 与默认 enable 会 fail closed；enable 的默认证明只查询实际含 output ref 的 URN。
 
 动作 `--params` 的 key 必须恰好覆盖 `action.in` 对应 property short-name；`action.in` 不得重复 PIID，distinct PIID 的 short-name 也必须唯一。number / boolean / string 的原生 JSON 类型由 MIoT format 决定；只有数值 format 应用数值 value-list/value-range/step，bool/string 即使附带 numeric value-list 也仍是 boolean/string。变量引用用 `{"$var":"scope.id"}`。number 变量要求目标 input 有有效 value-range，以生成 min/max/step；非有限边界、min>max、step<=0 都拒绝。整数 action input 仅支持 safe integer，超出范围的 int64/uint64 会拒绝。bundle 按 index 绑定，因此持久化 `props.ins[i].piid` 必须等于 `action.in[i]`。`rule validate --spec-aware` 与 strict export 执行同一输入契约；permissive export 会明确 warning，并用索引投影、唯一占位 key 与无原型字典避免乱序、重复名或 `__proto__` 静默丢值。
 

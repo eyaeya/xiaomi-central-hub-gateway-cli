@@ -6,10 +6,11 @@ export const VarScopeListResponse = z.object({
 });
 export type VarScopeListResponse = z.infer<typeof VarScopeListResponse>;
 
-/** A variable identity as exposed to rule-graph validation. */
+/** A typed variable identity as exposed to rule-graph validation. */
 export interface AvailableVariable {
   scope: string;
   id: string;
+  type: 'number' | 'string';
 }
 
 // F66-VarEntry-strict (2026-05-31) — read-side schema. Bundle ground

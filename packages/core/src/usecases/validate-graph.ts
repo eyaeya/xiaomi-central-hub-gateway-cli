@@ -2,6 +2,7 @@ import { MiotSpecFetchError } from '../http-client.js';
 import type { DeviceSpec, MiotProperty } from '../schemas/device-spec.js';
 import type { Device } from '../schemas/device.js';
 import {
+  deviceOutputVariableRefUnsupportedReason,
   findDuplicateMiotActionInputPiids,
   findMiotActionInputParamCollisions,
   isMiotActionIntegerFormat,
@@ -51,6 +52,12 @@ export interface ValidateGraphInput {
    */
   getDevice?: (did: string) => Promise<Pick<Device, 'pushAvailable'>>;
   /**
+   * Enable's fail-closed mode for persisted deviceOutput variable refs. It
+   * requires spec evidence (including a non-404 result) before accepting the
+   * ref, because bool/value-list targets are canonical literal-only UI paths.
+   */
+  requireCanonicalDeviceOutputVariableRefs?: boolean;
+  /**
    * Transient authoring intent for nodes whose numeric operands deliberately
    * exceed (or do not align to) the current MIoT value-range. The set is never
    * persisted and bypasses only range/step diagnostics, not value-list,
@@ -58,10 +65,11 @@ export interface ValidateGraphInput {
    */
   forceOutOfRangeNodeIds?: ReadonlySet<string>;
   // F23 (2026-05-30): the official save() function fetches `listAvailVars(graphId)`
-  // and verifies every variable reference points to a known var (else
-  // "卡片变量丢失") and uses scope "global" / "R<graphId>" (else
-  // "卡片变量有误"). When this callback is absent, the existence check is
-  // skipped — the structural validate-graph still runs.
+  // and verifies every variable reference points to a known var of the
+  // expected number/string type (else "卡片变量丢失" / "卡片变量类型不匹配")
+  // and uses scope "global" / "R<graphId>" (else "卡片变量有误"). When this
+  // callback is absent, online existence/type checks are skipped — structural
+  // validation and the scope whitelist still run.
   listAvailVars?: (ruleId: string) => Promise<AvailableVariable[]>;
 }
 
@@ -201,11 +209,11 @@ function checkDeviceOutputLiteral(
   return [];
 }
 
-function checkDeviceOutputVariableRef(
+export function checkDeviceOutputVariableRefContract(
   input: Record<string, unknown>,
   property: MiotProperty,
   path: string,
-  context: string,
+  context = `deviceOutput target piid=${String(input.piid)}`,
 ): LintIssue[] {
   const issues: LintIssue[] = [];
   if (typeof input.scope !== 'string' || !isValidVariableIdentifier(input.scope)) {
@@ -223,6 +231,11 @@ function checkDeviceOutputVariableRef(
         `卡片配置有误: ${context} variable id must be non-empty ASCII alphanumeric`,
       ),
     );
+  }
+  const noncanonical = deviceOutputVariableRefUnsupportedReason(property);
+  if (noncanonical !== null) {
+    issues.push(issue(`${path}.dtype`, `卡片配置有误: ${noncanonical}`));
+    return issues;
   }
   const expectedDtype = miotActionVariableDtype(property.format);
   if (input.dtype !== expectedDtype) {
@@ -407,7 +420,7 @@ export function checkDeviceOutputActionInputContract(
     const context = `action input piid=${expectedPiid}`;
     issues.push(
       ...(isVarValueShape(input)
-        ? checkDeviceOutputVariableRef(input, property, inputPath, context)
+        ? checkDeviceOutputVariableRefContract(input, property, inputPath, context)
         : checkDeviceOutputLiteral(input, property, inputPath, context)),
     );
   }
@@ -440,7 +453,7 @@ export function checkDeviceOutputPropertyWriteContract(
   }
   issues.push(
     ...(isVarValueShape(props)
-      ? checkDeviceOutputVariableRef(props, property, path, context)
+      ? checkDeviceOutputVariableRefContract(props, property, path, context)
       : checkDeviceOutputLiteral(props, property, path, context, {
           allowLegacyBooleanNumber: true,
         })),
@@ -784,7 +797,7 @@ function checkAlarmClockProps(props: Record<string, unknown>, path: string): Lin
   return out;
 }
 
-// F23 (2026-05-30) — port the variable-existence + scope-whitelist check
+// F23/#173 — port the variable existence/type + scope-whitelist check
 // that lives in the UI's `save()` function (NOT in nodeCheckTool). For each
 // var card, walk every {scope,id} the card references and verify:
 //   1. scope is "global" or "R<ruleId>" (the local-rule convention from F21),
@@ -795,7 +808,20 @@ function checkAlarmClockProps(props: Record<string, unknown>, path: string): Lin
 // This catches a class of authoring bugs that the per-card `nodeCheckTool`
 // port did not — e.g., a varSetNumber whose target variable was deleted
 // after the rule was authored.
-type VarRef = { scope: string; id: string; path: string };
+type ReferencedVariableType = AvailableVariable['type'] | 'boolean';
+
+type VarRef = {
+  scope: string;
+  id: string;
+  path: string;
+  typePath: string;
+  expectedType?: ReferencedVariableType;
+  site: string;
+};
+
+function referencedVariableType(value: unknown): ReferencedVariableType | undefined {
+  return value === 'number' || value === 'string' || value === 'boolean' ? value : undefined;
+}
 
 function collectVarRefs(node: Record<string, unknown>): VarRef[] {
   const refs: VarRef[] = [];
@@ -803,16 +829,27 @@ function collectVarRefs(node: Record<string, unknown>): VarRef[] {
   const props = node.props as Record<string, unknown> | undefined;
   if (!isRecord(props)) return refs;
 
-  const pushTopProps = () => {
+  const pushTopProps = (
+    expectedType: ReferencedVariableType | undefined,
+    site: string,
+    typeField?: 'varType' | 'dtype',
+  ) => {
     if (typeof props.scope === 'string' && typeof props.id === 'string') {
-      refs.push({ scope: props.scope, id: props.id, path: 'props' });
+      refs.push({
+        scope: props.scope,
+        id: props.id,
+        path: 'props',
+        typePath: typeField === undefined ? 'props' : `props.${typeField}`,
+        ...(expectedType !== undefined && { expectedType }),
+        site,
+      });
     }
   };
 
   if (type === 'varChange' || type === 'varGet') {
-    pushTopProps();
+    pushTopProps(referencedVariableType(props.varType), 'var card', 'varType');
   } else if (type === 'varSetNumber' || type === 'varSetString') {
-    pushTopProps();
+    pushTopProps(type === 'varSetNumber' ? 'number' : 'string', `${type} target`);
     const elements = props.elements;
     if (Array.isArray(elements)) {
       for (let i = 0; i < elements.length; i += 1) {
@@ -823,19 +860,39 @@ function collectVarRefs(node: Record<string, unknown>): VarRef[] {
           typeof el.scope === 'string' &&
           typeof el.id === 'string'
         ) {
-          refs.push({ scope: el.scope, id: el.id, path: `props.elements[${i}]` });
+          const path = `props.elements[${i}]`;
+          refs.push({
+            scope: el.scope,
+            id: el.id,
+            path,
+            typePath: path,
+            // The pinned UI passes varType=number to the varSetNumber
+            // expression selector. varSetString deliberately omits varType,
+            // so its concat operands may be either gateway variable type.
+            ...(type === 'varSetNumber' && { expectedType: 'number' as const }),
+            site: `${type} operand`,
+          });
         }
       }
     }
   } else if (type === 'deviceInputSetVar' || type === 'deviceGetSetVar') {
-    pushTopProps();
+    pushTopProps(referencedVariableType(props.dtype), `${type} target`, 'dtype');
     // Event-mode arguments[i] may carry per-arg var refs (F22d).
     const args = props.arguments;
     if (Array.isArray(args)) {
       for (let i = 0; i < args.length; i += 1) {
         const a = args[i];
         if (isRecord(a) && typeof a.scope === 'string' && typeof a.id === 'string') {
-          refs.push({ scope: a.scope, id: a.id, path: `props.arguments[${i}]` });
+          const path = `props.arguments[${i}]`;
+          const expectedType = referencedVariableType(a.dtype);
+          refs.push({
+            scope: a.scope,
+            id: a.id,
+            path,
+            typePath: `${path}.dtype`,
+            ...(expectedType !== undefined && { expectedType }),
+            site: 'deviceInputSetVar event target',
+          });
         }
       }
     }
@@ -843,14 +900,31 @@ function collectVarRefs(node: Record<string, unknown>): VarRef[] {
     // Property-write variable-ref shape: scope/id/dtype merged at props
     // top-level (no `value` field). Action-mode: ins[i] may carry var refs.
     if (typeof props.scope === 'string' && typeof props.id === 'string') {
-      refs.push({ scope: props.scope, id: props.id, path: 'props' });
+      const expectedType = referencedVariableType(props.dtype);
+      refs.push({
+        scope: props.scope,
+        id: props.id,
+        path: 'props',
+        typePath: 'props.dtype',
+        ...(expectedType !== undefined && { expectedType }),
+        site: 'deviceOutput property ref',
+      });
     }
     const ins = props.ins;
     if (Array.isArray(ins)) {
       for (let i = 0; i < ins.length; i += 1) {
         const item = ins[i];
         if (isRecord(item) && typeof item.scope === 'string' && typeof item.id === 'string') {
-          refs.push({ scope: item.scope, id: item.id, path: `props.ins[${i}]` });
+          const path = `props.ins[${i}]`;
+          const expectedType = referencedVariableType(item.dtype);
+          refs.push({
+            scope: item.scope,
+            id: item.id,
+            path,
+            typePath: `${path}.dtype`,
+            ...(expectedType !== undefined && { expectedType }),
+            site: 'deviceOutput action ref',
+          });
         }
       }
     }
@@ -862,7 +936,7 @@ function checkVarRefs(
   node: Record<string, unknown>,
   idx: number,
   ruleId: string,
-  availableByScope: Map<string, Set<string>> | null,
+  availableByScope: Map<string, Map<string, AvailableVariable['type']>> | null,
 ): LintIssue[] {
   const out: LintIssue[] = [];
   const localScope = `R${ruleId}`;
@@ -881,8 +955,30 @@ function checkVarRefs(
     // gateway variable inventory, so offline --body/--stdin validation must
     // enforce it too. Existence remains an online-only check because an
     // offline graph intentionally has no authoritative variable list.
-    if (availableByScope !== null && availableByScope.get(ref.scope)?.has(ref.id) !== true) {
-      out.push(issue(base, `卡片变量丢失: ${ref.scope}.${ref.id}`));
+    if (availableByScope !== null) {
+      const actualType = availableByScope.get(ref.scope)?.get(ref.id);
+      if (actualType === undefined) {
+        out.push(issue(base, `卡片变量丢失: ${ref.scope}.${ref.id}`));
+        continue;
+      }
+      if (ref.expectedType === 'boolean') {
+        const canonical = ref.site.startsWith('deviceOutput')
+          ? 'The canonical UI exposes boolean device outputs as literals only. Branch a number 0/1 state before the output and route the two branches to deviceOutput nodes with literal false/true (or 0/1 for a legacy property wire).'
+          : 'Gateway variables only support "number" and "string"; boolean device captures must use a number variable with canonical dtype "number" (0/1).';
+        out.push(
+          issue(
+            `nodes[${idx}].${ref.typePath}`,
+            `卡片变量类型不支持: ${ref.scope}.${ref.id} is stored as "${actualType}", but ${ref.site} declares unsupported variable dtype "boolean". ${canonical}`,
+          ),
+        );
+      } else if (ref.expectedType !== undefined && actualType !== ref.expectedType) {
+        out.push(
+          issue(
+            `nodes[${idx}].${ref.typePath}`,
+            `卡片变量类型不匹配: ${ref.scope}.${ref.id} is stored as "${actualType}", but ${ref.site} requires "${ref.expectedType}"`,
+          ),
+        );
+      }
     }
   }
   return out;
@@ -1031,6 +1127,8 @@ async function checkAgainstSpec(
   idx: number,
   specForUrn: (urn: string) => Promise<DeviceSpec>,
   skipRange: boolean,
+  requireCanonicalDeviceOutputVariableRefs: boolean,
+  mode: 'all' | 'deviceOutputVariableRefsOnly' = 'all',
 ): Promise<LintIssue[]> {
   const issues: LintIssue[] = [];
   if (
@@ -1078,13 +1176,17 @@ async function checkAgainstSpec(
     // against. Keep the structural result usable, but make the skipped coverage
     // visible instead of silently passing it.
     if (e instanceof MiotSpecFetchError && e.status === 404) {
-      return [
-        {
-          severity: 'warn',
-          path: specPath,
-          message: `MIoT spec not found (HTTP 404) for ${node.cfg.urn}; spec-aware checks skipped`,
-        },
-      ];
+      const message = `MIoT spec not found (HTTP 404) for ${node.cfg.urn}; spec-aware checks skipped`;
+      return requireCanonicalDeviceOutputVariableRefs &&
+        node.type === 'deviceOutput' &&
+        collectVarRefs(node).length > 0
+        ? [
+            issue(
+              specPath,
+              `${message}. Refusing to enable a deviceOutput variable reference without evidence that its target is not bool/value-list literal-only.`,
+            ),
+          ]
+        : [{ severity: 'warn', path: specPath, message }];
     }
     // Registry transport/HTTP failures and malformed spec content are external
     // validation failures, not graph-shape failures. Return them as their own
@@ -1103,6 +1205,10 @@ async function checkAgainstSpec(
     throw e;
   }
   const base = `nodes[${idx}].props`;
+
+  if (mode === 'deviceOutputVariableRefsOnly') {
+    return checkDeviceOutputVariableRefsAgainstSpec(props, spec, base);
+  }
 
   if (isDeviceOutputAction) {
     return checkDeviceOutputActionInputContract(props, spec, base);
@@ -1199,6 +1305,123 @@ async function checkAgainstDeviceInventory(
           `卡片能力不匹配: ${message}. --allow-no-push is a transient typed node-add probe override; it is not persisted and does not make this validation pass.`,
         ),
       ];
+}
+
+function checkDeviceOutputVariableRefsAgainstSpec(
+  props: Record<string, unknown>,
+  spec: DeviceSpec,
+  base: string,
+): LintIssue[] {
+  if (Number.isInteger(props.aiid)) {
+    const service = spec.services.find((candidate) => candidate.iid === props.siid);
+    const action = service?.actions?.find((candidate) => candidate.iid === props.aiid);
+    if (action === undefined) {
+      return [
+        issue(
+          base,
+          `卡片配置有误: action siid=${props.siid} aiid=${props.aiid} not found in ${spec.type}`,
+        ),
+      ];
+    }
+    const issues: LintIssue[] = [];
+    const inputs = Array.isArray(props.ins) ? props.ins : [];
+    for (let index = 0; index < inputs.length; index += 1) {
+      const input = inputs[index];
+      if (!isRecord(input) || !isVarValueShape(input)) continue;
+      const inputPath = `${base}.ins[${index}]`;
+      const expectedPiid = action.in[index];
+      if (expectedPiid === undefined) {
+        issues.push(
+          issue(
+            `${inputPath}.piid`,
+            `卡片配置有误: deviceOutput variable ref has no matching action.in[${index}] target`,
+          ),
+        );
+        continue;
+      }
+      if (input.piid !== expectedPiid) {
+        issues.push(
+          issue(
+            `${inputPath}.piid`,
+            `卡片配置有误: deviceOutput variable ref at action input index ${index} requires piid=${expectedPiid}, got piid=${String(input.piid)}`,
+          ),
+        );
+      }
+      const property = service?.properties?.find((candidate) => candidate.iid === expectedPiid);
+      if (property === undefined) {
+        issues.push(
+          issue(
+            inputPath,
+            `卡片配置有误: deviceOutput variable target piid=${expectedPiid} is missing from service siid=${props.siid} properties`,
+          ),
+        );
+        continue;
+      }
+      issues.push(
+        ...checkDeviceOutputVariableRefContract(
+          input,
+          property,
+          inputPath,
+          `action input piid=${expectedPiid}`,
+        ),
+      );
+    }
+    return issues;
+  }
+
+  if (!isVarValueShape(props)) return [];
+  const property = findProperty(spec, props.siid as number, props.piid as number);
+  return property === undefined
+    ? [
+        issue(
+          base,
+          `卡片配置有误: deviceOutput variable target siid=${props.siid} piid=${props.piid} not found in ${spec.type}`,
+        ),
+      ]
+    : checkDeviceOutputVariableRefContract(
+        props,
+        property,
+        base,
+        `property write piid=${String(props.piid)}`,
+      );
+}
+
+export async function validateCanonicalDeviceOutputVariableRefsOrThrow(input: {
+  graph: { nodes?: unknown[] };
+  getDeviceSpec: (urn: string) => Promise<DeviceSpec>;
+}): Promise<void> {
+  const nodes = input.graph.nodes;
+  if (!Array.isArray(nodes)) return;
+  const specCache = new Map<string, Promise<DeviceSpec>>();
+  const specForUrn = (urn: string): Promise<DeviceSpec> => {
+    let cached = specCache.get(urn);
+    if (cached === undefined) {
+      cached = input.getDeviceSpec(urn);
+      specCache.set(urn, cached);
+    }
+    return cached;
+  };
+  const issues: LintIssue[] = [];
+  for (let idx = 0; idx < nodes.length; idx += 1) {
+    const node = nodes[idx];
+    if (!isRecord(node) || node.type !== 'deviceOutput' || collectVarRefs(node).length === 0) {
+      continue;
+    }
+    issues.push(
+      ...(await checkAgainstSpec(
+        node,
+        idx,
+        specForUrn,
+        false,
+        true,
+        'deviceOutputVariableRefsOnly',
+      )),
+    );
+  }
+  const first = issues.find((entry) => entry.severity === 'error');
+  if (first !== undefined) {
+    throw new ConfigError(`${first.message} (${first.path})`, { issues });
+  }
 }
 
 // F66e-2 (2026-05-31): port the spec-driven `ka(t.dtype) !== n.dtype` branch
@@ -1301,18 +1524,18 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
   // F23 — fetch the available-vars list once for the whole graph if a
   // callback is provided. Keep the two legal scopes separate so global.foo
   // cannot stand in for R<ruleId>.foo (or vice versa).
-  let availableByScope: Map<string, Set<string>> | null = null;
+  let availableByScope: Map<string, Map<string, AvailableVariable['type']>> | null = null;
   if (input.listAvailVars !== undefined) {
     try {
       const variables = await input.listAvailVars(input.graph.id);
-      availableByScope = new Map<string, Set<string>>();
+      availableByScope = new Map<string, Map<string, AvailableVariable['type']>>();
       for (const variable of variables) {
-        let ids = availableByScope.get(variable.scope);
-        if (ids === undefined) {
-          ids = new Set<string>();
-          availableByScope.set(variable.scope, ids);
+        let vars = availableByScope.get(variable.scope);
+        if (vars === undefined) {
+          vars = new Map<string, AvailableVariable['type']>();
+          availableByScope.set(variable.scope, vars);
         }
-        ids.add(variable.id);
+        vars.set(variable.id, variable.type);
       }
     } catch (e) {
       // F39 (2026-05-30) — narrow the catch. Mirrors
@@ -1320,7 +1543,7 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
       // catch above: only NotFoundError (rule scope missing) is
       // soft-skipped, so the agent still degrades gracefully on stale
       // rule ids but transport/schema/auth failures surface instead
-      // of silently disabling the var-existence check.
+      // of silently disabling the variable inventory check.
       if (!(e instanceof NotFoundError)) throw e;
       availableByScope = null;
     }
@@ -1361,7 +1584,19 @@ export async function validateGraph(input: ValidateGraphInput): Promise<LintIssu
           idx,
           specForUrn,
           typeof node.id === 'string' && input.forceOutOfRangeNodeIds?.has(node.id) === true,
+          input.requireCanonicalDeviceOutputVariableRefs === true,
         )),
+      );
+    } else if (
+      input.requireCanonicalDeviceOutputVariableRefs === true &&
+      node.type === 'deviceOutput' &&
+      collectVarRefs(node).length > 0
+    ) {
+      issues.push(
+        issue(
+          `nodes[${idx}].cfg.urn`,
+          'MIoT spec-aware validation is required before enabling a deviceOutput variable reference; refusing to guess whether the target is bool/value-list literal-only',
+        ),
       );
     }
     if (deviceForDid !== undefined) {
