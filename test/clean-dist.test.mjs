@@ -41,3 +41,20 @@ test('both published packages clean before build and build before pack', async (
     assert.equal(manifest.scripts.prepack, 'pnpm build');
   }
 });
+
+test('npm workflow publishes explicit local tarball paths', async () => {
+  const workflow = await readFile(
+    join(repositoryRoot, '.github', 'workflows', 'publish-npm.yml'),
+    'utf8',
+  );
+
+  assert.match(
+    workflow,
+    /npm publish "\.\/release-artifacts\/eyaeya-xgg-core-\$\{PACKAGE_VERSION\}\.tgz"/,
+  );
+  assert.match(
+    workflow,
+    /npm publish "\.\/release-artifacts\/eyaeya-xgg-cli-\$\{PACKAGE_VERSION\}\.tgz"/,
+  );
+  assert.doesNotMatch(workflow, /npm publish "release-artifacts\//);
+});

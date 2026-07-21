@@ -235,7 +235,7 @@ jobs:
         run: |
           set -euo pipefail
           npm whoami >/dev/null
-          npm publish "release-artifacts/eyaeya-xgg-core-${PACKAGE_VERSION}.tgz" \
+          npm publish "./release-artifacts/eyaeya-xgg-core-${PACKAGE_VERSION}.tgz" \
             --access public --provenance
 
       - name: Confirm core is available
@@ -260,7 +260,7 @@ jobs:
         run: |
           set -euo pipefail
           npm whoami >/dev/null
-          npm publish "release-artifacts/eyaeya-xgg-cli-${PACKAGE_VERSION}.tgz" \
+          npm publish "./release-artifacts/eyaeya-xgg-cli-${PACKAGE_VERSION}.tgz" \
             --access public --provenance
 
       - name: Confirm both packages
