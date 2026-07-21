@@ -128,10 +128,9 @@ export interface BackupGenerateCompletion {
 }
 
 /**
- * Reproduce the production Bundle's historical export prerequisite: materialize
- * the selected cloud file in gateway cache and confirm completion before
- * asking the gateway to generate its portable payload. The whole sequence owns
- * one mutation workflow lease.
+ * Implement the cloud-export prerequisite: materialize the selected cloud file
+ * in gateway cache and confirm completion before asking the gateway to generate
+ * its portable payload. The whole sequence owns one mutation workflow lease.
  */
 export async function downloadAndGenerateBackup(
   input: BackupTargetInput,
@@ -278,8 +277,8 @@ async function loadBackupWithinWorkflow(
 }
 
 /**
- * Restore a backup through the production Bundle's complete workflow and keep
- * one mutation lease from cache download through terminal restore progress.
+ * Restore a backup through the complete xgg workflow and keep one mutation
+ * lease from cache download through terminal restore progress.
  * Both download and load responses are acknowledgements; releasing after
  * either one would let a later mutation race unfinished gateway work.
  */

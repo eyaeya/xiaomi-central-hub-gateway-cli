@@ -634,7 +634,7 @@ function projectWithSources(
 }
 
 /**
- * Resolve Bundle-compatible stable device type tokens and their best-effort
+ * Resolve xgg-compatible stable device type tokens and their best-effort
  * zh_cn labels without fetching per-device MIoT instance specs.
  */
 export async function projectDeviceTypesSemantics(

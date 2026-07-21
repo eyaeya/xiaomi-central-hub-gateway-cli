@@ -144,7 +144,7 @@ export interface FetchRuleLogsInputs extends ResourceDeps {
 }
 
 export interface FetchRuleLogsResult {
-  /** Parsed entries in Bundle block order: oldest block to newest, preserving each block. */
+  /** Parsed entries in chronological block order: oldest block to newest, preserving each block. */
   entries: RuleLogEntry[];
   /** Raw lines we could not parse. Internal diagnostic data; CLI output must expose only counts. */
   unparsed: string[];
@@ -162,10 +162,10 @@ const DEFAULT_MAX_BLOCKS = 8;
 
 /**
  * Pull every available log block from `/api/getLog`, parse each line, and
- * return Bundle-ordered entries. The gateway pages newest block first, while
- * the production Bundle parses oldest block to newest and preserves line order
- * inside each block. Stop only at an empty block or an exactly repeated full
- * block; identical raw lines inside or across different blocks remain valid.
+ * return oldest-block-first entries while preserving line order inside each
+ * block. The gateway pages newest block first. Stop only at an empty block or
+ * an exactly repeated full block; identical raw lines inside or across
+ * different blocks remain valid.
  */
 export async function fetchRuleLogs(input: FetchRuleLogsInputs): Promise<FetchRuleLogsResult> {
   const maxBlocks = input.maxBlocks ?? DEFAULT_MAX_BLOCKS;

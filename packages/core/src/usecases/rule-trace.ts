@@ -56,7 +56,7 @@ export interface CalculateRuleTraceInput {
   ruleId: string;
   nodes: Node[];
   entries: RuleLogEntry[];
-  /** Bundle-compatible watchpoint ids. Omit to trace every current-graph watchpoint. */
+  /** Gateway-log watchpoint ids. Omit to trace every current-graph watchpoint. */
   filter?: string[];
   /** Best-effort deviceGet value-list labels keyed by node id then raw value. */
   deviceGetLabels?: Readonly<Record<string, Readonly<Record<string, string>>>>;
@@ -105,12 +105,12 @@ export interface RuleTraceCalculation {
   matchingLogEntries: number;
 }
 
-/** Bundle id shape: `node:<id>`. */
+/** Node watchpoint id shape: `node:<id>`. */
 export function ruleTraceNodeWatchpointId(nodeId: string): string {
   return `node:${nodeId}`;
 }
 
-/** Bundle id shape: `link:<src-node>.<pin>-><dst-node>.<pin>`. */
+/** Link watchpoint id shape: `link:<src-node>.<pin>-><dst-node>.<pin>`. */
 export function ruleTraceLinkWatchpointId(src: string, dst: string): string {
   return `link:${src}->${dst}`;
 }
@@ -141,7 +141,7 @@ export function buildRuleTraceWatchpoints(nodes: Node[]): RuleTraceWatchpoint[] 
 }
 
 /**
- * Reconstruct production-Bundle-style cumulative frames from already parsed logs.
+ * Reconstruct xgg cumulative frames from already parsed gateway logs.
  *
  * The calculation is deliberately current-graph scoped. Historical entries whose
  * node/edge no longer exists are reported as topology drift and are not projected

@@ -148,7 +148,7 @@ xgg rule edge add --rule-id <rid> --from nReset:output --to nCount:zero
 xgg rule edge add --rule-id <rid> --from nCount:output --to <actionNode>:trigger
 ```
 
-Bundle 不能证明输出发生在第 N 还是 N+1、达到后保持还是复位。先把 action 换成 probe variable，在目标固件做 1、2、3、4 次输入和 zero 后序列，再决定业务是否采用。
+当前静态模型不能证明输出发生在第 N 还是 N+1、达到后保持还是复位。先把 action 换成 probe variable，在目标固件做 1、2、3、4 次输入和 zero 后序列，再决定业务是否采用。
 
 ## 可布防的 register 状态门
 
@@ -198,7 +198,7 @@ xgg rule edge add --rule-id <rid> --from nMode:output2 --to nSceneC:trigger
 
 输出编号必须从 0 连续；每次只选一路。不要未经实测承诺 disable/reload/reboot 后从 output0 重新开始。若初始模式是业务关键，用持久 number variable + `varGet`/`varSetNumber` 显式实现。
 
-空 output 是合法的显式“该轮跳过”位，Bundle save validator 只要求 output0…N-1 键连续，不要求每路都连接 sink；跨空位如何推进及 pointer 生命周期仍需实机验证。
+空 output 是合法的显式“该轮跳过”位；当前 save validator 只要求 output0…N-1 键连续，不要求每路都连接 sink。跨空位如何推进及 pointer 生命周期仍需实机验证。
 
 ## number 状态驱动 boolean 输出
 

@@ -281,7 +281,7 @@ export async function readLocalBackup(
   }
 }
 
-/** Collect the same complete version-2 payload as the official web bundle. */
+/** Collect the complete canonical version-2 local-backup payload. */
 export async function collectLocalBackup(deps: ResourceDeps): Promise<LocalBackupPayload> {
   const summaries = await listRules(deps);
   const seenRuleIds = new Set<string>();

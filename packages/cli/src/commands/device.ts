@@ -81,10 +81,10 @@ export function isGhost(dev: DeviceFields): boolean {
 export function deviceCommand(): Command {
   const cmd = new Command('device').description('Device read operations');
   // Set expectations without making a firmware-global impossibility claim:
-  // the audited client surface has no generic live-property stream.
+  // the current xgg modeled surface has no generic live-property stream.
   cmd.addHelpText(
     'after',
-    '\nNote: current xgg device reads (list/get/spec) are one-shot snapshots. The\naudited client/bundle surface does not expose a generic live-property stream.\nFor a modeled observation path, copy values into a variable with a rule —\n`deviceInputSetVar` (on change) or `deviceGetSetVar` (on demand) — then run\n`xgg variable watch --follow`. This is not a claim about every firmware-private API.',
+    '\nNote: current xgg device reads (list/get/spec) are one-shot snapshots. The\ncurrent xgg modeled client surface does not expose a generic live-property\nstream. For a modeled observation path, copy values into a variable with a\nrule — `deviceInputSetVar` (on change) or `deviceGetSetVar` (on demand) — then\nrun `xgg variable watch --follow`. This is not a claim about every\nfirmware-private API.',
   );
 
   const listCmd = cmd

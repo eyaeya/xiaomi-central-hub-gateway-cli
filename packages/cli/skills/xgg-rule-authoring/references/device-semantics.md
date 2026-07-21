@@ -1,6 +1,6 @@
 # MIoT 设备语义与参数词汇
 
-设计任何设备卡片、解释 spec 枚举、构造事件参数过滤或 action 输入时读取本文。设备 short-name、SIID/PIID/EIID/AIID、访问权限和值域必须来自**目标网关当前 `device spec`**；Bundle 只能解释结构，不能替代某台设备的 spec。
+设计任何设备卡片、解释 spec 枚举、构造事件参数过滤或 action 输入时读取本文。设备 short-name、SIID/PIID/EIID/AIID、访问权限和值域必须来自**目标网关当前 `device spec`**；当前 xgg schema 只描述节点结构与值编码，不能替代某台设备的 live spec。
 
 ## 目录
 
