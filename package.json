@@ -1,6 +1,6 @@
 {
   "name": "xgg-public-release",
-  "version": "0.1.4",
+  "version": "2.0.0",
   "private": true,
   "description": "Public release workspace for xgg, the Xiaomi Gateway Geek Edition CLI",
   "type": "module",

@@ -1,0 +1,279 @@
+name: Publish npm packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact release tag, for example v2.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.repository }}-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+
+jobs:
+  publish:
+    name: Verify and publish
+    if: >-
+      github.event_name == 'release' ||
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.11.1
+          registry-url: https://registry.npmjs.org/
+          package-manager-cache: false
+
+      - name: Validate release tag and source manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { spawnSync } from 'node:child_process';
+
+          function fail(message) {
+            throw new Error(message);
+          }
+
+          function git(...args) {
+            const result = spawnSync('git', args, { encoding: 'utf8' });
+            if (result.status !== 0) {
+              fail(`git ${args.join(' ')} failed: ${result.stderr.trim()}`);
+            }
+            return result.stdout.trim();
+          }
+
+          const stableSemver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+          const tag = process.env.RELEASE_TAG;
+          const defaultBranch = process.env.DEFAULT_BRANCH;
+          const root = JSON.parse(readFileSync('package.json', 'utf8'));
+          const core = JSON.parse(readFileSync('packages/core/package.json', 'utf8'));
+          const cli = JSON.parse(readFileSync('packages/cli/package.json', 'utf8'));
+
+          if (!stableSemver.test(root.version)) {
+            fail(`root version must be stable semver: ${root.version}`);
+          }
+          if (tag !== `v${root.version}`) fail(`tag ${tag} must equal v${root.version}`);
+          if (core.version !== root.version || cli.version !== root.version) {
+            fail(`version mismatch: root=${root.version}, core=${core.version}, cli=${cli.version}`);
+          }
+          if (
+            root.private !== true ||
+            core.name !== '@eyaeya/xgg-core' ||
+            cli.name !== '@eyaeya/xgg-cli'
+          ) {
+            fail('release package identity does not match the expected public workspace');
+          }
+          if (cli.dependencies?.['@eyaeya/xgg-core'] !== 'workspace:^') {
+            fail('source CLI manifest must depend on @eyaeya/xgg-core via workspace:^');
+          }
+
+          const tagCommit = git('rev-list', '-n', '1', `${tag}^{commit}`);
+          if (git('rev-parse', 'HEAD') !== tagCommit) {
+            fail('checked-out commit is not the release tag commit');
+          }
+
+          git(
+            'fetch',
+            '--no-tags',
+            'origin',
+            `+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`,
+          );
+          const merged = spawnSync('git', [
+            'merge-base',
+            '--is-ancestor',
+            tagCommit,
+            `origin/${defaultBranch}`,
+          ]);
+          if (merged.status !== 0) {
+            fail(`release tag must be reachable from ${defaultBranch}`);
+          }
+
+          appendFileSync(process.env.GITHUB_ENV, `PACKAGE_VERSION=${root.version}\n`);
+          NODE
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@9.12.0 --activate
+          test "$(pnpm --version)" = '9.12.0'
+          pnpm install --frozen-lockfile
+
+      - name: Check, build, and pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm check
+          pnpm pack:release
+
+      - name: Verify release tarballs
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { existsSync } from 'node:fs';
+          import { spawnSync } from 'node:child_process';
+
+          const version = process.env.PACKAGE_VERSION;
+          const expected = [
+            ['@eyaeya/xgg-core', `release-artifacts/eyaeya-xgg-core-${version}.tgz`],
+            ['@eyaeya/xgg-cli', `release-artifacts/eyaeya-xgg-cli-${version}.tgz`],
+          ];
+
+          for (const [name, tarball] of expected) {
+            if (!existsSync(tarball)) throw new Error(`missing tarball: ${tarball}`);
+            const listing = spawnSync('tar', ['-tzf', tarball], { encoding: 'utf8' });
+            if (listing.status !== 0) throw new Error(`cannot list ${tarball}`);
+            const allowed = [
+              'package/package.json',
+              'package/LICENSE',
+              'package/README.md',
+              'package/dist/',
+            ];
+            if (name === '@eyaeya/xgg-cli') allowed.push('package/skills/');
+            for (const entry of listing.stdout.trim().split('\n')) {
+              if (!allowed.some((prefix) => entry === prefix || entry.startsWith(prefix))) {
+                throw new Error(`${tarball} contains unexpected entry: ${entry}`);
+              }
+            }
+            const result = spawnSync('tar', ['-xOf', tarball, 'package/package.json'], {
+              encoding: 'utf8',
+            });
+            if (result.status !== 0) throw new Error(`cannot read ${tarball}`);
+            const manifest = JSON.parse(result.stdout);
+            if (manifest.name !== name || manifest.version !== version) {
+              throw new Error(`${tarball} manifest does not match ${name}@${version}`);
+            }
+            if (
+              name === '@eyaeya/xgg-cli' &&
+              manifest.dependencies?.['@eyaeya/xgg-core'] !== `^${version}`
+            ) {
+              throw new Error('CLI tarball does not depend on the matching core release');
+            }
+          }
+          NODE
+
+      - name: Smoke-test the packed CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_prefix="$(mktemp -d)"
+          npm install --prefix "$install_prefix" --ignore-scripts --no-audit --no-fund \
+            "$PWD/release-artifacts/eyaeya-xgg-core-${PACKAGE_VERSION}.tgz" \
+            "$PWD/release-artifacts/eyaeya-xgg-cli-${PACKAGE_VERSION}.tgz"
+          test "$("$install_prefix/node_modules/.bin/xgg" --version)" = "$PACKAGE_VERSION"
+          "$install_prefix/node_modules/.bin/xgg" --help >/dev/null
+          INSTALL_PREFIX="$install_prefix" PACKAGE_VERSION="$PACKAGE_VERSION" \
+            node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { pathToFileURL } from 'node:url';
+
+          const root = process.env.INSTALL_PREFIX;
+          const expectedVersion = process.env.PACKAGE_VERSION;
+          const core = await import(
+            pathToFileURL(join(root, 'node_modules/@eyaeya/xgg-core/dist/index.js'))
+          );
+          const cli = JSON.parse(
+            readFileSync(join(root, 'node_modules/@eyaeya/xgg-cli/package.json'), 'utf8'),
+          );
+          if (core.VERSION !== expectedVersion || cli.version !== expectedVersion) {
+            throw new Error('installed tarball versions do not match the release');
+          }
+          NODE
+
+      - name: Check immutable registry state
+        id: registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          core_exists=false
+          cli_exists=false
+          npm view "@eyaeya/xgg-core@${PACKAGE_VERSION}" version >/dev/null 2>&1 \
+            && core_exists=true || true
+          npm view "@eyaeya/xgg-cli@${PACKAGE_VERSION}" version >/dev/null 2>&1 \
+            && cli_exists=true || true
+
+          if [ "$core_exists" = false ] && [ "$cli_exists" = true ]; then
+            echo 'Refusing inconsistent registry state: CLI exists but matching core does not.' >&2
+            exit 1
+          fi
+
+          echo "core_exists=$core_exists" >> "$GITHUB_OUTPUT"
+          echo "cli_exists=$cli_exists" >> "$GITHUB_OUTPUT"
+
+      - name: Publish core
+        if: steps.registry.outputs.core_exists != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm whoami >/dev/null
+          npm publish "release-artifacts/eyaeya-xgg-core-${PACKAGE_VERSION}.tgz" \
+            --access public --provenance
+
+      - name: Confirm core is available
+        if: steps.registry.outputs.core_exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            if npm view "@eyaeya/xgg-core@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'Published core did not become visible in time.' >&2
+          exit 1
+
+      - name: Publish CLI
+        if: steps.registry.outputs.cli_exists != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm whoami >/dev/null
+          npm publish "release-artifacts/eyaeya-xgg-cli-${PACKAGE_VERSION}.tgz" \
+            --access public --provenance
+
+      - name: Confirm both packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(npm view "@eyaeya/xgg-core@${PACKAGE_VERSION}" version)" = "$PACKAGE_VERSION"
+          test "$(npm view "@eyaeya/xgg-cli@${PACKAGE_VERSION}" version)" = "$PACKAGE_VERSION"
+          test "$(npm view "@eyaeya/xgg-cli@${PACKAGE_VERSION}" \
+            'dependencies.@eyaeya/xgg-core')" = "^${PACKAGE_VERSION}"
+          {
+            echo '### npm release'
+            echo
+            echo "Published or verified \`@eyaeya/xgg-core@${PACKAGE_VERSION}\`."
+            echo "Published or verified \`@eyaeya/xgg-cli@${PACKAGE_VERSION}\`."
+          } >> "$GITHUB_STEP_SUMMARY"

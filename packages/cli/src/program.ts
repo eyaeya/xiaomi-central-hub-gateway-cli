@@ -9,13 +9,14 @@ import { logoutCommand } from './commands/logout.js';
 import { ruleCommand } from './commands/rule/index.js';
 import { statusCommand } from './commands/status.js';
 import { variableCommand } from './commands/variable.js';
+import { VERSION } from './version.js';
 
 export function buildProgram(): Command {
   const program = new Command();
   program
     .name('xgg')
     .description('Xiaomi Gateway Geek Edition CLI for AI Coding')
-    .version('0.1.4')
+    .version(VERSION)
     .exitOverride();
 
   program.addCommand(apiCommand());

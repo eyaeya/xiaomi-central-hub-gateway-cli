@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,6 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { createIpcServer } from '@eyaeya/xgg-core';
 
 const cliPath = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+const packageMetadata = JSON.parse(
+  await readFile(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
+);
 const baseUrl = 'http://local-input-contract.test';
 const agentStartedAt = '2026-07-19T02:30:00.000Z';
 
@@ -122,6 +125,9 @@ test('Commander failures use one CONFIG JSON line while help and version stay su
     assert.equal(result.stderr, '');
     assert.notEqual(result.stdout, '');
   }
+
+  const version = await runCli(['--version'], agent);
+  assert.equal(version.stdout, `${packageMetadata.version}\n`);
 });
 
 test('typed node ids fail before Agent access while explicit legacy and raw replay stay available', async (t) => {
