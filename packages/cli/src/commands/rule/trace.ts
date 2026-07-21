@@ -58,7 +58,7 @@ export function attachTrace(cmd: Command): void {
     )
     .option(
       '--watch <id>',
-      'trace an exact Bundle watchpoint id: node:<id> or link:<src>-><dst> (repeatable)',
+      'trace an exact gateway-log watchpoint id: node:<id> or link:<src>-><dst> (repeatable)',
       collect,
       [],
     )
@@ -209,7 +209,7 @@ prove complete execution.`,
             },
             semantic: {
               boundary:
-                'Bundle getInfo/pin projection; deviceGet notify-property value labels use the shared best-effort MIoT semantic projection (multiLanguage then normalization then raw, including built-in bool labels); full catalog status is reported separately' as const,
+                'current xgg node-info/pin projection; deviceGet notify-property value labels use the shared best-effort MIoT semantic projection (multiLanguage then normalization then raw, including built-in bool labels); full catalog status is reported separately' as const,
               driftEntryCount: calculation.semanticDrift.entryCount,
               nodeInfoParseFailureCount: calculation.semanticDrift.nodeInfoParseFailureCount,
               incompatibleLinkEntryCount: calculation.semanticDrift.incompatibleLinkEntryCount,

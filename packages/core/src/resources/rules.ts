@@ -1866,7 +1866,7 @@ function assertDeviceShortcutLocalShape(shortcut: AddNodeShortcut): void {
       if (shortcut.deviceEvent !== undefined) {
         if (shortcut.type === 'deviceGetSetVar') {
           throw new ConfigError(
-            'deviceGetSetVar is property-only (--device-property). Bundle Pr.deviceGetSetVar has no event-mode branch — use deviceInputSetVar --device-event for event-driven captures.',
+            'deviceGetSetVar is property-only (--device-property) in the current xgg node contract; use deviceInputSetVar --device-event for event-driven captures.',
             { event: shortcut.deviceEvent, type: shortcut.type },
           );
         }
@@ -3362,7 +3362,7 @@ function synthesizeNodeFromShortcut(
     if (shortcut.deviceEvent !== undefined) {
       if (shortcut.type === 'deviceGetSetVar') {
         throw new ConfigError(
-          'deviceGetSetVar is property-only (--device-property). Bundle Pr.deviceGetSetVar has no event-mode branch — use deviceInputSetVar --device-event for event-driven captures.',
+          'deviceGetSetVar is property-only (--device-property) in the current xgg node contract; use deviceInputSetVar --device-event for event-driven captures.',
           { event: shortcut.deviceEvent, type: shortcut.type },
         );
       }
@@ -4133,7 +4133,7 @@ function varComparisonV1FromShortcut(
   if (shortcut.varType === 'string') {
     if (shortcut.varValue === undefined) {
       throw new ConfigError(
-        `${kind} string-varType requires --var-value <S> for the comparison literal (got nothing). The bundle's Pr.${kind} validator requires v1: string when varType: "string".`,
+        `${kind} string-varType requires --var-value <S> for the comparison literal (got nothing); the current xgg node contract requires v1: string when varType: "string".`,
         { varType: shortcut.varType, varId: shortcut.varId },
       );
     }

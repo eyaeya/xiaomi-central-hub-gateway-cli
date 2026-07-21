@@ -11,7 +11,7 @@
 - [事件可达性与状态真假](#事件可达性与状态真假)
 - [控制卡的运行语义](#控制卡的运行语义)
 - [规则生命周期与内部状态](#规则生命周期与内部状态)
-- [Bundle 不能替代的运行探针](#bundle-不能替代的运行探针)
+- [静态契约不能替代的运行探针](#静态契约不能替代的运行探针)
 - [增量编写与原子整图](#增量编写与原子整图)
 - [设计检查表](#设计检查表)
 
@@ -82,7 +82,7 @@
 ```
 
 - `id`：规则内唯一、后续命令复用的节点标识。
-- `type`：执行卡类型；不要用 UI 中文名或 GUIDE 中的旧称猜值。定时卡的实际类型是 `alarmClock`，不是 `timer`。
+- `type`：执行卡类型；不要用 UI 中文名或未经当前 xgg 校验的旧称猜值。定时卡的实际类型是 `alarmClock`，不是 `timer`。
 - `cfg`：卡片 UI/版本/位置以及设备 URN；`pos`、`simplified` 等字段可能只影响显示。少数 UI marker 位于 `props`，例如 `timeRange.props.mingTextShow`，不能因其是显示字段就写进 `cfg`。
 - `inputs`：声明输入 pin，值通常保持 `null`；它不是入边清单。
 - `outputs`：声明输出 pin，并保存从该 pin 发出的目标 endpoint 数组。
@@ -134,7 +134,7 @@ xgg rule edge add --rule-id <rid> --from nSource:output --to nTarget:trigger
 - 反相 state：用 `logicNot`。
 - 每个 input pin fan-in 上限为 1；先聚合，再接下游。
 - `deviceInput` event-mode 的 `output` 是纯 event；property-mode 是 `event|state`。
-- `timeRange.output` 是 `event|state`：它同时能连接 event 与 state 消费者。此前目标网关安全探针观察到 start 进入事件与独立窗口 state，未观察到等价 end event；这是范围化实机证据，不是 Bundle 证明，换固件仍要复验。
+- `timeRange.output` 是 `event|state`：它同时能连接 event 与 state 消费者。此前目标网关安全探针观察到 start 进入事件与独立窗口 state，未观察到等价 end event；这是范围化实机证据，不是静态契约证明，换固件仍要复验。
 
 完整 pin 表见 [node-catalog.md](node-catalog.md)。
 
@@ -180,15 +180,15 @@ xgg rule edge add --rule-id <rid> --from nSource:output --to nTarget:trigger
 
 ## 规则生命周期与内部状态
 
-- `onLoad` 是无输入 event source；用 disable→enable 可控触发前，必须先审查全部下游。固定前端 Bundle 不包含固件 executor，不能据此承诺保存、重启、恢复等每个生命周期都会触发。
+- `onLoad` 是无输入 event source；用 disable→enable 可控触发前，必须先审查全部下游。当前 xgg 静态契约不包含固件 executor，不能据此承诺保存、重启、恢复等每个生命周期都会触发。
 - `preload=true` 仅适用于 property-mode `deviceInput` / `deviceInputSetVar` 与 `varChange`：UI 意图是在规则启用时先查询/评估一次；默认 false 只跳过首次查询，不关闭后续 notify/change。preload 是否向下游发 event 仍须日志证明。
 - XGG 静态可达性把 `register` 初始状态建模为 false；这是一项保守分析假设，不是禁用、重启或恢复后真实固件状态的证明。
 - `register`、`counter`、`onlyNTimes`、`modeSwitch`、`loop` 都含图内状态。需要跨规则共享、可直接读写或有明确持久性时，改用网关变量并显式设计初始化。
 - 已启用规则的 node/edge/layout/set 修改通常保留 `enable`，因此多步编辑可能立即改变线上行为。需要隔离时先获授权 disable，或离线构造后单次 `rule set`。
 
-## Bundle 不能替代的运行探针
+## 静态契约不能替代的运行探针
 
-固定 Bundle 给出 UI、wire、save validator 与日志 projector，不包含固件 executor。下面这些问题不能从卡片名字或前端代码下定论：
+当前 xgg 的 node/wire schema、save validator 与日志 projector 不包含固件 executor。下面这些问题不能从卡片名字或静态代码下定论：
 
 | 卡片/链路 | 需要在目标网关证明 |
 |---|---|

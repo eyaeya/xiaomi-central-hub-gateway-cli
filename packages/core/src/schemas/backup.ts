@@ -181,10 +181,9 @@ export const LegacyLocalBackupPayload = z.array(LegacyLocalBackupRule);
 export type LegacyLocalBackupPayload = z.infer<typeof LegacyLocalBackupPayload>;
 
 /**
- * Canonical local `.bak` payload emitted by the official web bundle's
- * `jr.generateBackup()` path. Version 2 stores complete rule graphs and the
- * full scope/id variable map before the binary deflate + digest envelope is
- * applied. Legacy rules-only arrays are normalized to this shape at decode.
+ * Canonical local `.bak` payload. Version 2 stores complete rule graphs and
+ * the full scope/id variable map before the binary deflate + digest envelope
+ * is applied. Legacy rules-only arrays are normalized to this shape at decode.
  */
 export interface LocalBackupPayload {
   version: 2;
@@ -223,10 +222,9 @@ export const LocalBackupPayload: z.ZodType<LocalBackupPayload> = z
   });
 
 /**
- * Raw payload returned by `/api/generateBackup`. The production Bundle wraps
- * this value unchanged in the official `.bak` envelope, so historical cloud
- * backups may still be the legacy rules-only array while current backups use
- * the canonical version-2 object.
+ * Raw payload returned by `/api/generateBackup`. xgg wraps this value unchanged
+ * in the `.bak` envelope, so historical cloud backups may still be the legacy
+ * rules-only array while current backups use the canonical version-2 object.
  */
 export const BackupContent = z.union([LocalBackupPayload, LegacyLocalBackupPayload]);
 export type BackupContent = z.infer<typeof BackupContent>;

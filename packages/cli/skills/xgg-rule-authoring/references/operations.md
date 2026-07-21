@@ -92,7 +92,7 @@ xgg rule set-tags <rid> --tags "a,b"
 - `set-tags` 替换整组，不是 append；空字符串清空。
 - `rule delete` 还会清理 `R<rid>` scope；global 变量需另删。幂等清理才 `--allow-missing`。
 
-需要保留未知扩展字段或一次原子写整图时，用 `rule view`/export 的完整默认 JSON，不从 pretty 或 GUIDE 片段拼 payload：
+需要保留未知扩展字段或一次原子写整图时，用 `rule view`/export 的完整默认 JSON，不从 pretty 或未经当前 xgg 校验的片段拼 payload：
 
 ```bash
 xgg rule validate --body ./graph.json
@@ -202,13 +202,13 @@ xgg rule node add --rule-id <rid> --type varSetNumber \
 | ≥1 | `max min` |
 | 0 | `rand now year month date day hours minutes seconds pi e` |
 
-`log(x,y)` 是以 x 为底 y 的对数，三角函数用弧度；`month()` 为 1–12、`date()` 从 1 起、`day()` 周日=0、`now()` 是毫秒 epoch。`varSetString` 只拼接文本，但仍检查变量引用 grammar；当前 CLI/固定 Bundle 没有可据以承诺的通用 UTF-8 长度上限，不要编造数字。
+`log(x,y)` 是以 x 为底 y 的对数，三角函数用弧度；`month()` 为 1–12、`date()` 从 1 起、`day()` 周日=0、`now()` 是毫秒 epoch。`varSetString` 只拼接文本，但仍检查变量引用 grammar；当前 xgg CLI/schema 没有声明通用 UTF-8 长度上限，不要编造数字。
 
 先用 `expr-check` 区分语法错误和运行期值错误；export 不能无损还原的 elements 会拒绝而不是生成漂移脚本。
 
 ## 一次性读取设备属性与低层 API
 
-当前已审计 Bundle/xgg 没有“客户端随时读取任意设备属性”的通用 typed RPC；这不是对所有私有固件接口的绝对不存在证明。需要主动取一次当前值时，把可读 property 导入变量：
+当前 xgg typed command surface 没有“客户端随时读取任意设备属性”的通用命令；这不是对所有私有固件接口的绝对不存在证明。需要主动取一次当前值时，把可读 property 导入变量：
 
 ```bash
 xgg device spec <did> --pretty
@@ -227,7 +227,7 @@ xgg rule lint --rule-id <rid> --strict
 
 string property 对应 string；其他 format（包括 bool）对应 number，bool 用 0/1。持续 notify 则用 property `deviceInputSetVar` + `variable watch --follow`；`--preload` 只控制 enable 时首次查询，不制造 notify/read/push。测试后按授权删除临时规则/变量。
 
-仅当 Bundle 出现已知/疑似、typed CLI 尚未覆盖的 RPC 时，才用下面的 escape hatch；`--params` 与 `--params-file` 二选一：
+仅当已明确掌握 method 与 params、而当前 typed CLI 尚未覆盖该 RPC 时，才用下面的 escape hatch；`--params` 与 `--params-file` 二选一：
 
 ```bash
 xgg api /api/<method> [--kind read|write] \

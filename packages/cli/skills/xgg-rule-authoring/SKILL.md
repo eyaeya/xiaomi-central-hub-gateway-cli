@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent must understand, design, inspect, validate, or operate Xiaomi Central Hub Geek Edition automation rule graphs through the xgg CLI, including the complete 25 executable cards plus nop, event/state pins, MIoT enums and value semantics, complex temporal/state patterns, variables, safe live verification, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-60cb0ad58fa6233a515577fa540f072510c7c514f3f14cce6a504a4643c50beb -->
+<!-- xgg-skill-content-build: sha256-fe48e3ea09b6f44283e2a0ed957b0e6971c7761afef43a63878348c72784d159 -->
 
 # xgg 中枢网关自动化编译器
 
@@ -16,24 +16,24 @@ description: Use when an LLM Agent must understand, design, inspect, validate, o
 3. 写入保持安全、可回滚，并通过 schema、spec、拓扑和 truth-aware reachability；
 4. 若用户授权运行，用日志、trace、变量 readback 或设备结果证明行为。
 
-规则 JSON 不是 LLM 通识。不要凭字段名、米家普通自动化经验或 `GUIDE.md` 旧示例猜 wire。
+规则 JSON 不是 LLM 通识。不要凭字段名、米家普通自动化经验或任何未经当前 xgg 校验的历史、第三方 JSON 片段猜 wire。
 
 ## 证据边界
 
 始终区分三层：
 
-- **固定 Xiaomi Bundle：** 证明网页卡片、canonical wire、pin 类型、save validator 和日志 projector；它不包含固件 executor。
-- **当前 xgg：** 证明 CLI flags、typed synthesis、schema、静态 lint/reachability、export/import 与测试契约。
-- **目标网关：** 证明具体设备 spec、push、固件运行时序、状态持久性、动作成败与日志保留。
+- **当前 xgg 静态契约：** CLI flags、typed synthesis、schema、node/pin projector、静态 lint/reachability、export/import 与测试共同证明当前已建模结构；它们不证明固件 executor 行为。
+- **目标网关当前元数据：** live inventory 与 `device spec` 证明具体设备的 property/event/action、access、push 与值域。
+- **目标网关运行证据：** 日志、trace、变量或设备 readback 证明固件运行时序、状态持久性、动作成败与日志保留。
 
-Bundle 中没有 executor 的行为，必须写成“卡片意图/待实机验证”，不能冒充真实运行结论。尤其是 counter 的精确阈值 tick、loop 首 tick、delay 并发、statusLast reset、eventSequence 并发、register/modeSwitch 生命周期及 action output 成功时序。
+当前 xgg 的静态 schema、validator 与 projector 未证明的 executor 行为，必须写成“卡片意图/待实机验证”，不能冒充真实运行结论。尤其是 counter 的精确阈值 tick、loop 首 tick、delay 并发、statusLast reset、eventSequence 并发、register/modeSwitch 生命周期及 action output 成功时序。
 
 ## 必读路由
 
 第一次在一个会话中设计或改写规则，先读：
 
 - [references/graph-model.md](references/graph-model.md)：自然语言→E/S 图、wire、truth-aware reachability、控制卡与运行探针。
-- [references/node-catalog.md](references/node-catalog.md)：25 种执行卡+nop 的完整 pin、per-type flags/defaults、canonical JSON 和 GUIDE 旧例禁区。
+- [references/node-catalog.md](references/node-catalog.md)：25 种执行卡+nop 的完整 pin、per-type flags/defaults、canonical JSON 与非 canonical 写法禁区。
 
 按任务再读：
 
@@ -126,7 +126,7 @@ node/edge/layout/set 写入默认保留 live `enable`；已启用规则的多步
 - shortcut 无法保留的扩展字段；
 - 需要一次原子写入整图。
 
-raw 必须来自默认 JSON `rule view`/export，不能来自 pretty 或 GUIDE 片段。完整节点是 `{id,type,cfg,inputs,outputs,props}`；JSON wire 只存 source `outputs`，endpoint 用 `node.pin`。
+raw 必须来自默认 JSON `rule view`/export，不能来自 pretty 或任何未经当前 xgg 校验的 JSON 片段。完整节点是 `{id,type,cfg,inputs,outputs,props}`；JSON wire 只存 source `outputs`，endpoint 用 `node.pin`。
 
 CLI 的普通 edge endpoint 是 `node:pin`。若旧 node ID 自身含 `:`，必须改用四个无损参数 `--from-node-id/--from-pin/--to-node-id/--to-pin`；当前 export/import 会自动采用这种结构化重放，不能靠第一个冒号猜边界。
 
@@ -174,7 +174,7 @@ xgg rule trace <rid> --pretty
 7. `onlyNTimes` 与 `counter` 的 `zero` 是可选控制 pin；只有业务需要开启新计数窗口/允许清零时才接。按日重置用 alarmClock→zero；生命周期累计或一次性前 N 次门可以省略 zero。
 8. `loop` 必须有 start；有界或可取消业务要设计 stop。若明确要永久轮询，可省略 stop，并说明终止依赖 disable/delete、使用正 interval、评估事件风暴风险。此前目标网关已验证 `output→同节点 stop` 的有限反馈，其他反馈与固件仍要实测。
 9. `modeSwitch` outputs 从 0 连续，动态逻辑/事件输入至少 2。
-10. device/action/set/query output 可以继续串接，但 Bundle 不证明它只在成功后发；关键链路读日志。
+10. device/action/set/query output 可以继续串接；当前静态 pin 契约不证明它只在成功后发，关键链路必须读日志。
 
 ## 实机安全
 
@@ -220,4 +220,4 @@ export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 - snapshot/backup 和临时规则/变量清理状态；
 - 网页 F5 提醒。
 
-content build marker 是除 marker 行及其换行外本文件 UTF-8 bytes 的 SHA-256，用于识别 npm 版本号相同但内容过期的副本。仓库、package mirror、实际安装 Skill 仍必须递归字节一致。
+content build marker 是整个 Skill 文件树的 SHA-256：相对 POSIX 路径排序后，每项按路径、字节长度和原始字节计算，只有本文件的 marker 行及其换行不参与。它用于识别版本号相同但正文或 reference 过期的副本；仓库、package mirror、实际安装 Skill 仍必须递归字节一致。

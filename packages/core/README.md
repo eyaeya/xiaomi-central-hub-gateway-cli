@@ -24,7 +24,7 @@ npm tarball 只包含：
 - `LICENSE`
 - `README.md`
 
-GitHub 仓库中的参考 bundle、fixtures、开发文档、探测记录和快照不会进入 npm 包。
+npm 包只包含运行 core 所需的 `dist`、许可证与本 README；它不依赖仓外参考文件、开发文档、探测记录或快照。
 
 ## 说明
 
@@ -84,7 +84,7 @@ spec registry 的 404 会返回 warning，表示该 URN 的外部检查被跳过
 
 注入 spec 后，`deviceOutput` property-write 会核对属性存在性与 write access、literal 的 MIoT 原生类型和 value-list/value-range/step，以及 variable ref 的实际类型、dtype 与有效 range metadata；action input 继续使用同一 literal/变量基础契约，并额外检查 `action.in` 与 `props.ins` 的完整逐索引映射。
 
-`deviceOutput` typed variable ref 只支持不含 `value-list` 字段的 string 目标，或不含该字段且带有效 value-range 的 number 目标。boolean 与任何存在 `value-list` 字段的目标（包括空数组）按固定 UI 的 literal-only 路径处理；spec-aware validation 会诊断 persisted legacy ref，strict export 与 `enableRule` 会 fail closed。默认 enable 只对实际存在的 output ref 做聚焦 spec 证明，404、网络/超时或无效 spec 都阻止 enable，且不会查询或扩大校验到无关旧设备节点；显式传入 `EnableRuleOptions.getDeviceSpec` 时仍保留全图 spec-aware 行为。
+`deviceOutput` typed variable ref 只支持不含 `value-list` 字段的 string 目标，或不含该字段且带有效 value-range 的 number 目标。当前 xgg 对 boolean 与任何存在 `value-list` 字段的目标（包括空数组）采用 literal-only 契约；spec-aware validation 会诊断 persisted legacy ref，strict export 与 `enableRule` 会 fail closed。默认 enable 只对实际存在的 output ref 做聚焦 spec 证明，404、网络/超时或无效 spec 都阻止 enable，且不会查询或扩大校验到无关旧设备节点；显式传入 `EnableRuleOptions.getDeviceSpec` 时仍保留全图 spec-aware 行为。
 
 ## DATA 响应大小限制
 

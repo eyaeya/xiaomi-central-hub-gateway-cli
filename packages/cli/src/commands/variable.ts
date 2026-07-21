@@ -626,11 +626,9 @@ Strings use the argv text verbatim: --value Seed stores Seed, while
 --value '"Seed"' stores the quote characters too; do not add JSON quotes
 unless those quotes are intended data.
 
-F66d (2026-05-31): xgg now fetches the stored variable's type via
-getVarConfig before pushing the new value, so --type can be omitted and
---type=wrong is rejected before any side effect (bundle Da.updateVar:
-silent no-op on typeof mismatch — see commit message). Use --force-type
-to intentionally re-type a variable in place.`,
+Stored-type safety: xgg fetches the variable configuration before writing, so
+--type can be omitted and --type=wrong is rejected before any side effect.
+Use --force-type only to intentionally re-type a variable in place.`,
     )
     .action(
       wrap('variable.set-value', async (opts: SetValueOpts) => {
@@ -653,7 +651,7 @@ to intentionally re-type a variable in place.`,
             if (opts.type !== undefined) {
               if (opts.type !== storedType && opts.forceType !== true) {
                 throw new ConfigError(
-                  `--type "${opts.type}" does not match the stored variable type "${storedType}" for ${opts.scope}/${opts.id}. The Mi-Home UI's Da.updateVar (ai-config-v5.28b650.js) silently no-ops on typeof mismatch — your update would be accepted by the gateway but ignored by the UI. Either drop --type (xgg will use the stored type) or pass --force-type to deliberately re-type the variable.`,
+                  `--type "${opts.type}" does not match the stored variable type "${storedType}" for ${opts.scope}/${opts.id}. Drop --type so xgg uses the stored type, or pass --force-type only when deliberately re-typing the variable.`,
                 );
               }
               if (opts.type !== storedType && opts.forceType === true) {
@@ -839,7 +837,7 @@ function assertVariableReplayCompatible(
 // ergonomic for AI agents that need a current-state snapshot (for picking
 // thresholds) or a streaming diff (for observing an automation).
 //
-// The audited client/bundle surface and current xgg model do not expose a
+// The current xgg modeled client surface does not expose a
 // generic arbitrary live-property read. For a modeled observation path, route
 // the property into a variable with deviceInputSetVar (notify) or
 // deviceGetSetVar (event-driven pull), then watch the variable. This is not a
@@ -896,8 +894,8 @@ Examples:
   $ xgg variable watch --follow --max-events 5  # stream then exit
   $ xgg variable watch --follow --interval-ms 1500
 
-Note: the audited client/bundle surface and current xgg model do not expose a
-generic arbitrary live-property read. Route a modeled property into a variable
+Note: the current xgg modeled client surface does not expose a generic
+arbitrary live-property read. Route a modeled property into a variable
 with deviceInputSetVar (on change) or deviceGetSetVar (on demand), then use
 variable watch --follow. This does not rule out firmware-private APIs.`,
     )

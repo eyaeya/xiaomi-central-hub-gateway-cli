@@ -3,11 +3,10 @@ import { randomUUID } from 'node:crypto';
 /**
  * Canonical node-id grammar for nodes newly authored through typed shortcuts.
  *
- * The pinned gateway Bundle's `Ur.checkWebNode` rejects characters outside
- * its ASCII identifier class before the editor validates any card-specific
- * fields. Keep the persisted/read schema more permissive: older gateway
- * graphs and opaque future cards must remain viewable and exportable without
- * xgg rewriting their identities or edge endpoints.
+ * Current typed authoring accepts only the canonical ASCII identifier class.
+ * Keep the persisted/read schema more permissive: older gateway graphs and
+ * opaque future cards must remain viewable and exportable without xgg
+ * rewriting their identities or edge endpoints.
  */
 export const EDITOR_NODE_ID_PATTERN = /^[A-Za-z0-9]+$/;
 export const EDITOR_NODE_ID_CONSTRAINT =

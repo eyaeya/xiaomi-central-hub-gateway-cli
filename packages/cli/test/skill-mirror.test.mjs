@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { computeSkillTreeDigest } from '../../../scripts/sync-xgg-skill.mjs';
 import { NODE_ADD_AUTHORING_FLAG_NAMES } from '../dist/commands/rule/node-add-authoring-flags.js';
 
 const publishedDir = fileURLToPath(new URL('../skills/xgg-rule-authoring/', import.meta.url));
@@ -67,7 +67,7 @@ test('published and repository xgg-rule-authoring Skill directories are byte-ide
   }
 });
 
-test('Skill entrypoint has a content-bound build marker and minimal frontmatter', async () => {
+test('Skill entrypoint has a full-tree build marker and minimal frontmatter', async () => {
   const skill = await readFile(path.join(repositoryDir, 'SKILL.md'), 'utf8');
   const markerLines = skill
     .split('\n')
@@ -76,13 +76,9 @@ test('Skill entrypoint has a content-bound build marker and minimal frontmatter'
   const markerLine = markerLines[0];
   const marker = /^<!-- xgg-skill-content-build: sha256-([0-9a-f]{64}) -->$/.exec(markerLine);
   assert.ok(marker, 'Skill build marker must contain a lowercase SHA-256');
-  const markerWithLf = `${markerLine}\n`;
-  const markerOffset = skill.indexOf(markerWithLf);
-  assert.notEqual(markerOffset, -1, 'Skill build marker must end with LF');
-  const contentWithoutMarker =
-    skill.slice(0, markerOffset) + skill.slice(markerOffset + markerWithLf.length);
-  const contentDigest = createHash('sha256').update(contentWithoutMarker).digest('hex');
-  assert.equal(marker[1], contentDigest, 'Skill build marker is stale for the current body');
+  assert.ok(skill.includes(`${markerLine}\n`), 'Skill build marker must end with LF');
+  const treeDigest = await computeSkillTreeDigest(repositoryDir);
+  assert.equal(marker[1], treeDigest, 'Skill build marker is stale for the canonical Skill tree');
 
   const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(skill);
   assert.ok(frontmatter, 'SKILL.md must start with YAML frontmatter');

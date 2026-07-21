@@ -232,7 +232,7 @@ function appendCatalogStatus(lines: string[], projection: SemanticDeviceSpecProj
   appendWrapped(
     lines,
     'Semantic labels: ',
-    'best-effort zh_cn; Bundle-compatible precedence varies by context',
+    'best-effort zh_cn; xgg documented precedence varies by context',
   );
   appendWrapped(
     lines,
