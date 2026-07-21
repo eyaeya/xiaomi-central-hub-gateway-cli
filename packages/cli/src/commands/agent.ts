@@ -7,6 +7,7 @@ import {
 } from '@eyaeya/xgg-core';
 import { Command } from 'commander';
 import { parsePositiveTimerMs } from '../local-input.js';
+import { VERSION } from '../version.js';
 
 interface AgentServeOpts {
   host?: string;
@@ -48,7 +49,7 @@ export function agentCommand(deps: AgentCommandDeps = {}): Command {
       const mainOpts: RunAgentMainOptions = {
         host,
         passcode,
-        agentVersion: '0.1.4',
+        agentVersion: VERSION,
       };
       if (opts.sessionFile) mainOpts.sessionFile = opts.sessionFile;
       if (idleMs !== undefined) mainOpts.idleMs = idleMs;

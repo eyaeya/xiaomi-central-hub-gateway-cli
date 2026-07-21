@@ -1,6 +1,6 @@
 {
   "name": "@eyaeya/xgg-core",
-  "version": "0.1.4",
+  "version": "2.0.0",
   "description": "Core runtime library for xgg, the Xiaomi Gateway Geek Edition CLI",
   "license": "GPL-3.0-or-later",
   "type": "module",

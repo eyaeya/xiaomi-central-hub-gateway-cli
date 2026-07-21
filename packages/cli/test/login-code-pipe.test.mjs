@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import { test } from 'node:test';
 import { ConfigError } from '@eyaeya/xgg-core';
 import { agentCommand, readOneShotLoginCode } from '../dist/commands/agent.js';
+import { VERSION } from '../dist/version.js';
 
 test('agent child reads a split login code once and closes the pipe', async () => {
   const input = Readable.from([Buffer.from('654'), Buffer.from('321')]);
@@ -32,6 +33,7 @@ test('agent serve passes the one-shot pipe code into the existing startup flow',
   assert.equal(observedPasscode, '456789');
   assert.equal(startupOptions.passcode, '');
   assert.equal(startupOptions.host, 'http://192.0.2.10:8086');
+  assert.equal(startupOptions.agentVersion, VERSION);
 });
 
 test('agent child rejects empty, malformed, and overlong pipe payloads', async () => {

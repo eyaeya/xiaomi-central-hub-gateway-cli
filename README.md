@@ -2,6 +2,15 @@
 
 > 使用 Codex、Claude 或其他 Agent 工具，调用本项目已审计并建模的小米中枢网关能力，进行 Vibe Coding 式的米家中枢网关自动化规则编程。
 
+## 核心优势
+
+- **为 Agent 原生设计**：默认输出稳定、可解析的 JSON，错误信息提供可执行的下一步提示；npm 包同时携带自包含 Skill，让 Codex、Claude 等 Agent 能直接理解并操作规则图。
+- **覆盖高级规则图能力**：建模 25 类可执行节点及 `nop`，支持事件与数据 pin、全局/局部变量、表达式、时间条件、状态保持、循环、计数和设备动作，不局限于普通米家自动化模板。
+- **以实时设备能力为准**：读取目标网关当前设备清单与 MIoT spec，投影中文语义、访问权限、值域和动作参数；创建前先验证，避免凭设备名或历史示例猜属性。
+- **写入安全优先**：提供写前快照、变更租约、严格 schema 与拓扑校验、`lint --strict` 和默认禁用创建流程，降低误启用、并发覆盖及不可逆配置损坏的风险。
+- **结果可回查、可解释**：规则 readback、结构化日志和累积 trace 能把节点、边、设备属性和值标签转译成人与 Agent 都能理解的语义，同时明确扫描边界与证据完整度。
+- **保真迁移与运维**：支持规则 export/import/clone、未知节点同 ID 保留、官方格式本地备份及受保护的云备份流程；通过 WebSocket 承载的加密二进制协议直连用户自有网关，无需第三方中转服务。
+
 `xgg` 是用于操作小米中枢网关极客版的命令行工具。它把网关的登录、设备读取、自动化规则图编辑、变量管理、备份管理和调试日志封装成稳定的 CLI，适合人类在终端中使用，也适合 LLM Agent 按步骤创建和验证自动化。
 
 本仓库包含两个包（命令名为 `xgg`）：
@@ -38,7 +47,7 @@ GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaey
 
 ## 免责声明
 
-本项目是**非官方**工具，与小米（Xiaomi）**无任何隶属关系，未获其授权或背书**。「小米」「米家」「中枢网关极客版」「Xiaomi」等名称为其各自所有者的商标，本项目仅作描述性使用，不使用任何官方 logo。`xgg` 通过加密 WebSocket 与**用户自有**的网关设备通信，仅供个人合法使用，风险自负。
+本项目是**非官方**工具，与小米（Xiaomi）**无任何隶属关系，未获其授权或背书**。「小米」「米家」「中枢网关极客版」「Xiaomi」等名称为其各自所有者的商标，本项目仅作描述性使用，不使用任何官方 logo。`xgg` 通过 WebSocket 承载的加密二进制协议与**用户自有**的网关设备通信，仅供个人合法使用，风险自负。
 
 > Unofficial project, not affiliated with or endorsed by Xiaomi. All trademarks belong to their respective owners.
 
@@ -432,7 +441,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 
 ## 重要限制
 
-- 当前 xgg 对规则、变量、设备与备份操作使用加密 WebSocket 二进制协议承载的 RPC，登录使用米家 App 提供的 6 位码。这不是对所有固件、服务或未来版本“绝不存在 HTTP API”的证明。
+- 当前 xgg 对规则、变量、设备与备份操作使用 WebSocket 承载的加密二进制协议 RPC，登录使用米家 App 提供的 6 位码。这不是对所有固件、服务或未来版本“绝不存在 HTTP API”的证明。
 - 已打开的网关网页不会自动看到 CLI 写入的规则、变量或 scope。CLI 写入后请刷新网页，再判断 UI 是否同步。
 - `xgg device list` 与默认 replacement discovery 都排除 ghost device。显式聚焦 ghost 的替换 dry-run 仅返回 `eligible:false` 诊断结果且没有 `planId`；不要把网页标为“设备已丢失”的设备作为规则目标。
 - 变量类型只有 `number` 和 `string`。规则引用会按使用点核对实际类型：`varChange` / `varGet` 使用卡片 `varType`，`varSetNumber` 的 target 与所有变量 operand 必须是 number，`varSetString` 的 target 必须是 string；当前 xgg 对 `varSetString` operand 保守允许 number/string。设备 capture/output 则按 MIoT 投影 dtype 校验。开关状态建议用数字 `1/0` 或字符串表示。
@@ -451,7 +460,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 
 GitHub 源码发布根目录是本目录。本仓库与 npm 包只依赖这里发布的源码、构建产物和自包含文档；使用 CLI 或 Skill 不需要任何仓外参考文件或专有代码。
 
-npm 只发布 `@eyaeya/xgg-core` 与 `@eyaeya/xgg-cli` 两个包。`@eyaeya/xgg-cli` 依赖并自动安装 `@eyaeya/xgg-core`，用户只需要全局安装 CLI 包。两个包的 `package.json` 使用 `files` allow-list：core tarball 只包含 `dist`、`LICENSE`、`README.md`；cli tarball 额外包含整个 `skills/xgg-rule-authoring/`（正文与 references），不会包含 fixtures、开发计划、探测记录、快照或本地逆向材料。
+npm 只发布 `@eyaeya/xgg-core` 与 `@eyaeya/xgg-cli` 两个包。`@eyaeya/xgg-cli` 依赖并自动安装 `@eyaeya/xgg-core`，用户只需要全局安装 CLI 包。两个包的 `package.json` 使用 `files` allow-list：除 npm 必带的 `package.json` 外，core tarball 只包含 `dist`、`LICENSE`、`README.md`；cli tarball 额外包含整个 `skills/xgg-rule-authoring/`（正文与 references），不会包含 fixtures、开发计划、探测记录、快照或本地逆向材料。
 
 ## 开发与发布检查
 
@@ -469,7 +478,7 @@ tar -tzf release-artifacts/eyaeya-xgg-cli-*.tgz
 - `pnpm check` 通过。
 - `pnpm pack:release` 能生成 `@eyaeya/xgg-core` 和 `@eyaeya/xgg-cli` tarball。
 - 临时安装生成的 CLI tarball 后，`xgg --version` 和 `xgg --help` 正常。
-- `tar -tzf` 确认 core tarball 只含 `dist/LICENSE/README.md`，cli tarball 只额外含 `skills/xgg-rule-authoring/` 正文与 references（不含源码、fixtures、本地材料）。
+- `tar -tzf` 确认除 npm 必带的 `package.json` 外，core tarball 只含 `dist/LICENSE/README.md`，cli tarball 只额外含 `skills/xgg-rule-authoring/` 正文与 references（不含源码、fixtures、本地材料）。
 - 公开树中没有真实 IP、6 位登录码、设备 DID、家庭名或本地快照。
 
 发布命令：
