@@ -95,94 +95,159 @@ xgg rule view <rule-id> --pretty
 
 > 提示：CLI 写入不会自动同步到已打开的网关网页。Agent 完成改动后，请在网页 **F5 刷新**再查看（见「重要限制」）。
 
-## 人类安装
+## 安装（人类与 AI Agent）
+
+> **给正在执行本 README 的 Agent：** 安装 xgg 必须同时完成 CLI 与 Skill。不要在 `npm install` 成功后停止，也不要在 Skill 尚未进入 Agent 的全局发现目录时宣称安装完成。无论命令由人类还是 Agent 执行，都使用下面同一套推荐流程。
+
+xgg 的完整安装包含两部分：
+
+- `@eyaeya/xgg-cli` 提供 `xgg` 命令，并自动安装匹配版本的 `@eyaeya/xgg-core`。
+- `xgg-rule-authoring` Skill 告诉 Agent 如何安全地设计、校验、写入和验收中枢网关规则。
+
+npm 包虽然携带 Skill 的完整离线副本，但 **`npm install` 不会把它注册到 Agent 的 Skill 调用目录**。因此，即使当前由人类安装，也应默认完成 Skill 安装，方便随后交给 Agent 使用。
 
 要求：
 
 - Node.js 20.11 或更高版本。
-- 能从当前电脑访问网关极客版网页地址，通常是 `http://<gateway-ip>:8086`。
-- 米家 App 中枢网关设备页显示的 6 位登录码（若中枢网关是路由器或家庭屏自带的，则在对应设备内的中枢网关功能页面获取）。登录码短时有效且通常只能用一次。
+- `npm`、`npx`、Git，以及访问 npm 和 GitHub 的网络。
+- 网关地址和 6 位登录码只在安装完成后的登录阶段需要；Agent 不应提前索取登录码。
 
-从 npm 安装 CLI（推荐）：
+### 推荐：完整安装 CLI 与 Skill
+
+先声明本次要验证的使用者。Agent 必须把 `AGENT_NAME` 替换成 `skills list --json` 使用的自身规范化名称（例如 `Codex`、`Claude Code`）；人类已确定后续 Agent 时也应填写其具体名称，尚未确定时才使用注释中的 `*`。`*` 只证明 Skill 已注册给当前 `skills` CLI 识别到的至少一个 Agent；确定实际调用者后，仍须改成其具体名称重跑验证。该变量只用于本机验收，不会发送给网关：
 
 ```bash
-npm install -g @eyaeya/xgg-cli
-xgg --version
-xgg --help
+set -euo pipefail
+
+# Agent 执行：必须替换占位符。
+export XGG_AGENT_NAME="AGENT_NAME"
+# 人类尚未确定后续 Agent、只做全局预装时，改用：
+# export XGG_AGENT_NAME="*"
+
+npm install -g @eyaeya/xgg-cli@latest
+
+XGG_VERSION="$(xgg --version)"
+printf 'xgg=%s\n' "$XGG_VERSION"
+npx --yes skills add \
+  "eyaeya/xiaomi-central-hub-gateway-cli@v${XGG_VERSION}" \
+  --global --all
+
+xgg --help >/dev/null
+npx --yes skills list --global --json | node -e '
+let raw = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { raw += chunk; });
+process.stdin.on("end", () => {
+  const expectedAgent = process.env.XGG_AGENT_NAME;
+  const skills = JSON.parse(raw);
+  const skill = skills.find((item) => item.name === "xgg-rule-authoring");
+  const invalidTarget = !expectedAgent || expectedAgent === "AGENT_NAME";
+  const missingForTarget =
+    !skill ||
+    !Array.isArray(skill.agents) ||
+    skill.agents.length === 0 ||
+    (expectedAgent !== "*" && !skill.agents.includes(expectedAgent));
+  if (invalidTarget || missingForTarget) {
+    console.error(`xgg-rule-authoring is not verified for ${expectedAgent || "an explicit Agent"}`);
+    process.exit(1);
+  }
+  console.log(
+    JSON.stringify({ ok: true, verifiedFor: expectedAgent, name: skill.name, agents: skill.agents }),
+  );
+});
+'
 ```
 
-`@eyaeya/xgg-cli` 会自动安装匹配版本的 `@eyaeya/xgg-core`，通常不需要手动安装 core 包。只有在 Node.js 程序里直接复用协议、schema 或 usecase 层时，才需要：
+`npx --yes` 跳过 npx 自身的安装确认；`--global --all` 会把仓库中的 Skill 非交互地安装给所有受支持的 Agent。命令按已安装的 `xgg` 版本锁定同名 Git tag，避免 npm `latest` 与 GitHub `main` 暂时不同步时装入不匹配的 Skill。
+
+Agent 只有在以下条件全部成立后才能报告安装成功：
+
+1. `xgg --version` 输出有效版本，且 `xgg --help` 以 0 退出。
+2. 最后一条验证命令输出 `{"ok":true,"verifiedFor":...}`。Skill 缺失、目标仍是占位符、没有关联任何 Agent，或当前 Agent 不在 `agents` 中时，该命令必须非零退出。
+3. Agent 模式下 `verifiedFor` 与自身规范化名称一致，且 `agents` 确实包含它；人类使用 `*` 预装时，输出只能作为临时检查，实际 Agent 接手前必须按其具体名称再验一次。失败时应修复安装或明确报告阻塞，不能继续假设 Agent 已加载 Skill。
+
+如果只想安装给特定 Agent，可把 `--all` 换成 `--skill xgg-rule-authoring --agent <agent-id> --yes`；例如 `codex` 或 `claude-code`。默认推荐 `--all`，避免安装者与之后实际调用 xgg 的 Agent 不一致。
+
+只有在 Node.js 程序里直接复用协议、schema 或 usecase 层时，才需要单独安装 Core SDK：
 
 ```bash
 npm install @eyaeya/xgg-core
 ```
 
-从 GitHub 源码运行：
+### 从 GitHub 源码运行
 
 ```bash
+set -euo pipefail
+
+# Agent 执行：必须替换占位符。
+export XGG_AGENT_NAME="AGENT_NAME"
+# 人类尚未确定后续 Agent、只做全局预装时，改用：
+# export XGG_AGENT_NAME="*"
+
 git clone https://github.com/eyaeya/xiaomi-central-hub-gateway-cli.git xgg
 cd xgg
 corepack enable pnpm
 pnpm install
 pnpm build
-node packages/cli/dist/cli.js --help
+npx --yes skills add . --global --all
+node packages/cli/dist/cli.js --version
+node packages/cli/dist/cli.js --help >/dev/null
+npx --yes skills list --global --json | node -e '
+let raw = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { raw += chunk; });
+process.stdin.on("end", () => {
+  const expectedAgent = process.env.XGG_AGENT_NAME;
+  const skills = JSON.parse(raw);
+  const skill = skills.find((item) => item.name === "xgg-rule-authoring");
+  const invalidTarget = !expectedAgent || expectedAgent === "AGENT_NAME";
+  const missingForTarget =
+    !skill ||
+    !Array.isArray(skill.agents) ||
+    skill.agents.length === 0 ||
+    (expectedAgent !== "*" && !skill.agents.includes(expectedAgent));
+  if (invalidTarget || missingForTarget) {
+    console.error(`xgg-rule-authoring is not verified for ${expectedAgent || "an explicit Agent"}`);
+    process.exit(1);
+  }
+  console.log(
+    JSON.stringify({ ok: true, verifiedFor: expectedAgent, name: skill.name, agents: skill.agents }),
+  );
+});
+'
 ```
 
-## AI Agent 安装
+源码流程也必须设置 `XGG_AGENT_NAME`，并对本地 Skill 执行同一条失败即终止的验收。尚未发布到 npm 的 PR/main 变更必须使用当前 checkout 的 `node packages/cli/dist/cli.js`，并通过 `skills add .` 安装同一 checkout 的完整 Skill；重新安装全局 npm 包不会提前获得未发布代码。
 
-> 请将以下内容复制给 Agent，让其帮安装。
+### 无法使用 skills CLI 时的手动回退
 
-让 Agent 用起来需要两步：装 CLI（提供 `xgg` 命令）+ 装 Skill（让 Agent 知道怎么用 `xgg`）。
-
-**第一步：安装 CLI。**
+`@eyaeya/xgg-cli` 包内携带完整 Skill。确认当前 Agent 的发现目录后，必须复制整个目录，不能只复制 `SKILL.md`：
 
 ```bash
-npm install -g @eyaeya/xgg-cli
+CLI_SKILL="$(npm root -g)/@eyaeya/xgg-cli/skills/xgg-rule-authoring"
+
+# 通用 Agent 目录；Claude Code 可改成：
+# AGENT_SKILL_DIR="$HOME/.claude/skills/xgg-rule-authoring"
+AGENT_SKILL_DIR="$HOME/.agents/skills/xgg-rule-authoring"
+
+test -f "$CLI_SKILL/SKILL.md"
+if [ -e "$AGENT_SKILL_DIR" ]; then
+  echo "Refusing to overlay existing Skill directory: $AGENT_SKILL_DIR" >&2
+  echo "Use skills CLI to update it, or back it up/remove it only with explicit user approval." >&2
+  exit 1
+fi
+
+mkdir -p "$AGENT_SKILL_DIR"
+cp -R "$CLI_SKILL/." "$AGENT_SKILL_DIR/"
+test -f "$AGENT_SKILL_DIR/SKILL.md"
+diff -qr "$CLI_SKILL" "$AGENT_SKILL_DIR"
 ```
 
-**第二步：安装 Skill。** 推荐用 [skills CLI](https://github.com/vercel-labs/skills) 一键从本仓库拉取并安装（会自动放到 `.claude/skills/` 或 `.agents/skills/`）：
+上面的手动命令只示范通用 `~/.agents/skills/` 与 Claude Code 的 `~/.claude/skills/`。其他 Agent 必须先确认其官方 Skill 发现目录，再把 `AGENT_SKILL_DIR` 设为那个**精确的 `xgg-rule-authoring` 目录**并递归比较；不要猜路径，也不要把新文件覆盖到已有目录中。
 
-```bash
-npx skills add eyaeya/xiaomi-central-hub-gateway-cli
-```
+Skill 采用渐进披露：`SKILL.md` 是入口，`references/` 分别给出图执行模型、25+nop 完整参数表、MIoT 设备语义、复杂配方及实机操作/验收。仓库维护者修改其中任一文件后，运行 `node scripts/sync-xgg-skill.mjs --write` 重算完整树 marker 并刷新 package mirror；校验用 `--check`。同步实际安装副本时必须显式传 `--installed-target <.../xgg-rule-authoring>`。
 
-也可以手动安装。`@eyaeya/xgg-cli` 包内自带一份离线 skill，若你的 Agent 支持本地 skills 目录，可从全局 npm 包中复制：
-
-```bash
-CLI_PKG="$(npm root -g)/@eyaeya/xgg-cli"
-
-mkdir -p ~/.claude/skills/xgg-rule-authoring
-cp -R "$CLI_PKG/skills/xgg-rule-authoring/." ~/.claude/skills/xgg-rule-authoring/
-
-mkdir -p ~/.agents/skills/xgg-rule-authoring
-cp -R "$CLI_PKG/skills/xgg-rule-authoring/." ~/.agents/skills/xgg-rule-authoring/
-
-# build 标记覆盖整个 Skill 树；正文或任一 reference 改动但未更新标记都会使测试失败
-# 仓库/包内/已安装副本应显示同一标记且递归一致；不同就重新同步
-grep '^<!-- xgg-skill-content-build:' \
-  "$CLI_PKG/skills/xgg-rule-authoring/SKILL.md" \
-  ~/.agents/skills/xgg-rule-authoring/SKILL.md
-shasum -a 256 \
-  "$CLI_PKG/skills/xgg-rule-authoring/SKILL.md" \
-  ~/.agents/skills/xgg-rule-authoring/SKILL.md
-# 递归比较才能同时覆盖 SKILL.md 与 references/；无输出即完全一致
-diff -qr "$CLI_PKG/skills/xgg-rule-authoring" ~/.agents/skills/xgg-rule-authoring
-diff -qr "$CLI_PKG/skills/xgg-rule-authoring" ~/.claude/skills/xgg-rule-authoring
-```
-
-仓库维护者修改 Skill 正文或任一 reference 后，运行 `node scripts/sync-xgg-skill.mjs --write` 可重算完整树 marker 并刷新 package mirror；`--check` 只校验。同步实际安装副本时必须再显式传 `--installed-target <.../xgg-rule-authoring>`，脚本会拒绝更宽目录、符号链接根目录和相互重叠的源/目标。
-
-从 GitHub 源码运行时，应把完整的 [skills/xgg-rule-authoring/](skills/xgg-rule-authoring/) 目录交给 Agent，或递归复制到本地 skills 目录；`SKILL.md` 是入口，不是可脱离 `references/` 单独分发的完整指南：
-
-```bash
-mkdir -p ~/.claude/skills/xgg-rule-authoring
-cp -R skills/xgg-rule-authoring/. ~/.claude/skills/xgg-rule-authoring/
-
-mkdir -p ~/.agents/skills/xgg-rule-authoring
-cp -R skills/xgg-rule-authoring/. ~/.agents/skills/xgg-rule-authoring/
-```
-
-尚未发布到 npm 的 PR/main 变更必须使用源码 `pnpm build` 后的 `node packages/cli/dist/cli.js`，并从同一 checkout 同步整个 Skill 目录；重新安装全局 `xgg` 不会提前获得未发布代码。Skill 采用渐进披露：入口负责自然语言编译与安全工作流，`references/` 分别给出图执行模型、25+nop 完整参数表、MIoT 设备语义、复杂配方及实机操作/验收，不能只复制单个 `SKILL.md`。
+### Agent 登录与写操作准备
 
 Agent 执行写操作时建议开启专用快照目录：
 

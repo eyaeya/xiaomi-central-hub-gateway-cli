@@ -2,15 +2,57 @@
 
 小米中枢网关极客版命令行工具。安装后提供 `xgg` 命令，可登录网关、读取设备/规则/变量、编辑自动化规则图、管理变量与备份，并读取规则运行日志。
 
-## 安装
+## 安装（CLI + Agent Skill）
+
+> **给正在执行本 README 的 Agent：** 不要只安装 npm 包。完整安装同时包含提供 `xgg` 命令的 CLI，以及让 Agent 知道如何安全调用它的 `xgg-rule-authoring` Skill；两者验证通过后才能报告安装成功。人类与 Agent 使用相同流程。
+
+要求 Node.js 20.11 或更高版本，并可通过 npm 和 GitHub 下载依赖。先声明验收对象：Agent 必须把 `AGENT_NAME` 替换成 `skills list --json` 使用的自身规范化名称（例如 `Codex`、`Claude Code`）；人类已确定后续 Agent 时也填写其具体名称，尚未确定时才使用 `*`。`*` 只证明 Skill 已注册给当前 `skills` CLI 识别到的至少一个 Agent；实际 Agent 接手前仍须按其具体名称重跑验证。随后执行无交互全局安装：
 
 ```bash
-npm install -g @eyaeya/xgg-cli
-xgg --version
-xgg --help
+set -euo pipefail
+
+# Agent 执行：必须替换占位符。
+export XGG_AGENT_NAME="AGENT_NAME"
+# 人类尚未确定后续 Agent、只做全局预装时，改用：
+# export XGG_AGENT_NAME="*"
+
+npm install -g @eyaeya/xgg-cli@latest
+
+XGG_VERSION="$(xgg --version)"
+printf 'xgg=%s\n' "$XGG_VERSION"
+npx --yes skills add \
+  "eyaeya/xiaomi-central-hub-gateway-cli@v${XGG_VERSION}" \
+  --global --all
+
+xgg --help >/dev/null
+npx --yes skills list --global --json | node -e '
+let raw = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { raw += chunk; });
+process.stdin.on("end", () => {
+  const expectedAgent = process.env.XGG_AGENT_NAME;
+  const skills = JSON.parse(raw);
+  const skill = skills.find((item) => item.name === "xgg-rule-authoring");
+  const invalidTarget = !expectedAgent || expectedAgent === "AGENT_NAME";
+  const missingForTarget =
+    !skill ||
+    !Array.isArray(skill.agents) ||
+    skill.agents.length === 0 ||
+    (expectedAgent !== "*" && !skill.agents.includes(expectedAgent));
+  if (invalidTarget || missingForTarget) {
+    console.error(`xgg-rule-authoring is not verified for ${expectedAgent || "an explicit Agent"}`);
+    process.exit(1);
+  }
+  console.log(
+    JSON.stringify({ ok: true, verifiedFor: expectedAgent, name: skill.name, agents: skill.agents }),
+  );
+});
+'
 ```
 
-要求 Node.js 20.11 或更高版本。`@eyaeya/xgg-cli` 会自动安装匹配版本的 `@eyaeya/xgg-core`，不需要单独安装 core 包。
+`@eyaeya/xgg-cli` 会自动安装匹配版本的 `@eyaeya/xgg-core`，不需要单独安装 Core。npm 包也携带完整 Skill，但 `npm install` 只会把它放进包目录，不会注册到 Agent 的 Skill 调用目录；上面的 `skills add` 会按 CLI 版本锁定同名 Git tag，并安装给所有受支持的 Agent。
+
+最后的验证会在 Skill 缺失、目标仍是占位符、没有关联任何 Agent，或指定 Agent 不在 `agents` 中时非零退出；只有通过时才输出 `{"ok":true,"verifiedFor":...}`。缺失时不能继续假设 Skill 已加载。如果只安装给特定 Agent，可把 `--all` 换成 `--skill xgg-rule-authoring --agent <agent-id> --yes`。
 
 GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli)。
 
@@ -42,13 +84,7 @@ export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 $(npm root -g)/@eyaeya/xgg-cli/skills/xgg-rule-authoring/SKILL.md
 ```
 
-同一份文档也可在 GitHub 仓库中的 `skills/xgg-rule-authoring/SKILL.md` 查看。也可以用 [skills CLI](https://github.com/vercel-labs/skills) 一键安装该 Skill：
-
-```bash
-npx skills add eyaeya/xiaomi-central-hub-gateway-cli
-```
-
-Skill 是一个完整目录，不是单文件提示词。陌生 Agent 首次编写规则必须从入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或真实网关操作时，再读取 `device-semantics.md`、`recipes.md`、`operations.md`。尚未发布到 npm 的源码变更要用当前 checkout 的 `node packages/cli/dist/cli.js`，并从同一 checkout 递归同步 Skill；重装全局包不会获得未发布变更。
+同一份文档也可在 GitHub 仓库中的 `skills/xgg-rule-authoring/SKILL.md` 查看。Skill 是一个完整目录，不是单文件提示词。陌生 Agent 首次编写规则必须从入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或真实网关操作时，再读取 `device-semantics.md`、`recipes.md`、`operations.md`。尚未发布到 npm 的源码变更要用当前 checkout 的 `node packages/cli/dist/cli.js`，并通过 `npx --yes skills add . --global --all` 安装同一 checkout 的完整 Skill；重装全局包不会获得未发布变更。
 
 ## 常用流程
 

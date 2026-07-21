@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -73,6 +74,96 @@ test('caller-facing Skill and README files are self-contained', async () => {
     }
   }
   assert.deepEqual(violations, [], violations.join('\n'));
+});
+
+test('root and npm READMEs require one complete CLI plus Skill installation flow', async () => {
+  const readmes = [
+    ['README.md', path.join(repositoryRoot, 'README.md')],
+    ['packages/cli/README.md', path.join(repositoryRoot, 'packages', 'cli', 'README.md')],
+  ];
+  const requiredFragments = [
+    'npm install -g @eyaeya/xgg-cli@latest',
+    'eyaeya/xiaomi-central-hub-gateway-cli@v${XGG_VERSION}',
+    '--global --all',
+    'npx --yes skills list --global --json',
+    'skills.find((item) => item.name === "xgg-rule-authoring")',
+    'const expectedAgent = process.env.XGG_AGENT_NAME',
+    'expectedAgent === "AGENT_NAME"',
+    '!skill.agents.includes(expectedAgent)',
+    'process.exit(1)',
+    'verifiedFor: expectedAgent',
+    'agents: skill.agents',
+  ];
+
+  for (const [displayPath, absolutePath] of readmes) {
+    const content = await readFile(absolutePath, 'utf8');
+    const nextHeading = displayPath === 'README.md' ? '快速开始' : '快速使用';
+    const installSection = content.match(
+      new RegExp(`^## 安装[^\\n]*\\n([\\s\\S]*?)(?=^## ${nextHeading}$)`, 'm'),
+    )?.[1];
+    assert.ok(installSection, `${displayPath} must have one complete installation section`);
+    for (const fragment of requiredFragments) {
+      assert.ok(
+        installSection.includes(fragment),
+        `${displayPath} install must include ${fragment}`,
+      );
+    }
+  }
+
+  const rootReadme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
+  assert.doesNotMatch(rootReadme, /^## (?:人类安装|AI Agent 安装)$/m);
+  assert.equal(
+    rootReadme.split('const expectedAgent = process.env.XGG_AGENT_NAME').length - 1,
+    2,
+    'npm and source installation paths must both verify the intended Agent',
+  );
+  assert.equal(
+    rootReadme.split('export XGG_AGENT_NAME="AGENT_NAME"').length - 1,
+    2,
+    'npm and source installation paths must both require an explicit verification target',
+  );
+  assert.ok(rootReadme.includes('test -f "$CLI_SKILL/SKILL.md"'));
+  assert.ok(rootReadme.includes('Refusing to overlay existing Skill directory'));
+  assert.ok(rootReadme.includes('diff -qr "$CLI_SKILL" "$AGENT_SKILL_DIR"'));
+});
+
+test('README verification snippets fail closed for placeholders and the wrong Agent', async () => {
+  const readmePaths = [
+    path.join(repositoryRoot, 'README.md'),
+    path.join(repositoryRoot, 'packages', 'cli', 'README.md'),
+  ];
+  const inventory = JSON.stringify([
+    { name: 'xgg-rule-authoring', agents: ['Codex', 'Claude Code'] },
+  ]);
+
+  for (const readmePath of readmePaths) {
+    const content = await readFile(readmePath, 'utf8');
+    const scripts = [
+      ...content.matchAll(/npx --yes skills list --global --json \| node -e '\n([\s\S]*?)\n'/g),
+    ].map((match) => match[1]);
+    assert.ok(scripts.length > 0, `${readmePath} must contain an executable verifier`);
+
+    for (const script of scripts) {
+      for (const expectedAgent of ['Codex', '*']) {
+        const result = spawnSync(process.execPath, ['-e', script], {
+          encoding: 'utf8',
+          env: { ...process.env, XGG_AGENT_NAME: expectedAgent },
+          input: inventory,
+        });
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(JSON.parse(result.stdout).verifiedFor, expectedAgent);
+      }
+
+      for (const expectedAgent of ['AGENT_NAME', 'OpenClaw']) {
+        const result = spawnSync(process.execPath, ['-e', script], {
+          encoding: 'utf8',
+          env: { ...process.env, XGG_AGENT_NAME: expectedAgent },
+          input: inventory,
+        });
+        assert.notEqual(result.status, 0, `${expectedAgent} must not pass ${readmePath}`);
+      }
+    }
+  }
 });
 
 test('every relative Markdown link in the canonical Skill stays inside its tree and resolves', async () => {
