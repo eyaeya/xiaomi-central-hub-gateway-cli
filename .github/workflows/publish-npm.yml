@@ -267,10 +267,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(npm view "@eyaeya/xgg-core@${PACKAGE_VERSION}" version)" = "$PACKAGE_VERSION"
-          test "$(npm view "@eyaeya/xgg-cli@${PACKAGE_VERSION}" version)" = "$PACKAGE_VERSION"
-          test "$(npm view "@eyaeya/xgg-cli@${PACKAGE_VERSION}" \
-            'dependencies.@eyaeya/xgg-core')" = "^${PACKAGE_VERSION}"
+          confirmed=false
+          for attempt in {1..12}; do
+            core_version="$(npm view "@eyaeya/xgg-core@${PACKAGE_VERSION}" version \
+              2>/dev/null || true)"
+            cli_version="$(npm view "@eyaeya/xgg-cli@${PACKAGE_VERSION}" version \
+              2>/dev/null || true)"
+            cli_core="$(npm view "@eyaeya/xgg-cli@${PACKAGE_VERSION}" \
+              'dependencies.@eyaeya/xgg-core' 2>/dev/null || true)"
+            if [ "$core_version" = "$PACKAGE_VERSION" ] \
+              && [ "$cli_version" = "$PACKAGE_VERSION" ] \
+              && [ "$cli_core" = "^${PACKAGE_VERSION}" ]; then
+              confirmed=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$confirmed" != true ]; then
+            echo 'Published packages did not reach the expected registry state in time.' >&2
+            exit 1
+          fi
           {
             echo '### npm release'
             echo
