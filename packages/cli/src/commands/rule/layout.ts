@@ -25,6 +25,7 @@ interface LayoutOpts extends RuleOpts {
   nextHint?: boolean;
   // F66f/#173 — opt out of the incremental online variable existence/type sweep.
   varCheck?: boolean;
+  keepSizes?: boolean;
 }
 
 export function attachLayout(cmd: Command): void {
@@ -39,6 +40,10 @@ export function attachLayout(cmd: Command): void {
       '--no-var-check',
       'skip the incremental online variable existence/type sweep (raw probes only)',
     )
+    .option(
+      '--keep-sizes',
+      'preserve saved width/height instead of repairing known cards from gateway-editor formulas',
+    )
     .option('--snapshots-dir <path>', 'directory for pre-write snapshots (env: XGG_SNAPSHOTS_DIR)')
     .option('--base-url <url>', 'gateway base URL (or XGG_BASE_URL)')
     .option('--session-file <path>', 'session file path')
@@ -51,7 +56,9 @@ export function attachLayout(cmd: Command): void {
         '',
         'Lays cards out by data flow: triggers/sources on the left, each node to the',
         'right of all its inputs, branches stacked vertically, and independent',
-        'sub-automations in separate horizontal bands. Only cfg.pos.x/y change.',
+        'sub-automations in separate horizontal bands. By default it also repairs',
+        'known executable-card width/height from the gateway-editor formulas;',
+        'use --keep-sizes for a position-only legacy layout.',
         'Run it once after all `rule edge add` calls, before `rule enable`.',
         '',
         'Example:',
@@ -78,6 +85,7 @@ export function attachLayout(cmd: Command): void {
             const result = await relayoutGraph(id, deps, {
               validate: opts.validate !== false,
               varCheck: opts.varCheck !== false,
+              normalizeSizes: opts.keepSizes !== true,
             });
             return { snapshotPath, result };
           },
@@ -87,6 +95,8 @@ export function attachLayout(cmd: Command): void {
           id,
           nodeCount: result.nodeCount,
           moved: result.moved,
+          resized: result.resized,
+          geometryPreserved: result.geometryPreserved,
           snapshot: snapshotPath,
         } as Record<string, unknown>;
         const hints = buildNextSteps('rule.layout', { id, ruleId: id }, opts);
@@ -95,7 +105,7 @@ export function attachLayout(cmd: Command): void {
         });
         printRefreshHint(opts, {
           baseUrl: deps.baseUrl,
-          context: `rule ${id} (layout: ${result.moved}/${result.nodeCount} nodes moved)`,
+          context: `rule ${id} (layout: ${result.moved} moved, ${result.resized} resized)`,
         });
         printNextStepHintLine(hints, opts, { contextLabel: `rule ${id} (laid out)` });
       }),

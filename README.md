@@ -290,7 +290,7 @@ xgg rule node add --rule-id <rule-id> --type deviceOutput \
 xgg rule node add --rule-id <rule-id> --type nop \
   --text "按钮单击后执行目标动作" --background '#FFD966' --id nNote
 xgg rule edge add --rule-id <rule-id> --from nClick:output --to nAction:trigger
-xgg rule layout <rule-id>
+xgg rule layout <rule-id> [--keep-sizes]
 xgg rule validate --rule-id <rule-id> --spec-aware
 xgg rule lint --rule-id <rule-id> --strict
 ```
@@ -302,7 +302,7 @@ xgg rule lint --rule-id <rule-id> --strict
 - `deviceInput` 的 `--device-property` 属性模式和 `--device-event` 事件模式二选一，不能混用。事件参数比较只用 `--event-filter` / `--event-filter-include` / `--event-filter-between`；`--op`、`--threshold`、`--threshold2`、`--property-value`、`--property-include`、`--force-out-of-range` 只属于属性模式，event 模式传入时会在读取 session/spec、快照或写网关前拒绝。
 - `deviceOutput --value '$scope.id'` 表示变量引用；字符串字面值若以 `$` 开头，需要把第一个 `$` 写两次，例如 `--value '$$hello'` 实际写入 `$hello`。`rule export` 会自动添加这一层转义。数值 property-write literal 严格解析完整十进制/scientific token：float/double 必须有限，整数必须是精确 safe integer，并服从非空 value-list 与有效 value-range/step。当前 xgg 的 typed variable-ref 契约只支持不含 `value-list` 字段的 string 目标，或不含该字段且带有效 value-range 的 number 目标；boolean 与任何存在 `value-list` 字段的目标（包括空数组 `[]`）都是 literal-only，下发 typed `$var` 会被拒绝。boolean 动态状态应先把 number 0/1 分支，再分别连到 literal `false` / `true` 的两个 `deviceOutput`。
 - 在线 `rule validate` 及默认图写路径会按精确 `scope + id` 读取变量清单，并按引用位置核对实际 `number|string` 类型；`--no-var-check` 只为明确 raw probe 保留，会跳过需要在线清单的变量存在性和类型检查，但合法 scope 仍是本地图不变量，也不会关闭其他 schema、spec 或 enable gate。
-- 连线完成后跑 `xgg rule layout <rule-id>`，让可执行卡片按数据流排布；`nop` 的自由位置会保留，避免备注离开它所说明的区域。
+- 连线完成后跑 `xgg rule layout <rule-id>`：它先按卡片的真实类型、内容、pin 数量和 normal/simplified 状态修复已建模执行卡的宽高，再以 32px 横向连线路径按数据流排布。`nop` 的自由尺寸/位置和 unknown/opaque 卡片尺寸会保留；只有明确要沿用历史宽高时才加 `--keep-sizes`。
 - 启用前跑 `xgg rule validate --rule-id <rule-id> --spec-aware` 和 `xgg rule lint --rule-id <rule-id> --strict`。常规业务规则必须让两者 errors=0；每条 warning 都要按路径逐项审计、解释并明确接受，未解释或未接受的 warning 视为阻断。合法可解释的 advisory warning 包括已证明可终止的 self-loop、兼容旧节点 ID，以及同 ID 无损保留的 opaque/future 卡片；它们不能被批量忽略。上述获授权 no-push 临时探针仍要运行并记录两者，只允许目标 source 的 spec-aware no-push error；strict lint 的同源 no-push warning/exit 1 也必须显式接受。`deviceOutput` 必须使用 spec-aware 校验，才能核对当前 property-write 或 `action.in` 契约。只有用户授权运行时才执行 `xgg rule enable <rule-id>`，触发后用 `xgg rule logs` 验收；否则用 `rule view` 确认保持 `enable=false`。
 - 对专门构造、完整下游均为纯软件 marker 的 Agent 探针，可用 `onLoad` 配合 `rule disable` + `rule enable` 重放，不需要人类物理按按钮；既有规则可能从 onLoad 驱动物理动作或业务变量，先审查完整下游并取得授权再重放。
 - `nop` 只给网页画布添加备注，不参与连线或执行。纯文本用 `--text`；要保留标题、粗体、列表、对齐等格式，用 `--delta '<Quill ops JSON>'`（也接受 `{"ops":[...]}`），`rule export` / `rule import` 会无损往返 Delta、背景色、尺寸和位置，`rule layout` 不会搬动它。
@@ -342,7 +342,7 @@ xgg rule node add --rule-id <rule-id> --type deviceInput \
 
 `deviceInput` / `deviceGet` 的数值属性，以及 number 型 `varChange` / `varGet`，使用 `--op between` 时必须同时显式传 `--threshold <lower>` 与 `--threshold2 <upper>`。省略任一边界都会在 session、spec、快照和写图之前被拒绝；不会再把省略的下界静默解释为 `0`。显式 `--threshold 0` 合法，非-between 标量比较仍保留历史默认 `0`。
 
-`--preload` / `--no-preload` 适用于 `deviceInput`、`deviceInputSetVar` 的属性模式和 `varChange`，默认是官方新卡片行为 `false`；它只控制启用时是否先查询/评估一次，不会制造缺失的 `notify`/`read` 能力，也不会改变后续 push 路径。`deviceGet` 由输入事件主动查询，不支持 `preload`。旧图若在 `deviceGet.props` 中带该字段，普通导出会警告，`--strict-roundtrip` 会拒绝，避免重放时静默丢字段。`--simplified true|false` 是执行卡的 UI 紧凑状态。导出会保留受支持节点上的显式值。动作调用的 `--params` 依据 MIoT action input format 保留 number / boolean / string 原生类型，也支持动态变量：
+`--preload` / `--no-preload` 适用于 `deviceInput`、`deviceInputSetVar` 的属性模式和 `varChange`，默认是官方新卡片行为 `false`；它只控制启用时是否先查询/评估一次，不会制造缺失的 `notify`/`read` 能力，也不会改变后续 push 路径。`deviceGet` 由输入事件主动查询，不支持 `preload`。旧图若在 `deviceGet.props` 中带该字段，普通导出会警告，`--strict-roundtrip` 会拒绝，避免重放时静默丢字段。`--simplified true|false` 选择执行卡的极简态/编辑态；省略 `--pos` 时，XGG 会分别按网关编辑器的对应公式计算宽高，不会把编辑态最大样本套给极简态。极简态中的动态文字宽度按同一排版公式和确定性的 MI Lan Pro 字宽估算生成，网页在相关编辑/切换时会用本机字体再次测量。导出会保留受支持节点上的显式状态与位置。动作调用的 `--params` 依据 MIoT action input format 保留 number / boolean / string 原生类型，也支持动态变量：
 
 ```bash
 xgg rule node add --rule-id <rule-id> --type deviceOutput \
@@ -456,7 +456,7 @@ xgg rule node update --rule-id <rule-id> --node-id <node-id> --patch '<JSON>'
 xgg rule node remove --rule-id <rule-id> --node-id <node-id> [--cascade-edges]
 xgg rule edge add --rule-id <rule-id> --from <node:pin> --to <node:pin>
 xgg rule edge remove --rule-id <rule-id> --from <node:pin> --to <node:pin>
-xgg rule layout <rule-id>
+xgg rule layout <rule-id> [--keep-sizes]
 xgg rule validate (--rule-id <rule-id> | --body <file> | --stdin) [--spec-aware]
 xgg rule lint --rule-id <rule-id> [--strict]
 xgg rule enable <rule-id>

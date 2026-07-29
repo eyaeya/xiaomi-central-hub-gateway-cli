@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent must understand, design, inspect, validate, or operate Xiaomi Central Hub Geek Edition automation rule graphs through the xgg CLI, including the complete 25 executable cards plus nop, event/state pins, MIoT enums and value semantics, complex temporal/state patterns, variables, safe live verification, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-fe48e3ea09b6f44283e2a0ed957b0e6971c7761afef43a63878348c72784d159 -->
+<!-- xgg-skill-content-build: sha256-4120a61e91914bec765497df865715a7ab9c3c150e5bfb06a249d97c6ec9604a -->
 
 # xgg 中枢网关自动化编译器
 
@@ -115,6 +115,8 @@ xgg rule layout <rid>
 ```
 
 每张卡只使用 node catalog 该 type/mode 允许的 authoring flags。一个命令中任何业务 flag 被忽略都不可接受；CLI 应在 session/RPC 前拒绝无关或互斥 flag。
+
+typed node-add 省略 `--pos`：XGG 会按卡片内容和编辑态/极简态计算前端对等尺寸；不要给所有卡复制统一 envelope。`rule layout` 会先修复旧图中已建模执行卡的 width/height，再用 32px 横向列间距排布。`nop` 的尺寸和位置全保留；unknown/opaque、MIoT spec 不可解析，或设备/变量展示清单与语义投影暂不可用的卡片只保留宽高，仍参与数据流排布。只有在线清单成功返回且确实没有展示记录时，极简设备才按网关编辑器行为回退为 190px 宽；不能把网络/接口失败误当成空清单。仅明确需要历史尺寸时才用 `--keep-sizes`。
 
 node/edge/layout/set 写入默认保留 live `enable`；已启用规则的多步编辑可能立即生效，不能把末尾 enable 当生效边界。先 readback；需要隔离时按授权先 disable，或离线构造后单次原子 set。默认图写路径会在线检查可发现的 modeled 变量引用是否存在及其实际类型；opaque/future payload 不在该证明内。`--no-var-check` 只供明确 raw probe/修复，不关闭 scope/schema/spec/enable gates。
 

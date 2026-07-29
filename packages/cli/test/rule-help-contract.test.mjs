@@ -168,3 +168,14 @@ test('rule trace help separates source block scanning from frame truncation', ()
   assert.match(trace, /a larger scan still cannot prove complete execution/);
   assert.match(trace, /--max-blocks 32 --max-steps 100 --pretty/);
 });
+
+test('rule layout help exposes gateway-editor geometry repair and the keep-sizes escape hatch', () => {
+  const layout = help(['rule', 'layout']);
+  assert.match(layout, /--keep-sizes/);
+  assert.match(layout, /preserve saved width\/height/);
+  assert.match(
+    layout,
+    /repairs known executable-card width\/height from the gateway-editor formulas/,
+  );
+  assert.match(layout, /position-only legacy layout/);
+});

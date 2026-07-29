@@ -71,7 +71,7 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function position(width = 200, height = 120) {
+function position(width = 160, height = 98) {
   return { x: 0, y: 0, width, height };
 }
 
@@ -90,7 +90,7 @@ function delayNode(id) {
   return {
     id,
     type: 'delay',
-    cfg: { pos: position(320), name: 'delay', version: 1, unit: 's', value: 1 },
+    cfg: { pos: position(288, 112), name: 'delay', version: 1, unit: 's', value: 1 },
     inputs: { input: null },
     outputs: { output: [] },
     props: { timeout: 1_000 },

@@ -74,7 +74,7 @@
 {
   "id": "nCheck",
   "type": "deviceGet",
-  "cfg": {"name": "deviceGet", "version": 1, "pos": {"x": 0, "y": 0, "width": 700, "height": 240}, "urn": "urn:miot-spec-v2:device:..."},
+  "cfg": {"name": "deviceGet", "version": 1, "pos": {"x": 0, "y": 0, "width": 606, "height": 164}, "urn": "urn:miot-spec-v2:device:..."},
   "inputs": {"input": null},
   "outputs": {"output": [], "output2": []},
   "props": {"did": "<did>", "siid": 2, "piid": 1, "dtype": "boolean", "operator": "=", "v1": true}
@@ -83,12 +83,14 @@
 
 - `id`：规则内唯一、后续命令复用的节点标识。
 - `type`：执行卡类型；不要用 UI 中文名或未经当前 xgg 校验的旧称猜值。定时卡的实际类型是 `alarmClock`，不是 `timer`。
-- `cfg`：卡片 UI/版本/位置以及设备 URN；`pos`、`simplified` 等字段可能只影响显示。少数 UI marker 位于 `props`，例如 `timeRange.props.mingTextShow`，不能因其是显示字段就写进 `cfg`。
+- `cfg`：卡片 UI/版本/位置以及设备 URN；`pos`、`simplified` 等字段决定显示状态与几何，不参与运行逻辑。少数 UI marker 位于 `props`，例如 `timeRange.props.mingTextShow`，不能因其是显示字段就写进 `cfg`。
 - `inputs`：声明输入 pin，值通常保持 `null`；它不是入边清单。
 - `outputs`：声明输出 pin，并保存从该 pin 发出的目标 endpoint 数组。
 - `props`：网关运行时真正读取的参数，例如 DID、比较运算、timeout、变量或 action inputs。
 
 `nop` 是画布备注，不执行；虽然 envelope 序列化 `outputs:{"output":[]}`，网页没有 connector，禁止给它连边。未知未来节点使用完整 passthrough 保真；不要用已知节点的六段 schema 删除其扩展字段。
+
+`cfg.pos.width/height` 虽不参与执行，却会直接决定网页首屏卡片大小。它不是“每种 type 一个固定值”：编辑态/极简态、动态 pin、设备 dtype/operator/参数行、变量类型和表达式高度都会改变尺寸。typed node-add 省略 `--pos` 时由 XGG 计算；整图连线后运行 `rule layout`，让它先修复已建模执行卡尺寸，再以 32px 横向列间距排布。`nop` 的自由尺寸和位置全部保留；unknown/opaque 只保留宽高，仍按连线移动；same-ID 无损重放显式 `--pos` 时则原样保留。
 
 ## wire 只序列化在源节点 outputs
 

@@ -28,10 +28,12 @@ export interface LayoutGraphInput {
   edges: LayoutGraphEdge[];
 }
 
-// Spacing. COL_GAP separates flow layers (edges need horizontal room); ROW_GAP
-// separates stacked branches; COMPONENT_GAP separates independent automations.
+// Spacing. The Bundle has no canonical graph-layout gap. Its edge renderer uses
+// an 11 px target arrow plus two 8 px rounded turns; 32 px leaves a readable
+// lane in curved/orthogonal modes while cutting the former 80 px empty span.
+// ROW_GAP separates stacked branches; COMPONENT_GAP separates automations.
 const MARGIN = 40;
-const COL_GAP = 80;
+export const FLOW_COLUMN_GAP = 32;
 const ROW_GAP = 40;
 const COMPONENT_GAP = 120;
 
@@ -128,13 +130,13 @@ export function layoutGraph(input: LayoutGraphInput): Record<string, { x: number
     };
     for (let depth = 0; depth < layers.length; depth += 1) orderLayer(layers[depth] ?? [], depth);
 
-    // X per layer = running sum of each prior layer's widest card + COL_GAP.
+    // X per layer = running sum of each prior layer's widest card + FLOW_COLUMN_GAP.
     const colX: number[] = [];
     let cursorX = 0;
     for (let depth = 0; depth < layers.length; depth += 1) {
       colX[depth] = cursorX;
       const widest = Math.max(0, ...(layers[depth] ?? []).map((id) => byId.get(id)?.width ?? 0));
-      cursorX += widest + COL_GAP;
+      cursorX += widest + FLOW_COLUMN_GAP;
     }
 
     // Y per layer = stack from the band top; track the band's bottom for the
