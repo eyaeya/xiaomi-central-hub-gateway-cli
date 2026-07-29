@@ -7,7 +7,7 @@ import type {
   MiotProperty,
   MiotService,
 } from '../schemas/device-spec.js';
-import { Device as DeviceSchema, isGhostDevice } from '../schemas/device.js';
+import { type Device, Device as DeviceSchema, isGhostDevice } from '../schemas/device.js';
 import {
   type MiotActionVariableDtype,
   deviceOutputVariableRefUnsupportedReason,
@@ -40,6 +40,7 @@ import {
   parseDurationLiteral,
 } from '../schemas/nodes/duration.js';
 import { NodeUnion, NopContents, type NopDeltaOperation } from '../schemas/nodes/index.js';
+import { nodeSchemaForType } from '../schemas/nodes/registry.js';
 import {
   GraphSetRequest,
   type Node,
@@ -82,6 +83,7 @@ import {
   resolveDeviceReplacementSource,
   selectDeviceReplacementMapping,
 } from '../usecases/device-replacement.js';
+import { projectDeviceSpecSemantics } from '../usecases/device-spec-semantics.js';
 import { inputPinNames, targetInputPinStatus } from '../usecases/edge-integrity.js';
 import { type GetDeviceSpecOptions, getDeviceSpec } from '../usecases/get-device-spec.js';
 import { layoutGraph } from '../usecases/layout-graph.js';
@@ -94,9 +96,19 @@ import {
   validateGraphOrThrow,
 } from '../usecases/validate-graph.js';
 import { scanVariableReference } from '../usecases/variable-reference.js';
-import { nextCardPosition, sizedPos } from './card-geometry.js';
+import {
+  type CardGeometryCatalog,
+  type CardGeometryDevice,
+  type CardGeometryNodeLike,
+  type CardGeometryVariable,
+  nextCardPosition,
+  replacePositionSize,
+  resolveBundleCardGeometry,
+  seedPosition,
+  variableGeometryKey,
+} from './card-geometry.js';
 import { annotateServiceDescription } from './device-partitions.js';
-import { getDevice, listDevices } from './devices.js';
+import { listDevices } from './devices.js';
 import type { ResourceDeps } from './index.js';
 import { withResourceMutationWorkflow } from './mutation-workflow.js';
 import {
@@ -1899,6 +1911,209 @@ function assertDeviceShortcutLocalShape(shortcut: AddNodeShortcut): void {
   }
 }
 
+interface GeometryCatalogSeed {
+  spec?: DeviceSpec;
+  devices?: Readonly<Record<string, Device>>;
+}
+
+function collectGeometryVariableRefs(
+  value: unknown,
+  refs: Map<string, { scope: string; id: string }> = new Map(),
+): Map<string, { scope: string; id: string }> {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectGeometryVariableRefs(entry, refs);
+    return refs;
+  }
+  if (value === null || typeof value !== 'object') return refs;
+  const record = value as Record<string, unknown>;
+  if (typeof record.scope === 'string' && typeof record.id === 'string') {
+    refs.set(variableGeometryKey(record.scope, record.id), {
+      scope: record.scope,
+      id: record.id,
+    });
+  }
+  for (const entry of Object.values(record)) collectGeometryVariableRefs(entry, refs);
+  return refs;
+}
+
+async function buildCardGeometryCatalog(
+  nodes: readonly unknown[],
+  deps: ResourceDeps,
+  seed: GeometryCatalogSeed = {},
+): Promise<CardGeometryCatalog> {
+  const specsByUrn = new Map<string, DeviceSpec>();
+  if (seed.spec !== undefined) specsByUrn.set(seed.spec.type, seed.spec);
+
+  const devicesByDid = new Map<string, CardGeometryDevice>();
+  let deviceInventoryStatus: 'loaded' | 'unavailable' | undefined;
+
+  const urns = new Set<string>();
+  const simplifiedUrns = new Set<string>();
+  let hasSimplifiedDeviceCard = false;
+  for (const raw of nodes) {
+    const node = raw as {
+      type?: unknown;
+      cfg?: { urn?: unknown; simplified?: unknown };
+    };
+    if (
+      node.type === 'deviceInput' ||
+      node.type === 'deviceGet' ||
+      node.type === 'deviceOutput' ||
+      node.type === 'deviceInputSetVar' ||
+      node.type === 'deviceGetSetVar'
+    ) {
+      if (node.cfg?.simplified === true) {
+        hasSimplifiedDeviceCard = true;
+        if (typeof node.cfg.urn === 'string') simplifiedUrns.add(node.cfg.urn);
+      }
+      if (typeof node.cfg?.urn === 'string') urns.add(node.cfg.urn);
+    }
+  }
+
+  await Promise.all(
+    [...urns]
+      .filter((urn) => !specsByUrn.has(urn))
+      .map(async (urn) => {
+        try {
+          const spec = await getDeviceSpec(urn, {
+            ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+          });
+          specsByUrn.set(urn, spec);
+        } catch {
+          // Existing-rule repair is best-effort for metadata that can
+          // disappear. The resolver reports missing-spec and preserves that
+          // card's saved size rather than replacing it with a guessed box.
+        }
+      }),
+  );
+
+  if (hasSimplifiedDeviceCard) {
+    try {
+      // Typed creation has already read this exact inventory to select its
+      // target. Reuse it so $c() sees one stable Object.values order and the
+      // shortcut does not issue a duplicate gateway request.
+      const devices = seed.devices ?? (await listDevices(deps));
+      for (const [did, device] of Object.entries(devices)) {
+        // The editor's getDevList projection removes devices without MIoT v2
+        // access before $c() performs its first-by-URN lookup.
+        if (!device.specV2Access) continue;
+        devicesByDid.set(did, {
+          did,
+          name: device.name,
+          roomName: device.roomName,
+          modelName: device.modelName,
+          urn: device.urn,
+        });
+      }
+      deviceInventoryStatus = 'loaded';
+    } catch {
+      // Editing-state device formulas still resolve from MIoT specs. A
+      // confirmed-empty inventory uses the Bundle's 190 px fallback, but an
+      // unavailable inventory must preserve saved geometry instead of
+      // shrinking every simplified device card on a transient RPC failure.
+      deviceInventoryStatus = 'unavailable';
+    }
+  }
+
+  const semanticSpecsByUrn = new Map<
+    string,
+    Awaited<ReturnType<typeof projectDeviceSpecSemantics>>
+  >();
+  const unavailableSemanticUrns = new Set<string>();
+  if (hasSimplifiedDeviceCard) {
+    await Promise.all(
+      [...simplifiedUrns].map(async (urn) => {
+        const spec = specsByUrn.get(urn);
+        if (spec === undefined) return;
+        try {
+          const semantic = await projectDeviceSpecSemantics(spec, {
+            ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
+          });
+          semanticSpecsByUrn.set(spec.type, semantic);
+        } catch {
+          // The projector normally returns a raw-label fallback. If it fails
+          // altogether, preserve geometry rather than measuring a different
+          // language/label set and presenting that as Bundle-equivalent.
+          unavailableSemanticUrns.add(urn);
+        }
+      }),
+    );
+    for (const device of devicesByDid.values()) {
+      const description =
+        device.urn === undefined
+          ? undefined
+          : semanticSpecsByUrn.get(device.urn)?.deviceTypeDescription;
+      if (description !== undefined) device.deviceTypeDescription = description;
+    }
+  }
+
+  const variablesByRef = new Map<string, CardGeometryVariable>();
+  const unavailableVariableScopes = new Set<string>();
+  const refs = new Map<string, { scope: string; id: string }>();
+  for (const node of nodes) {
+    const cfg = (node as { cfg?: { simplified?: unknown } })?.cfg;
+    if (cfg?.simplified === true) collectGeometryVariableRefs(node, refs);
+  }
+  const scopes = [...new Set([...refs.values()].map((ref) => ref.scope))];
+  await Promise.all(
+    scopes.map(async (scope) => {
+      try {
+        const variables = await listVariables(scope, deps);
+        for (const [id, variable] of Object.entries(variables)) {
+          variablesByRef.set(variableGeometryKey(scope, id), {
+            scope,
+            id,
+            name: variable.userData.name,
+            type: variable.type,
+          });
+        }
+      } catch (err) {
+        // A successful inventory that omits an id is a real "变量已丢失"
+        // display state; an explicitly missing scope has the same result.
+        // Transport/schema failure is different: preserve the saved size (or
+        // fail closed on update) until labels are knowable.
+        if (!isMissingScopeError(err)) unavailableVariableScopes.add(scope);
+      }
+    }),
+  );
+
+  return {
+    specsByUrn,
+    semanticSpecsByUrn,
+    devicesByDid,
+    ...(deviceInventoryStatus !== undefined && { deviceInventoryStatus }),
+    unavailableSemanticUrns,
+    variablesByRef,
+    unavailableVariableScopes,
+  };
+}
+
+function nodeWithResolvedCardGeometry(
+  rawNode: unknown,
+  catalog: CardGeometryCatalog,
+): {
+  node: unknown;
+  resolution: ReturnType<typeof resolveBundleCardGeometry>;
+} {
+  const node = rawNode as Record<string, unknown>;
+  const cfg = node.cfg as Record<string, unknown> | undefined;
+  const pos = cfg?.pos as Record<string, unknown> | undefined;
+  const resolution = resolveBundleCardGeometry(node, catalog);
+  if (resolution.kind !== 'resolved' || cfg === undefined || pos === undefined) {
+    return { node: rawNode, resolution };
+  }
+  return {
+    node: {
+      ...node,
+      cfg: {
+        ...cfg,
+        pos: replacePositionSize(pos, resolution.geometry),
+      },
+    },
+    resolution,
+  };
+}
+
 // Append a node to a rule's graph. Two reads (getGraph + listRules) feed one
 // write (setGraph): getGraph supplies the current nodes[], listRules supplies
 // the cfg/RuleSummary that setGraph requires (cf. M4 Task 11 e2e finding that
@@ -1914,6 +2129,7 @@ async function addNodeWithinWorkflow(
   deps: ResourceDeps,
 ): Promise<{ nodeId: string }> {
   let rawNode: unknown;
+  let geometrySeed: GeometryCatalogSeed = {};
 
   if (input.shortcut) {
     // Variable grammar is entirely local. Run it before any device/session/
@@ -1966,7 +2182,13 @@ async function addNodeWithinWorkflow(
       if (!input.shortcut.deviceDid) {
         throw new ConfigError(`shortcut type "${input.shortcut.type}" requires --device-did`);
       }
-      const device = await getDevice(input.shortcut.deviceDid, deps);
+      const devices = await listDevices(deps);
+      const device = devices[input.shortcut.deviceDid];
+      if (device === undefined) {
+        throw new NotFoundError(`device not found: ${input.shortcut.deviceDid}`, {
+          id: input.shortcut.deviceDid,
+        });
+      }
       // M9 F31 lesson: ghost devices (online but no spec access) are silently
       // dropped by autoLocal — the web UI calls them "设备已丢失" and
       // /api/getLog reports a `-9999 user ack timeout` on every command. Fail
@@ -2038,6 +2260,10 @@ async function addNodeWithinWorkflow(
           : await getDeviceSpec(device.urn, {
               ...(deps.timeoutMs !== undefined && { timeoutMs: deps.timeoutMs }),
             });
+      geometrySeed = {
+        spec,
+        devices,
+      };
       rawNode = synthesizeNodeFromShortcut(
         input.shortcut,
         {
@@ -2058,6 +2284,32 @@ async function addNodeWithinWorkflow(
     throw new ConfigError('addNode requires either `node` or `shortcut`');
   }
 
+  // The factories use only a transient schema-valid seed because the Bundle
+  // size formula needs the complete node (pins, props and cfg together).
+  // Explicit --pos remains lossless for export/replay; only typed default
+  // geometry is canonicalized here.
+  if (
+    input.shortcut !== undefined &&
+    input.shortcut.pos === undefined &&
+    input.shortcut.type !== 'nop'
+  ) {
+    const catalog = await buildCardGeometryCatalog([rawNode], deps, geometrySeed);
+    const geometry = nodeWithResolvedCardGeometry(rawNode, catalog);
+    if (geometry.resolution.kind !== 'resolved') {
+      throw new ConfigError(
+        `could not resolve gateway-editor card geometry for ${input.shortcut.type}: ${geometry.resolution.reason}`,
+        {
+          type: input.shortcut.type,
+          reason: geometry.resolution.reason,
+          ...(geometry.resolution.missing !== undefined && {
+            missing: geometry.resolution.missing,
+          }),
+        },
+      );
+    }
+    rawNode = geometry.node;
+  }
+
   const parsedNode = parseOrThrow(NodeUnion, rawNode, 'AddNodeInput.node');
   const nodeId = parsedNode.id;
   // Read listRules first so a missing rule fails fast without a wasted
@@ -2074,7 +2326,7 @@ async function addNodeWithinWorkflow(
   // Auto-layout: a shortcut-synthesized node with no explicit --pos is flowed in
   // tight beside the previous card (prev right edge + gap, wrapping past a
   // screen width), so cards neither overlap nor leave huge gaps. synthesize
-  // already set the correct per-type width/height (sizedPos); we only assign x/y
+  // already resolved the correct content-aware width/height; we only assign x/y
   // here, from the ACTUAL geometry of the cards already on the canvas. Explicit
   // --pos (e.g. `rule export` round-trips) and the legacy `--cfg` node path keep
   // their own position.
@@ -3067,7 +3319,7 @@ function synthesizeNodeFromShortcut(
         type: 'deviceInput',
         cfg: {
           urn: spec.type,
-          pos: shortcut.pos ?? sizedPos('deviceInput'),
+          pos: shortcut.pos ?? seedPosition('deviceInput'),
           name: 'deviceInput',
           version: 1,
           ...simplifiedCfgFromShortcut(shortcut),
@@ -3111,7 +3363,7 @@ function synthesizeNodeFromShortcut(
       type: 'deviceInput',
       cfg: {
         urn: spec.type,
-        pos: shortcut.pos ?? sizedPos('deviceInput'),
+        pos: shortcut.pos ?? seedPosition('deviceInput'),
         name: 'deviceInput',
         version: 1,
         ...simplifiedCfgFromShortcut(shortcut),
@@ -3223,7 +3475,7 @@ function synthesizeNodeFromShortcut(
         type: 'deviceOutput',
         cfg: {
           urn: spec.type,
-          pos: shortcut.pos ?? sizedPos('deviceOutput'),
+          pos: shortcut.pos ?? seedPosition('deviceOutput'),
           name: 'deviceOutput',
           version: 1,
           ...simplifiedCfgFromShortcut(shortcut),
@@ -3284,7 +3536,7 @@ function synthesizeNodeFromShortcut(
         type: 'deviceOutput',
         cfg: {
           urn: spec.type,
-          pos: shortcut.pos ?? sizedPos('deviceOutput'),
+          pos: shortcut.pos ?? seedPosition('deviceOutput'),
           name: 'deviceOutput',
           version: 1,
           ...simplifiedCfgFromShortcut(shortcut),
@@ -3341,7 +3593,7 @@ function synthesizeNodeFromShortcut(
       type: 'deviceGet',
       cfg: {
         urn: spec.type,
-        pos: shortcut.pos ?? sizedPos('deviceGet'),
+        pos: shortcut.pos ?? seedPosition('deviceGet'),
         name: 'deviceGet',
         version: 1,
         ...simplifiedCfgFromShortcut(shortcut),
@@ -3441,7 +3693,7 @@ function synthesizeNodeFromShortcut(
           type: shortcut.type,
           cfg: {
             urn: spec.type,
-            pos: shortcut.pos ?? sizedPos(shortcut.type),
+            pos: shortcut.pos ?? seedPosition(shortcut.type),
             name: shortcut.type,
             version: 1,
             ...simplifiedCfgFromShortcut(shortcut),
@@ -3477,7 +3729,7 @@ function synthesizeNodeFromShortcut(
           type: shortcut.type,
           cfg: {
             urn: spec.type,
-            pos: shortcut.pos ?? sizedPos(shortcut.type),
+            pos: shortcut.pos ?? seedPosition(shortcut.type),
             name: shortcut.type,
             version: 1,
             ...simplifiedCfgFromShortcut(shortcut),
@@ -3537,7 +3789,7 @@ function synthesizeNodeFromShortcut(
       type: shortcut.type,
       cfg: {
         urn: spec.type,
-        pos: shortcut.pos ?? sizedPos(shortcut.type),
+        pos: shortcut.pos ?? seedPosition(shortcut.type),
         name: shortcut.type,
         version: 1,
         ...simplifiedCfgFromShortcut(shortcut),
@@ -3636,7 +3888,7 @@ function synthesizeNonDeviceShortcut(shortcut: AddNodeShortcut): Record<string, 
   // M12: same id + pos passthrough as device shortcut for export round-trips.
   const id = shortcut.id ?? createEditorCompatibleNodeId();
   const baseCfg = (name: string) => ({
-    pos: shortcut.pos ?? sizedPos(shortcut.type),
+    pos: shortcut.pos ?? seedPosition(shortcut.type),
     name,
     version: 1,
     ...simplifiedCfgFromShortcut(shortcut),
@@ -4309,7 +4561,37 @@ async function updateNodeWithinWorkflow(
     };
   }
 
-  const validated = parseOrThrow(NodeUnion, merged, 'updateNode.merged');
+  let validated = parseOrThrow(NodeUnion, merged, 'updateNode.merged');
+  const cfgPatch =
+    input.patch.cfg !== null && typeof input.patch.cfg === 'object'
+      ? (input.patch.cfg as Record<string, unknown>)
+      : undefined;
+  // The browser's _setData path reruns sizeTool after ordinary card edits.
+  // Mirror that behavior unless the caller explicitly supplied cfg.pos (the
+  // raw/lossless override boundary used for expression-pane resizing).
+  const strictUpdatedSchema = nodeSchemaForType(validated.type);
+  if (
+    !Object.hasOwn(cfgPatch ?? {}, 'pos') &&
+    validated.type !== 'nop' &&
+    strictUpdatedSchema?.safeParse(validated).success === true
+  ) {
+    const catalog = await buildCardGeometryCatalog([validated], deps);
+    const geometry = nodeWithResolvedCardGeometry(validated, catalog);
+    if (geometry.resolution.kind === 'resolved') {
+      validated = parseOrThrow(NodeUnion, geometry.node, 'updateNode.geometry');
+    } else {
+      throw new ConfigError(
+        `could not resolve gateway-editor card geometry for ${validated.type}: ${geometry.resolution.reason}; no graph changes were written`,
+        {
+          type: validated.type,
+          reason: geometry.resolution.reason,
+          ...(geometry.resolution.missing !== undefined && {
+            missing: geometry.resolution.missing,
+          }),
+        },
+      );
+    }
+  }
 
   const updatedNodes = [...current.nodes];
   updatedNodes[idx] = validated;
@@ -4774,6 +5056,8 @@ export interface RelayoutGraphResult {
   id: string;
   nodeCount: number;
   moved: number;
+  resized: number;
+  geometryPreserved: number;
 }
 
 // Flow-aware relayout (`xgg rule layout`): re-position every executable card
@@ -4782,14 +5066,17 @@ export interface RelayoutGraphResult {
 // so it can only flow by insertion order; run this ONCE after the graph is fully
 // wired to arrange cards by data flow — triggers left, each node right of its
 // inputs, branches stacked, independent sub-automations in separate horizontal
-// bands. Only cfg.pos.x/y change (sizes, props, edges untouched).
+// bands. Known executable cards are first normalized through the same Bundle
+// geometry resolver used at typed creation; `nop`, unknown cards, and
+// unresolved metadata keep their saved width/height. Only `nop` also keeps
+// its x/y; connected opaque cards still participate in flow placement.
 async function relayoutGraphWithinWorkflow(
   ruleId: string,
   deps: ResourceDeps,
   // F66f (2026-05-31) — `varCheck` opt-out matches the rest of the
   // incremental editing surface. Default-on so the agent's pos-only
   // relayout still trips on a graph with ghost var refs.
-  opts: { validate?: boolean; varCheck?: boolean } = {},
+  opts: { validate?: boolean; varCheck?: boolean; normalizeSizes?: boolean } = {},
 ): Promise<RelayoutGraphResult> {
   const rules = await listRules(deps);
   const summary = rules.find((r) => r.id === ruleId);
@@ -4798,6 +5085,20 @@ async function relayoutGraphWithinWorkflow(
   }
   const current = await getRule(ruleId, deps);
 
+  const normalizeSizes = opts.normalizeSizes !== false;
+  const modeledGeometryNodes = current.nodes.filter((raw) => {
+    const type = (raw as { type?: unknown }).type;
+    if (typeof type !== 'string' || type === 'nop') return false;
+    return nodeSchemaForType(type)?.safeParse(raw).success === true;
+  });
+  const geometryCatalog = normalizeSizes
+    ? await buildCardGeometryCatalog(modeledGeometryNodes, deps)
+    : undefined;
+  const resolvedGeometry = new Map<
+    string,
+    Extract<ReturnType<typeof resolveBundleCardGeometry>, { kind: 'resolved' }>['geometry']
+  >();
+  let geometryPreserved = 0;
   const layoutNodes: Array<{ id: string; width: number; height: number }> = [];
   const edges: Array<{ from: string; to: string }> = [];
   for (const raw of current.nodes) {
@@ -4810,12 +5111,37 @@ async function relayoutGraphWithinWorkflow(
     // A nop note has no connector semantics and its position conveys which
     // region of the canvas it annotates. Treating it as an isolated component
     // would move it into an unrelated band and destroy that spatial meaning.
-    if (node.type === 'nop') continue;
+    if (node.type === 'nop') {
+      geometryPreserved += 1;
+      continue;
+    }
     const pos = node.cfg?.pos ?? {};
+    const strictSchema = typeof node.type === 'string' ? nodeSchemaForType(node.type) : undefined;
+    const geometry =
+      geometryCatalog === undefined ||
+      strictSchema === undefined ||
+      !strictSchema.safeParse(raw).success
+        ? null
+        : resolveBundleCardGeometry(raw as CardGeometryNodeLike, geometryCatalog);
+    if (geometry?.kind === 'resolved') {
+      resolvedGeometry.set(node.id, geometry.geometry);
+    } else {
+      geometryPreserved += 1;
+    }
     layoutNodes.push({
       id: node.id,
-      width: typeof pos.width === 'number' ? pos.width : 0,
-      height: typeof pos.height === 'number' ? pos.height : 0,
+      width:
+        geometry?.kind === 'resolved'
+          ? geometry.geometry.width
+          : typeof pos.width === 'number'
+            ? pos.width
+            : 0,
+      height:
+        geometry?.kind === 'resolved'
+          ? geometry.geometry.height
+          : typeof pos.height === 'number'
+            ? pos.height
+            : 0,
     });
     for (const arr of Object.values(node.outputs ?? {})) {
       if (!Array.isArray(arr)) continue;
@@ -4829,18 +5155,40 @@ async function relayoutGraphWithinWorkflow(
 
   const positions = layoutGraph({ nodes: layoutNodes, edges });
   let moved = 0;
+  let resized = 0;
   const updatedNodes = current.nodes.map((raw) => {
     const node = raw as Record<string, unknown>;
     const p = positions[node.id as string];
     const cfg = node.cfg as Record<string, unknown> | undefined;
     const pos = cfg?.pos as Record<string, unknown> | undefined;
     if (p === undefined || cfg === undefined || pos === undefined) return raw;
+    const geometry = resolvedGeometry.get(node.id as string);
     if (pos.x !== p.x || pos.y !== p.y) moved += 1;
-    return { ...node, cfg: { ...cfg, pos: { ...pos, x: p.x, y: p.y } } } as typeof raw;
+    if (
+      geometry !== undefined &&
+      (pos.width !== geometry.width || pos.height !== geometry.height)
+    ) {
+      resized += 1;
+    }
+    return {
+      ...node,
+      cfg: {
+        ...cfg,
+        pos: {
+          ...pos,
+          ...(geometry !== undefined && {
+            width: geometry.width,
+            height: geometry.height,
+          }),
+          x: p.x,
+          y: p.y,
+        },
+      },
+    } as typeof raw;
   });
 
-  // F66a (2026-05-31) — skipLint: relayoutGraph only touches cfg.pos.x/y on
-  // each node; edge content is preserved verbatim. If the source graph had a
+  // F66a (2026-05-31) — skipLint: relayoutGraph only touches cfg.pos geometry
+  // on each node; edge content is preserved verbatim. If the source graph had a
   // pre-existing lint error (authored before the gate), blocking layout
   // would prevent the visual cleanup the user is asking for.
   // F66f (2026-05-31) — wire listAvailVars (default-on). Even a pos-only
@@ -4853,13 +5201,19 @@ async function relayoutGraphWithinWorkflow(
       listAvailVars: (rId: string) => listAvailVarsForRule(rId, deps),
     }),
   });
-  return { id: ruleId, nodeCount: current.nodes.length, moved };
+  return {
+    id: ruleId,
+    nodeCount: current.nodes.length,
+    moved,
+    resized,
+    geometryPreserved,
+  };
 }
 
 export async function relayoutGraph(
   ruleId: string,
   deps: ResourceDeps,
-  opts: { validate?: boolean; varCheck?: boolean } = {},
+  opts: { validate?: boolean; varCheck?: boolean; normalizeSizes?: boolean } = {},
 ): Promise<RelayoutGraphResult> {
   return withResourceMutationWorkflow(deps, 'rule.layout', () =>
     relayoutGraphWithinWorkflow(ruleId, deps, opts),

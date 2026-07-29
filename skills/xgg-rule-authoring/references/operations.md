@@ -86,6 +86,7 @@ xgg rule set-tags <rid> --tags "a,b"
 ```
 
 - `node update` 只 merge 顶层与 `cfg`；`props/inputs/outputs` 必须给完整 replacement，且不能改 id/type。
+- 普通 `node update` 会像网页编辑一样重算已建模卡片尺寸；显式 patch 完整 `cfg.pos` 时视为无损 override。重算依赖的在线设备/变量清单、MIoT spec 或语义投影暂不可用时，update 在写图前失败，layout 保留原宽高，不能把请求失败解释为“清单为空”。`rule layout` 默认先规范已建模执行卡宽高，再以 32px 横向列间距排布；`--keep-sizes` 才是仅移动 x/y。
 - 紧凑 `--from/--to` 只用于 canonical ID。既有 node ID 含 `:` 时，edge add/remove 同时给齐 `--from-node-id/--from-pin/--to-node-id/--to-pin`；export/import 会自动使用这条无损路径。
 - 常规 remove 加 `--cascade-edges`；不加会故意留下 dangling incoming wires。
 - 默认 node/edge/layout/set 会按精确 scope/id 检查在线变量存在和实际类型；node remove 也检查删除后的**剩余图**。SDK `createRule(initial nodes)` 在第一次 setGraph 前检查初始图；CLI 空图 `rule new` 不为此多读变量。`--no-var-check` 只供明确 raw probe/修复，不能放宽 scope/schema/spec/enable。

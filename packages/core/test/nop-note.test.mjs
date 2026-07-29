@@ -313,11 +313,13 @@ test('flow layout moves executable cards while preserving nop annotation positio
   });
   assert.equal(result.nodeCount, 2);
   assert.equal(result.moved, 1);
+  assert.equal(result.resized, 1);
+  assert.equal(result.geometryPreserved, 1);
   assert.deepEqual(gateway.state.nodes[0].cfg.pos, {
     x: 40,
     y: 40,
-    width: 200,
-    height: 120,
+    width: 160,
+    height: 98,
   });
   assert.deepEqual(gateway.state.nodes[1], note);
 });

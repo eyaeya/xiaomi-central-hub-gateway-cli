@@ -15,10 +15,10 @@ const fakeBaseUrl = 'http://gateway.invalid';
 const fakeAgentStartedAt = '2026-07-19T00:00:00.000Z';
 
 const geometry = {
-  delay: { width: 320, height: 120 },
-  statusLast: { width: 340, height: 140 },
-  loop: { width: 510, height: 160 },
-  eventSequence: { width: 524, height: 180 },
+  delay: { width: 288, height: 112 },
+  statusLast: { width: 288, height: 119 },
+  loop: { width: 510, height: 140 },
+  eventSequence: { width: 524, height: 140 },
 };
 
 function durationNode(type, id, unit, value, milliseconds) {
@@ -50,7 +50,7 @@ function onLoad(id, targets = []) {
     id,
     type: 'onLoad',
     cfg: {
-      pos: { x: 0, y: 0, width: 200, height: 120 },
+      pos: { x: 0, y: 0, width: 160, height: 98 },
       name: 'onLoad',
       version: 1,
     },

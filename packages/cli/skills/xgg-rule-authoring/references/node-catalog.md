@@ -8,6 +8,7 @@
 - [所有节点的共同 envelope](#所有节点的共同-envelope)
 - [完整 pin 表](#完整-pin-表)
 - [node add 共同参数](#node-add-共同参数)
+- [编辑态、极简态与画布间距](#编辑态极简态与画布间距)
 - [25+nop 参数总表](#25nop-参数总表)
 - [typed access、比较、变量与 output 契约](#typed-access比较变量与-output-契约)
 - [逐类 cfg/props wire 键](#逐类-cfgprops-wire-键)
@@ -44,7 +45,7 @@ Agent 不得把历史或第三方 JSON “微调后试写”。先用 typed shor
   "cfg": {
     "name": "deviceGet",
     "version": 1,
-    "pos": {"x": 0, "y": 0, "width": 700, "height": 240},
+    "pos": {"x": 0, "y": 0, "width": 606, "height": 164},
     "urn": "urn:miot-spec-v2:device:...",
     "simplified": false
   },
@@ -54,7 +55,7 @@ Agent 不得把历史或第三方 JSON “微调后试写”。先用 typed shor
 }
 ```
 
-- `cfg.name` 通常等于 type；`cfg.version` 是整数；`cfg.simplified` 只影响显示。
+- `cfg.name` 通常等于 type；`cfg.version` 是整数；`cfg.simplified` 选择编辑态/极简态，必须与对应的显示尺寸一起看。
 - `inputs` 声明 pin，以 `null` 占位，不保存入边。
 - 边只在源节点 `outputs.<pin>`：JSON endpoint 为 `targetId.targetPin`；CLI endpoint 为 `targetId:targetPin`。
 - 每个 target input 最多一条入边；source output 可 fan-out。
@@ -110,11 +111,90 @@ Agent 不得把历史或第三方 JSON “微调后试写”。先用 typed shor
 
 `--allow-legacy-id` 是窄化的**重放 intent**：只在既有 export 为 modeled typed shortcut 给出非 canonical 显式 ID 时使用。它会拒绝省略 ID、canonical ID、raw `--cfg`、unknown/opaque type；Core SDK 对应 intent 是 `legacyNodeIdReplay:true`。CLI 无法验证一个 noncanonical ID 的 provenance，因此 Agent 还必须自行保证它来自既有图，绝不能拿该 flag 新建 legacy ID。当前 export 会自动输出该 flag，旧 JSON export 在 import/render 时也只为可安全建模的 typed 节点补齐；opaque 节点仍保留完整 raw tuple，不能借此转成近似卡片。
 
-省略 `--pos` 时，XGG 使用当前 per-card editing 尺寸并按已有卡片做紧凑 flow placement；显式值必须是 `x,y,width,height`，仅表达式卡可加第五个 `exprHeight`。省略 `--simplified` 时不写该 cfg marker；显式 true/false 会保留，且只适用于执行卡、不适用于 nop。连接/输出/安全 flags（base-url、session-file、timeout、pretty、snapshots、validation/hints）不属于节点语义。
+省略 `--pos` 时，XGG 在完整节点合成后按实际 props、pin 数量、设备 spec 与 `--simplified` 状态计算尺寸，再按已有卡片做紧凑 insertion placement；不能把编辑态的某个“最大观察值”当成所有卡片尺寸。显式值必须是 `x,y,width,height`，仅表达式卡可加第五个 `exprHeight`；显式 `--pos` 是 export/import 的无损边界，不会被 node-add 静默改写。省略 `--simplified` 时不写该 cfg marker并使用编辑态；显式 true/false 会保留，且只适用于执行卡、不适用于 nop。连接/输出/安全 flags（base-url、session-file、timeout、pretty、snapshots、validation/hints）不属于节点语义。
 
 `--cfg` 选择完整 raw tuple 时，只与 `--type`、可选 `--id` 及 operational flags 配合；不得混入 typed authoring flags。对 typed shortcut 只传下表该行列出的 flags——无关参数必须由 CLI 本地拒绝，不能依赖“当前碰巧被忽略”。
 
 `--allow-unknown-scope` 只允许在下表含变量目标、变量表达式或 `$scope.id` 参数的路由使用；它仅压制非 `global` / 当前 `R<rule-id>` scope 的本地 warning，不能创建变量、证明变量存在或让 strict validation 通过，正常规则不要使用。
+
+## 编辑态、极简态与画布间距
+
+不要手算新 typed 卡片的 `--pos`。省略它，让 XGG 根据前端对等公式生成宽高；连完线后再运行一次 `rule layout`，同时修复旧图中已建模执行卡的过大/过小尺寸。只有 same-ID 无损重放或明确保留人工画布时才显式传 `--pos`。
+
+编辑态固定尺寸：
+
+| type | width × height |
+|---|---:|
+| `condition` | `300 × 140` |
+| `counter` | `328 × 140` |
+| `delay` | `288 × 112` |
+| `eventSequence` | `524 × 140` |
+| `loop` | `510 × 140` |
+| `onLoad` | `160 × 98` |
+| `onlyNTimes` | `382 × 140` |
+| `register` | `160 × 140` |
+| `statusLast` | `288 × 119` |
+| `logicNot` | `160 × 100` |
+| `nop` | 新建默认 `320 × 60`；之后保持自由缩放 |
+
+动态 logic/mode 卡不能使用固定高度：
+
+```text
+logicAnd / logicOr / signalOr: width=160, height=40*N+100
+modeSwitch:                       width=160, height=40*M+100
+```
+
+`N` 是实际 input 数，`M` 是实际 output 数，均至少 2；编辑态还渲染一行 disabled“添加”，所以默认两路卡是 `160×180`，不是 `160×140`。
+
+设备比较控件宽度由目标 property 决定：
+
+```text
+between=406
+boolean=162
+存在 value-list 字段（包括 []）=296
+普通 int/float=256
+string=248
+```
+
+在此基础上：
+
+| device type/mode | 编辑态公式 |
+|---|---|
+| `deviceInput` property | `width=288+比较控件`, `height=206` |
+| `deviceGet` | `width=444+比较控件`, `height=164` |
+| `deviceInput` event | 宽取已配置 argument 行最大值；高为 `164+40×(已配置行+可能的添加行)` |
+| `deviceInputSetVar` property | `554×204` |
+| `deviceInputSetVar` event | 无匹配行 `342`、有匹配行 `418`；高度同 event 行公式 |
+| `deviceGetSetVar` | `566×164` |
+| `deviceOutput` property/action | 依据 string/number、变量选择器能力及 action input 数计算；高从 `164` 起，每个额外 action input 加 `40` |
+
+常见 `deviceInput` property 宽度依次为 boolean `450`、value-list `584`、普通 number `544`、number between `694`、string `536`；`deviceGet` 对应 `606/740/700/850/692`。不要把某一列宽当作全类型固定值。
+
+其他动态编辑态：
+
+| type/state | width × height |
+|---|---:|
+| `varChange` 未选/string/number/between | `210/436/444/594 × 152` |
+| `varGet` 未选/string/number/between | `264/524/532/682 × 120` |
+| `varSetNumber` | `740 × (80 + max(exprHeight,32))` |
+| `varSetString` | `712 × (80 + max(exprHeight,32))` |
+| `alarmClock` | 按指定时刻/日出日落、custom day、before/after 从 `416×112` 到 `708×152` |
+| `timeRange` | 普通日期 `438×112`；custom day `566×112` |
+
+极简态是独立尺寸路径：
+
+- 固定宽度：`condition=197`，`logicAnd/logicOr/signalOr/logicNot=88`，`modeSwitch=104`，`onLoad=136`，`register=146`。
+- 非设备通用高度：`36×max(实际 inputs,实际 outputs)+20`；只有 1 行时再加 `5`。因此普通单 pin 卡高 `61`，`eventSequence/condition/counter/loop/onlyNTimes/register` 高 `92`，logic/mode 为 `36N+20` / `36M+20`。
+- 固定极简高度：`varChange/varGet=90`，`varSetNumber/varSetString=61`。
+- 其余宽度由极简摘要、connector label 与设备/变量显示名计算；device/variable/expr 卡再 clamp 到 `190..360`。设备标题与参数行先使用与前端一致的 zh_cn spec 语义转译，不能直接拿公共 instance spec 的英文 description 量宽。这部分依赖网页使用的 MI Lan Pro 字体，XGG 在无浏览器的 Node 环境按同一公式做确定性字宽估算，网页在相关编辑或状态切换时会按本机字体再次测量。
+- `nop` 不支持极简态。
+
+画布间距是 XGG 的排版策略，不属于网关执行语义：
+
+- node-add 在尚未连线时使用前一张卡右缘加 `24px` 的紧凑 insertion gap；
+- `rule layout` 按数据流分层，使用 `32px` 横向列间距，为箭头与圆角连线留出可读通道；
+- `rule layout` 默认同时规范已建模执行卡 width/height，回报 `moved`、`resized`、`geometryPreserved`；`nop`、unknown/opaque、MIoT spec 不可解析，或设备/变量展示清单与语义投影暂不可用的卡片保持原尺寸，但只有 `nop` 连 x/y 也不移动；只有在线清单成功返回且确实缺少展示记录时，极简设备才按网关编辑器行为回退为 `190px` 宽，网络/接口失败不能冒充空清单；
+- 只想移动 x/y 而保留历史 width/height 时显式用 `xgg rule layout <rid> --keep-sizes`。
 
 ## 25+nop 参数总表
 

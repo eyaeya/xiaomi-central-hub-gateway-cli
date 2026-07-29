@@ -25,7 +25,7 @@ function timeRangeNode(id, start, end, mingTextShow) {
     id,
     type: 'timeRange',
     cfg: {
-      pos: { x: 0, y: 0, width: 524, height: 152 },
+      pos: { x: 0, y: 0, width: 438, height: 112 },
       name: 'timeRange',
       version: 1,
     },

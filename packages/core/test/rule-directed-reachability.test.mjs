@@ -186,7 +186,7 @@ function eventSequence(id, targets = []) {
     id,
     type: 'eventSequence',
     cfg: {
-      pos: position(524, 180),
+      pos: position(524, 140),
       name: 'eventSequence',
       version: 1,
       unit: 's',
@@ -202,7 +202,7 @@ function multiInput(type, id, targets = []) {
   return {
     id,
     type,
-    cfg: { pos: position(340, 180), name: type, version: 1 },
+    cfg: { pos: position(160, 180), name: type, version: 1 },
     inputs: { input0: null, input1: null },
     outputs: { output: targets },
     props: {},
@@ -213,7 +213,11 @@ function stateUnary(type, id, targets = []) {
   return {
     id,
     type,
-    cfg: { pos: position(240, 120), name: type, version: 1 },
+    cfg: {
+      pos: position(type === 'logicNot' ? 160 : 288, type === 'logicNot' ? 100 : 119),
+      name: type,
+      version: 1,
+    },
     inputs: { input: null },
     outputs: { output: targets },
     props: {},
@@ -224,7 +228,7 @@ function statusLast(id, targets = []) {
   return {
     id,
     type: 'statusLast',
-    cfg: { pos: position(340, 140), name: 'statusLast', version: 1, unit: 's', value: 1 },
+    cfg: { pos: position(288, 119), name: 'statusLast', version: 1, unit: 's', value: 1 },
     inputs: { input: null },
     outputs: { output: targets },
     props: { timeout: 1_000 },
@@ -235,7 +239,11 @@ function counterLike(type, id, targets = []) {
   return {
     id,
     type,
-    cfg: { pos: position(382, 160), name: type, version: 1 },
+    cfg: {
+      pos: position(type === 'counter' ? 328 : 382, 140),
+      name: type,
+      version: 1,
+    },
     inputs: { input: null, zero: null },
     outputs: { output: targets },
     props: { n: 2 },

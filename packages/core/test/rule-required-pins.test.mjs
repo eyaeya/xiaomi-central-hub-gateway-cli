@@ -48,7 +48,7 @@ function timeRange(id, targets = []) {
   return {
     id,
     type: 'timeRange',
-    cfg: { pos: position(524, 152), name: 'timeRange', version: 1 },
+    cfg: { pos: position(438, 112), name: 'timeRange', version: 1 },
     inputs: {},
     outputs: { output: targets },
     props: {
@@ -63,7 +63,7 @@ function condition(id, met = [], unmet = []) {
   return {
     id,
     type: 'condition',
-    cfg: { pos: position(320, 140), name: 'condition', version: 1 },
+    cfg: { pos: position(300, 140), name: 'condition', version: 1 },
     inputs: { trigger: null, condition: null },
     outputs: { met, unmet },
     props: {},
@@ -91,7 +91,7 @@ function eventSequence(id, targets = []) {
     id,
     type: 'eventSequence',
     cfg: {
-      pos: position(524, 180),
+      pos: position(524, 140),
       name: 'eventSequence',
       version: 1,
       unit: 's',
@@ -110,7 +110,7 @@ function logicGate(type, id, inputKeysOrCount, targets = []) {
   return {
     id,
     type,
-    cfg: { pos: position(340, 180), name: type, version: 1 },
+    cfg: { pos: position(160, 180), name: type, version: 1 },
     inputs: Object.fromEntries(keys.map((key) => [key, null])),
     outputs: { output: targets },
     props: {},
@@ -121,7 +121,7 @@ function loop(id) {
   return {
     id,
     type: 'loop',
-    cfg: { pos: position(510, 160), name: 'loop', version: 1, unit: 's', value: 1 },
+    cfg: { pos: position(510, 140), name: 'loop', version: 1, unit: 's', value: 1 },
     inputs: { start: null, stop: null },
     outputs: { output: [] },
     props: { interval: 1_000 },
@@ -132,7 +132,11 @@ function counterLike(type, id) {
   return {
     id,
     type,
-    cfg: { pos: position(382, 160), name: type, version: 1 },
+    cfg: {
+      pos: position(type === 'counter' ? 328 : 382, 140),
+      name: type,
+      version: 1,
+    },
     inputs: { input: null, zero: null },
     outputs: { output: [] },
     props: { n: 2 },
