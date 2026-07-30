@@ -93,6 +93,7 @@ test('Skill entrypoint has a full-tree build marker and minimal frontmatter', as
   assert.match(skill, /\[references\/device-semantics\.md\]\(references\/device-semantics\.md\)/);
   assert.match(skill, /\[references\/recipes\.md\]\(references\/recipes\.md\)/);
   assert.match(skill, /\[references\/operations\.md\]\(references\/operations\.md\)/);
+  assert.match(skill, /\[references\/habit-learning\.md\]\(references\/habit-learning\.md\)/);
 });
 
 test('Skill node catalog keeps parameter coverage for all 25 executable cards plus nop', async () => {

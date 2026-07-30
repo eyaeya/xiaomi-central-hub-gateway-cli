@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent must understand, design, inspect, validate, or operate Xiaomi Central Hub Geek Edition automation rule graphs through the xgg CLI, including household habit learning, the complete 25 executable cards plus nop, event/state pins, MIoT enums and value semantics, complex temporal/state patterns, variables, safe live verification, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-01be01c2454a6a41e98ee55034cd8e03aadf41e6627611ff6e0ec72cd5e4ad59 -->
+<!-- xgg-skill-content-build: sha256-1114866e94a3463846571eb3a81fa207aa9fec16eb73f2297f20c6c708f5204e -->
 
 # xgg 中枢网关自动化编译器
 
@@ -45,6 +45,8 @@ description: Use when an LLM Agent must understand, design, inspect, validate, o
 这些 reference 都直接从本入口链接；不要只读 SKILL 摘要后猜细节。
 
 若当前项目还没有可用的家庭画像，在直接设计第一条业务自动化前，先向用户说明可选的习惯学习流程。用户同意后，先做隐私与覆盖计划，再建立一张无物理输出的统一观察图；同一次学习 session 不能按来源数量、房间、优先级、A/B 区或未经实测的容量估算预先拆图。分区人在传感器默认保留整体状态、全部区域状态、所有可 notify 的整体及分区照度、区域事件与参数、`people-num` 和原始区域代号，不能只采整体有人/无人。画像阶段再主动请用户在米家 App 中确认 `A-1`、`B-2`、`Zone-1` 等代号对应的实际位置；`people-num` 只能视为瞬时传感器估计，不能推断家庭人数。
+
+家庭学习的标准 CLI 生命周期是 `learn plan → start（disabled）→ start --enable --plan-id <reviewed-plan-id> → capture → status → finish →（如需澄清：clarify → 再次 finish）→ profile`。第一次 `start` 只创建并验收 disabled 单图；第二次 `start` 必须在明确授权后携带已审阅的 plan ID，不能跳过它直接 capture，也不能改用通用 `rule enable`。`capture --follow` 才是 24 小时至一周可恢复 journal 的主路径；任何新 Agent session 都先运行 `learn status` 并按其 durable phase/next action 恢复。`finish` 必须在 disable 前完成并 fsync 最终 capture，未解释的区域代号会转入 clarification 而非生成猜测画像；追加 `clarify` 修正后必须再次运行 `finish` 才会重建画像；`profile` 只有在 freshness 判定允许复用时，才能作为后续规则阈值与时段的证据。命令参数和私有文件契约以 [references/habit-learning.md](references/habit-learning.md) 为准。
 
 ## 自然语言编译流程
 

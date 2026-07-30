@@ -28,6 +28,8 @@ export {
 export { isGhostDevice } from './schemas/device.js';
 export type { DeviceEligibilityFields } from './schemas/device.js';
 export * from './schemas/habit-learning.js';
+export * from './schemas/habit-learning-profile.js';
+export * from './schemas/habit-learning-study.js';
 export {
   VARIABLE_IDENTIFIER_CONSTRAINT,
   VARIABLE_IDENTIFIER_PATTERN,

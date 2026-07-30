@@ -38,6 +38,12 @@ const forbiddenReferences = [
     /(?:\b(?:tree|blob|commit)\/[0-9a-f]{7,40}\b|\b[0-9a-f]{40}\b)/i,
   ],
   ['external development Bundle provenance', /\bbundles?\b/i],
+  ['local user home path', /\/Users\/[^/\s]+(?:\/|$)/],
+  ['private development artifact path', /\.codex-review\//],
+  [
+    'literal six-digit login credential',
+    /(?:登录码|验证码|六位码|6\s*位(?:登录)?码)[^`\n]{0,40}\b\d{6}\b/u,
+  ],
 ];
 
 test('caller-facing Skill and README files are self-contained', async () => {
@@ -128,8 +134,12 @@ test('root and npm READMEs require one complete CLI plus Skill installation flow
   assert.ok(rootReadme.includes('diff -qr "$CLI_SKILL" "$AGENT_SKILL_DIR"'));
 });
 
-test('root README routes Agents through one-graph household habit learning before direct automation', async () => {
+test('root and npm READMEs route Agents through one-graph household habit learning', async () => {
   const rootReadme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
+  const npmReadme = await readFile(
+    path.join(repositoryRoot, 'packages', 'cli', 'README.md'),
+    'utf8',
+  );
   const habitReference = await readFile(
     path.join(skillRoot, 'references', 'habit-learning.md'),
     'utf8',
@@ -145,6 +155,13 @@ test('root README routes Agents through one-graph household habit learning befor
     'skills/xgg-rule-authoring/references/habit-learning.md',
     '一张统一观察图',
     'xgg learn plan --include-context --pretty',
+    'start（disabled）→ start --enable --plan-id <reviewed-plan-id> → capture → status → finish →（如需澄清：clarify → 再次 finish）→ profile',
+    'xgg learn capture --study-dir <private-study-dir> --follow',
+    'xgg learn status --study-dir <private-study-dir> --local-only',
+    'xgg learn finish --study-dir <private-study-dir>',
+    'xgg learn clarify --help',
+    'xgg learn profile --study-dir <private-study-dir>',
+    'durable phase',
     '--exclude-room <room-id...>',
     '--exclude-device <did...>',
     '不能按来源数量、房间、优先级、A/B 区或 16 路估算预先拆成多张规则',
@@ -159,24 +176,55 @@ test('root README routes Agents through one-graph household habit learning befor
     'layoutDigest',
     '.xgg-private/habit-learning/<session-id>/',
     '最终拉取并落盘 → 停用并 readback',
+    'fail-safe 停用并 readback',
+    'current',
+    'expired',
+    'invalidated',
+    'insufficient',
   ]) {
     assert.ok(rootReadme.includes(fragment), `README habit workflow must include ${fragment}`);
   }
-  assert.match(
-    `${rootReadme}\n${habitReference}`,
-    /\bxgg learn plan\b/,
-    'caller-facing habit workflow must advertise the implemented read-only planner',
-  );
-  assert.doesNotMatch(
-    `${rootReadme}\n${habitReference}`,
-    /\bxgg learn (?:start|capture|status|finish)\b/,
-    'caller-facing habit workflow must not advertise absent lifecycle commands',
-  );
+  for (const fragment of [
+    '## 新家庭先学习习惯',
+    '一张无物理输出的观察图',
+    'plan → start（disabled）→ start --enable --plan-id <reviewed-plan-id> → capture → status → finish →（如需澄清：clarify → 再次 finish）→ profile',
+    'xgg learn plan --include-context --pretty',
+    'xgg learn start --study-dir .xgg-private/habit-learning/home --include-context',
+    '--enable --plan-id <reviewed-plan-id>',
+    'xgg learn capture --study-dir .xgg-private/habit-learning/home --follow',
+    'xgg learn status --study-dir <private-study-dir>',
+    'xgg learn finish --study-dir <private-study-dir>',
+    'xgg learn clarify --help',
+    'xgg learn profile --study-dir <private-study-dir>',
+    'skills/xgg-rule-authoring/references/habit-learning.md',
+    'people-num',
+    '0700',
+    '0600',
+    'fail-safe 停用并 readback',
+  ]) {
+    assert.ok(npmReadme.includes(fragment), `npm README habit workflow must include ${fragment}`);
+  }
+  const callerFacing = `${rootReadme}\n${habitReference}`;
+  for (const subcommand of ['plan', 'start', 'capture', 'status', 'clarify', 'finish', 'profile']) {
+    assert.match(
+      callerFacing,
+      new RegExp(`\\bxgg learn ${subcommand}\\b`),
+      `caller-facing habit workflow must advertise learn ${subcommand}`,
+    );
+  }
 });
 
 test('habit-learning reference preserves long-window evidence boundaries', async () => {
   const reference = await readFile(path.join(skillRoot, 'references', 'habit-learning.md'), 'utf8');
   for (const fragment of [
+    'CLI 生命周期与恢复',
+    'preparing → ready-disabled → observing / observing-degraded → finishing → awaiting-clarification → complete',
+    '每个新 Agent session、进程异常或用户回来时都先运行它',
+    '先 append+fsync journal/gaps，再原子更新 checkpoint',
+    '`finish` 可恢复且顺序固定',
+    '最终 capture、fsync journal/gaps、原子提交 checkpoint，然后 disable',
+    '`reusableForRuleAuthoring=true`',
+    '`expired`、`invalidated` 或 `insufficient`',
     '设备覆盖：',
     '房间覆盖：',
     '信号覆盖：',
@@ -204,6 +252,22 @@ test('habit-learning reference preserves long-window evidence boundaries', async
       reference.includes(fragment),
       `habit-learning evidence contract must include ${fragment}`,
     );
+  }
+
+  const lifecycleCommands = [
+    'xgg learn plan',
+    'xgg learn start',
+    'xgg learn capture',
+    'xgg learn status',
+    'xgg learn finish',
+    'xgg learn clarify',
+    'xgg learn profile',
+  ];
+  let previousIndex = -1;
+  for (const command of lifecycleCommands) {
+    const index = reference.indexOf(command);
+    assert.ok(index > previousIndex, `${command} must appear in lifecycle order`);
+    previousIndex = index;
   }
 });
 

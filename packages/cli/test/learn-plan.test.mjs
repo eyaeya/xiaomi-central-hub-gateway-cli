@@ -115,6 +115,7 @@ test('learn plan uses live inventory and specs, preserves per-device failures, a
   const fetches = [];
   const originalFetch = globalThis.fetch;
   const originalWrite = process.stdout.write;
+  const originalSessionFile = process.env.XGG_SESSION_FILE;
   let stdout = '';
 
   globalThis.fetch = async (input, init) => {
@@ -136,6 +137,7 @@ test('learn plan uses live inventory and specs, preserves per-device failures, a
     stdout += String(chunk);
     return true;
   };
+  process.env.XGG_SESSION_FILE = agent.sessionFile;
 
   try {
     await buildProgram().parseAsync(
@@ -144,8 +146,6 @@ test('learn plan uses live inventory and specs, preserves per-device failures, a
         'plan',
         '--base-url',
         baseUrl,
-        '--session-file',
-        agent.sessionFile,
         '--timeout',
         '4321',
         '--include-context',
@@ -158,6 +158,8 @@ test('learn plan uses live inventory and specs, preserves per-device failures, a
   } finally {
     globalThis.fetch = originalFetch;
     process.stdout.write = originalWrite;
+    if (originalSessionFile === undefined) Reflect.deleteProperty(process.env, 'XGG_SESSION_FILE');
+    else process.env.XGG_SESSION_FILE = originalSessionFile;
   }
 
   assert.equal(stdout.trim().split('\n').length, 1);

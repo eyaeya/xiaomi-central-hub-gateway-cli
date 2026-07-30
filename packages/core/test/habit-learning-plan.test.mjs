@@ -650,7 +650,14 @@ test('planner excludes diagnostic/configuration noise and restricted router iden
         property(7, 'if-set-password', ['read', 'notify'], 'bool'),
         property(8, 'credential-state', ['read', 'notify']),
         property(9, 'recording-mode', ['read', 'notify']),
+        property(10, 'wifi-ssid', ['read'], 'string'),
+        property(11, 'credential', ['read'], 'string'),
+        property(12, 'audio-content', ['read'], 'string'),
+        property(13, 'client-identifier', ['read'], 'string'),
+        property(14, 'client-identifier-mode', ['read', 'notify'], 'bool'),
+        property(15, 'device-id-state', ['read', 'notify']),
       ],
+      events: [event(1, 'client-seen', [13]), event(2, 'ssid-observed', [10])],
     }),
     service(11, 'virtual-remote', {
       events: [event(1, 'gesture-detected', [])],
@@ -728,6 +735,10 @@ test('planner excludes diagnostic/configuration noise and restricted router iden
     'care-identity-id',
     'key-call-userid',
     'dhcp-server-mac-adress',
+    'wifi-ssid',
+    'credential',
+    'audio-content',
+    'client-identifier',
   ]) {
     const signal = signalByCapability(plan, capability);
     assert.equal(signal.sensitivity, 'restricted');
@@ -740,6 +751,8 @@ test('planner excludes diagnostic/configuration noise and restricted router iden
     'if-set-password',
     'credential-state',
     'recording-mode',
+    'client-identifier-mode',
+    'device-id-state',
   ]) {
     assert.notEqual(signalByCapability(plan, capability).sensitivity, 'restricted');
   }
@@ -753,7 +766,13 @@ test('planner excludes diagnostic/configuration noise and restricted router iden
     devices: [input(device('policy-regression'), policySpec)],
     includeSensitive: true,
   });
-  for (const capability of ['device-connect', 'device-disconnect', 'device-long-time-inactive']) {
+  for (const capability of [
+    'device-connect',
+    'device-disconnect',
+    'device-long-time-inactive',
+    'client-seen',
+    'ssid-observed',
+  ]) {
     const signal = signalByCapability(sensitiveOptIn, capability, 'event');
     assert.equal(signal.sensitivity, 'restricted');
     assert.equal(signal.included, false);

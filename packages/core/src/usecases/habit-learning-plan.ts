@@ -378,7 +378,7 @@ function isRestrictedPrivacyPart(part: string, valueFormat?: string): boolean {
     return true;
   }
   if (
-    /(?:^|[-_.\s])(?:account|client|credential|device|face|identity|key|member|person|user)[-_.\s]?(?:id|ids)$/.test(
+    /(?:^|[-_.\s])(?:account|client|credential|device|face|identity|key|member|person|user)[-_.\s]?(?:id|ids|identifier|identifiers)$/.test(
       part,
     )
   ) {

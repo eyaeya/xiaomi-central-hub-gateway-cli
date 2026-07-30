@@ -159,6 +159,12 @@ export {
   habitLearningSignalId,
   planHabitLearning,
 } from './habit-learning-plan.js';
+export * from './habit-learning-compile.js';
+export * from './habit-learning-capture.js';
+export * from './habit-learning-analysis.js';
+export * from './habit-learning-episodes.js';
+export * from './habit-learning-profile.js';
+export * from './habit-learning-study.js';
 export {
   classifyHabitLearningPreloadBaselines,
   freezeHabitLearningSourceMap,
