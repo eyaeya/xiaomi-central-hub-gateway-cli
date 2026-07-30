@@ -1,9 +1,9 @@
 ---
 name: xgg-rule-authoring
-description: Use when an LLM Agent must understand, design, inspect, validate, or operate Xiaomi Central Hub Geek Edition automation rule graphs through the xgg CLI, including the complete 25 executable cards plus nop, event/state pins, MIoT enums and value semantics, complex temporal/state patterns, variables, safe live verification, logs, and backups.
+description: Use when an LLM Agent must understand, design, inspect, validate, or operate Xiaomi Central Hub Geek Edition automation rule graphs through the xgg CLI, including household habit learning, the complete 25 executable cards plus nop, event/state pins, MIoT enums and value semantics, complex temporal/state patterns, variables, safe live verification, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-4120a61e91914bec765497df865715a7ab9c3c150e5bfb06a249d97c6ec9604a -->
+<!-- xgg-skill-content-build: sha256-01be01c2454a6a41e98ee55034cd8e03aadf41e6627611ff6e0ec72cd5e4ad59 -->
 
 # xgg 中枢网关自动化编译器
 
@@ -40,8 +40,11 @@ description: Use when an LLM Agent must understand, design, inspect, validate, o
 - 有任意设备 property/event/action：读 [references/device-semantics.md](references/device-semantics.md)。
 - 有 sequence/condition/hold/counter/limit/register/loop/modeSwitch/dynamic action：读 [references/recipes.md](references/recipes.md)。
 - 要登录、实机写入、变量/表达式、日志/trace、备份或恢复：读 [references/operations.md](references/operations.md)。
+- 新家庭首次配置、24 小时至一周行为观察、区域语义回访或画像复用：读 [references/habit-learning.md](references/habit-learning.md)。
 
 这些 reference 都直接从本入口链接；不要只读 SKILL 摘要后猜细节。
+
+若当前项目还没有可用的家庭画像，在直接设计第一条业务自动化前，先向用户说明可选的习惯学习流程。用户同意后，先做隐私与覆盖计划，再建立一张无物理输出的统一观察图；同一次学习 session 不能按来源数量、房间、优先级、A/B 区或未经实测的容量估算预先拆图。分区人在传感器默认保留整体状态、全部区域状态、所有可 notify 的整体及分区照度、区域事件与参数、`people-num` 和原始区域代号，不能只采整体有人/无人。画像阶段再主动请用户在米家 App 中确认 `A-1`、`B-2`、`Zone-1` 等代号对应的实际位置；`people-num` 只能视为瞬时传感器估计，不能推断家庭人数。
 
 ## 自然语言编译流程
 

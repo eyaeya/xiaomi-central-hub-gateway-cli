@@ -140,6 +140,65 @@ export type {
   RuleLogEntry,
 } from './rule-logs.js';
 export {
+  RULE_LOG_WINDOW_CHECKPOINT_VERSION,
+  RULE_LOG_WINDOW_COMPLETENESS_REASONS,
+  advanceRuleLogWindow,
+  fingerprintRuleLogLine,
+} from './rule-log-window.js';
+export type {
+  AdvanceRuleLogWindowInput,
+  AdvanceRuleLogWindowResult,
+  RuleLogWindowCheckpoint,
+  RuleLogWindowCompletenessReason,
+  RuleLogWindowCounts,
+  RuleLogWindowOverlap,
+  RuleLogWindowScanCounts,
+  RuleLogWindowScanStopReason,
+} from './rule-log-window.js';
+export {
+  habitLearningSignalId,
+  planHabitLearning,
+} from './habit-learning-plan.js';
+export {
+  classifyHabitLearningPreloadBaselines,
+  freezeHabitLearningSourceMap,
+  intervalizeHabitLearningPersistentState,
+  normalizeHabitLearningObservations,
+  projectHabitLearningStateAsOf,
+} from './habit-learning-observations.js';
+export type {
+  ClassifyHabitLearningPreloadBaselinesInput,
+  HabitLearningBaselineProvenance,
+  HabitLearningBaselineStatus,
+  HabitLearningBaselineWindow,
+  HabitLearningEnableBoundary,
+  HabitLearningInfoSourceDefinition,
+  HabitLearningObservation,
+  HabitLearningObservationGap,
+  HabitLearningObservationSourceDefinition,
+  HabitLearningObservationValue,
+  HabitLearningPersistentStateEvidence,
+  HabitLearningPersistentStateInterval,
+  HabitLearningPersistentStateObservation,
+  HabitLearningPersistentStateRange,
+  HabitLearningPersistentStateValue,
+  HabitLearningPreloadBaselineResult,
+  HabitLearningPreloadBaselineSource,
+  HabitLearningSourceMap,
+  HabitLearningStateAsOf,
+  HabitLearningZeroArgumentEventSourceDefinition,
+  IntervalizeHabitLearningPersistentStateInput,
+  IntervalizeHabitLearningPersistentStateResult,
+  ProjectHabitLearningStateAsOfInput,
+} from './habit-learning-observations.js';
+export { HabitLearningStudyStore } from './habit-learning-store.js';
+export type {
+  HabitLearningJournalAppendResult,
+  HabitLearningStudyStoreOptions,
+  HabitLearningStudyStorePaths,
+  HabitLearningStudyTransaction,
+} from './habit-learning-store.js';
+export {
   diffVariableSnapshots,
   snapshotAllVariables,
 } from './variable-watch.js';

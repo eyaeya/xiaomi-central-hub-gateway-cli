@@ -4,6 +4,7 @@ import { apiCommand } from './commands/api.js';
 import { backupCommand } from './commands/backup.js';
 import { deviceCommand } from './commands/device.js';
 import { dumpCommand } from './commands/dump.js';
+import { learnCommand } from './commands/learn.js';
 import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { ruleCommand } from './commands/rule/index.js';
@@ -23,6 +24,7 @@ export function buildProgram(): Command {
   program.addCommand(backupCommand());
   program.addCommand(deviceCommand());
   program.addCommand(dumpCommand());
+  program.addCommand(learnCommand());
   program.addCommand(loginCommand());
   program.addCommand(logoutCommand());
   program.addCommand(ruleCommand());
@@ -42,6 +44,7 @@ export function buildProgram(): Command {
 Examples:
   $ xgg login --code <CODE>                        Bind agent to gateway
   $ xgg dump > inventory.json                      Export best-effort indexes
+  $ xgg learn plan --include-context --pretty      Plan a read-only household study
   $ xgg rule list --pretty                         Table view
   $ xgg rule new --name "Evening automation"       Create an empty rule
   $ xgg backup list --from fds --pretty            List gateway cloud backups

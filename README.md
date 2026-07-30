@@ -53,7 +53,31 @@ GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaey
 
 ## 使用场景
 
-`xgg` 把网关的设备读取、规则图编辑、变量管理和运行日志都暴露成稳定、可解析的命令，因此特别适合交给 LLM Agent 按步骤操作。它让 Codex、Claude 等 Agent 不只是「帮你敲命令」，而是从需求出发，自己查设备、连规则图、校验、启用、读日志验证。下面三类用法覆盖从无到有、从坏到好、从有到更好的完整生命周期；不同能力的验证边界见后文「验证证据分级」。
+`xgg` 把网关的设备读取、规则图编辑、变量管理和运行日志都暴露成稳定、可解析的命令，因此特别适合交给 LLM Agent 按步骤操作。它让 Codex、Claude 等 Agent 不只是「帮你敲命令」，而是从需求出发，自己查设备、连规则图、校验、启用、读日志验证。下面四类用法覆盖先观察再设计、从无到有、从坏到好、从有到更好的完整生命周期；不同能力的验证边界见后文「验证证据分级」。
+
+### 新家庭先学习习惯，再设计第一条自动化（推荐）
+
+当项目目录里还没有有效的家庭画像时，正在执行本 README 的 Agent 应先向用户提供一次**可选**的习惯学习流程；用户不接受时继续正常设计，不得把观察作为使用 CLI 的强制前置条件。完整契约见 [`references/habit-learning.md`](skills/xgg-rule-authoring/references/habit-learning.md)。
+
+用户同意后，Agent 先确认观察时长（建议从 24 小时开始，可延长至一周）、敏感设备排除范围和私有落盘目录，再读取当前设备清单与每台候选设备的 live spec。一次学习 session 默认只创建**一张统一观察图**：不能按来源数量、房间、优先级、A/B 区或 16 路估算预先拆成多张规则；图中禁止设备动作和属性写入，只采用户同意且具备当前 push/notify 条件的信号。
+
+Agent 应先运行只读规划器：
+
+```bash
+xgg learn plan --include-context --pretty
+```
+
+它会实时读取设备清单和 spec，输出逐设备、逐信号的纳入/排除理由，以及唯一 `graph` 的候选 source。首次结果可用来向用户展示房间 ID 和设备 ID；取得排除选择后，使用 `--exclude-room <room-id...>`、`--exclude-device <did...>` 重新规划。该命令只做覆盖规划，不会创建规则，也不是持久采集器；当前长周期采集仍必须按 Skill 契约另行持续落盘。
+
+单图只说明采集源位于同一规则，不等于“全屋完整”。Agent 必须分别报告**设备覆盖、房间覆盖和信号覆盖**的分母、纳入、排除、实际出现、baseline-only、ambiguous 与 missing；离线设备、无 spec/push、用户排除的空间或从未出现的预期来源都要单列，不能用一个总百分比掩盖缺口。
+
+分区人在传感器不能只采整体有人/无人。统一图应保留整体 occupancy、全部区域 occupancy、所有具备 notify 的整体及分区照度、区域进入/离开事件及其可解析参数，并在存在时纳入 `people-num`。`A-1`、`B-2`、`Zone-1` 等原始区域代号先原样保存；`people-num` 只是传感器的瞬时估计，二者都不能被 Agent 擅自解释为实际位置、家庭人数或人员身份。
+
+启用后的 baseline 不能固定取前 5 秒，也不能把首次拉取全部算作 baseline。Agent 要记录 enable 边界和预期 preload 来源，使用有记录的 quiet period 与 hard cap 等待基线，并把未到达或无法区分的来源标成 missing / ambiguous。长期证据的主路径是增量 logs → 私有 `journal.ndjson`；`rule trace` 只用于针对性诊断，不能代替长期 journal。
+
+分析时按 source transaction 把同一次来源触发产生的 source、连线、聚合器和 counter 日志折叠成一次 observation；支持链和 counter 只证明图执行，不额外计作生活行为。状态区间不得跨越日志 gap、规则停用或语义图漂移；gap 后第一条状态只能重新锚定。已确认的区域语义以带 `asOf` 的 append-only correction 保存，再在连续证据段内用可配置的抖动容忍形成候选拓扑路径。
+
+`people-num` 与多房间同时 occupancy 都禁止用于推断家庭人数。每次 session 还要分开保存 `semanticDigest` 与 `layoutDigest`：前者用于判断采集语义是否漂移，后者只审计画布位置、尺寸等展示变化。上述增量日志、checkpoint、gap、digest 和修正均持续写入 `<agent-project>/.xgg-private/habit-learning/<session-id>/`，并证明目录未进入 Git；做不到时必须明确标为 best-effort。用户回来后固定按“核对语义摘要与启用状态 → 最终拉取并落盘 → 停用并 readback → 请用户在米家 App 确认区域代号 → 追加修正 → 生成画像”的顺序收尾，再以该画像作为后续自动化的证据。
 
 ### 用 LLM Agent 设计并创建自动化（主用法）
 
@@ -557,7 +581,7 @@ npm publish release-artifacts/eyaeya-xgg-cli-*.tgz --access public
 
 ## Agent 权威参考
 
-供 AI Agent 操作本 CLI 的完整权威指南见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。首次设计/改写规则必须按入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或实机写入时再读取对应的 `device-semantics.md`、`recipes.md`、`operations.md`。这套材料覆盖 25 种执行卡片 + `nop`、event/state 图模型、完整 flags/defaults/enums、MIoT label→wire value、复杂 reset/stop 模式和证据分层，并明确禁止使用未经当前 xgg 校验的历史、第三方节点 JSON。
+供 AI Agent 操作本 CLI 的完整权威指南见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。首次设计/改写规则必须按入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或实机写入时再读取对应的 `device-semantics.md`、`recipes.md`、`operations.md`；新家庭观察、区域语义回访和画像复用则读取 [`references/habit-learning.md`](skills/xgg-rule-authoring/references/habit-learning.md)。这套材料覆盖 25 种执行卡片 + `nop`、event/state 图模型、完整 flags/defaults/enums、MIoT label→wire value、复杂 reset/stop 模式和证据分层，并明确禁止使用未经当前 xgg 校验的历史、第三方节点 JSON。
 
 ## License
 
