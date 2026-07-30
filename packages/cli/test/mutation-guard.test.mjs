@@ -72,6 +72,8 @@ const expectedTypedMutationSurfaces = [
   'variable set-value',
 ];
 
+const privateSnapshotDefaultMutationSurfaces = ['learn finish', 'learn start'];
+
 const typedMutationCases = [
   {
     command: 'backup cloud-export',
@@ -777,6 +779,24 @@ test('affected writes observe a complete rollback artifact before their write fr
 
 test('source-derived typed mutation inventory declares and invokes the mutation funnel', async () => {
   const inventory = await deriveTypedMutationInventory();
+  for (const path of privateSnapshotDefaultMutationSurfaces) {
+    const calls = inventory.get(path);
+    assert.ok(calls, `${path} is missing from the typed mutation inventory`);
+    assert.equal(
+      calls.has('assertAgentModeOrSnapshotsDir'),
+      true,
+      `${path} reaches a typed write without the Agent mutation guard`,
+    );
+    const command = findCommand(buildProgram(), path.split(' '));
+    const longFlags = new Set(command.options.map((option) => option.long));
+    assert.equal(longFlags.has('--snapshots-dir'), true, `${path} lacks --snapshots-dir`);
+    assert.equal(
+      longFlags.has('--no-snapshot'),
+      false,
+      `${path} must not allow disabling its private rollback snapshot`,
+    );
+    inventory.delete(path);
+  }
   assert.deepEqual([...inventory.keys()].sort(), expectedTypedMutationSurfaces);
 
   const program = buildProgram();

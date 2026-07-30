@@ -6,7 +6,7 @@
 
 准确口径是“覆盖当前网关可发现、声明具备 push/notify 条件且经用户同意的行为与上下文信号”，不是捕获人的全部生活。能力声明只证明候选资格，不证明运行期一定可靠上报；MIoT 没有暴露的行为、无 push 事件、离线设备、摄像头/音频语义和网关已淘汰的日志都不可恢复。
 
-Agent 负责覆盖规划、生命周期、证据解释和向用户求证。当前 CLI 的 `xgg learn plan` 只读扫描 live inventory/spec，并输出带 reason code 的单图覆盖计划；先运行一次查看房间/设备 ID，取得用户选择后再用 `--exclude-room <room-id...>`、`--exclude-device <did...>` 重新规划。`rule logs` / `rule trace` 仍只提供有界读取，不应被描述成自动、可恢复的长期采集；只有另行运行的持久采集过程完成 journal、checkpoint、gap 和最终 flush 后，才能声明对应落盘证据。任何日志都不能单独证明家庭常住人数、人员身份，或某次状态变化一定由人手动触发。
+Agent 负责覆盖规划、生命周期、证据解释和向用户求证。CLI 的 `xgg learn plan/start/capture/status/clarify/finish/profile` 共同覆盖单图部署、可恢复采集、回访澄清和画像复用；普通 `rule logs` / `rule trace` 仍只提供有界诊断读取，不能代替 durable journal。只有 `capture` 成功提交 journal/checkpoint/gap，且 `finish` 在停用前完成最终 flush，才能声明相应的长周期落盘证据。任何日志都不能单独证明家庭常住人数、人员身份，或某次状态变化一定由人手动触发。
 
 ## 首次对话先确认
 
@@ -19,6 +19,59 @@ Agent 负责覆盖规划、生命周期、证据解释和向用户求证。当�
 5. 用户是否接受规则在采集期保持启用，并在回来后先最终拉取、再停用。
 
 用户授权“真实设备可操作”也不等于观察图可以控制设备。观察规则始终禁止 `deviceOutput`、action、property write、`loop` 和 `--allow-no-push`。
+
+## CLI 生命周期与恢复
+
+标准顺序是：
+
+```text
+learn plan
+→ 人工/Agent 审阅覆盖与隐私
+→ learn start（只创建 disabled 图并输出 planId）
+→ 明确授权后 learn start --enable --plan-id <reviewed-plan-id>
+→ learn capture
+→ learn status / capture --follow
+→ learn finish
+→ 若有问题则 learn clarify
+→ 再次 learn finish
+→ learn profile
+```
+
+对应的命令入口按同一顺序检查：
+
+```bash
+xgg learn plan --help
+xgg learn start --help
+xgg learn capture --help
+xgg learn status --help
+xgg learn finish --help
+xgg learn clarify --help
+xgg learn profile --help
+```
+
+第一次使用某个子命令前运行 `xgg learn <subcommand> --help`，不要凭旧会话或历史版本猜 flags。各命令的稳定边界如下：
+
+- `plan` 只读 inventory/spec，返回纳入、排除和唯一单图计划；它不创建 study、变量或规则。
+- `start` 消费已审阅计划，建立权限受限的私有 study、写前备份、rule-local variables 和一张 disabled 观察规则；计划或 live capability 漂移时 fail closed。启用需要明确授权，并须先通过 spec-aware validation、strict lint 和 readback。
+- `capture` 一次调用至少完成一个 crash-consistent 增量批次：只把本 study 规则的内容写入 journal，先 append+fsync journal/gaps，再原子更新 checkpoint；`--follow` 是覆盖 24 小时至一周的持续单写者模式。重复启动、进程崩溃、网络/auth 中断或无磁盘空间都不能静默跳过日志或把 gap 伪装成连续。
+- `status` 始终只读，并报告 phase、最后成功 capture、完整性、规则预期状态和待确认问题；每个新 Agent session、进程异常或用户回来时都先运行它。默认同时核对 live graph；认证暂不可用或只需离线恢复时加 `--local-only`，任何模式都不修改网关。
+- `finish` 可恢复且顺序固定：规则仍启用时完成最终 capture、fsync journal/gaps、原子提交 checkpoint，然后 disable 并 readback `enable=false`。最终抓取或停用确认失败时保持 `finishing`/degraded 并非零退出；不能越过失败生成“完成”画像。
+- `clarify` 把一条带 `recordedAt`、有效时间 `asOf` 和来源的用户修正追加到 `corrections.ndjson`，不覆写早期修正或 raw evidence。区域问题必须让用户查米家 App，不能由 Agent 从活动轨迹猜。
+- `profile` 只返回不含原始设备标识的画像与 freshness 判定。默认会读取当前 live graph、inventory/spec 做漂移核对；`--local-only` 只用于离线检查，必定返回不可直接复用。只有 `reusableForRuleAuthoring=true` 的 `current` 画像可作为后续规则证据；`stale`、`expired`、`invalidated` 或 `insufficient` 一律回退为向用户提问或发起新的聚焦观察。
+
+生命周期 checkpoint 使用 `preparing → ready-disabled → observing / observing-degraded → finishing → awaiting-clarification → complete`。不要根据墙钟或对话记忆自行推进 phase，以 `status` 读取的 durable state 为准。
+
+换一个 Agent session 或隔天恢复时，从私有 `handoff.md` 取得准确的 study 目录，先运行：
+
+```bash
+xgg learn status --study-dir <private-study-dir> --local-only
+```
+
+- `ready-disabled`：再次核对授权，并把 disabled start 输出中已审阅的 `planId` 原样带入 `xgg learn start --study-dir <private-study-dir> --enable --plan-id <reviewed-plan-id>`；不能自行调用通用 `rule enable`。
+- `observing` / `observing-degraded`：检查 gaps、last healthy capture 和计划终点；需要续采时运行 `xgg learn capture --study-dir <private-study-dir> --follow`。
+- `finishing`：重新运行 `xgg learn finish --study-dir <private-study-dir>`，由 checkpoint 从安全边界续做，不能手工先 disable。
+- `awaiting-clarification`：逐设备向用户展示未解析的原始区域代号，按 `xgg learn clarify --help` 的当前参数契约逐条追加，再用同一 `--study-dir` 重跑 `finish`。
+- `complete`：用 `xgg learn profile --study-dir <private-study-dir>` 读取 freshness；不要因为 phase complete 就跳过 profile 的可复用性判定。
 
 ## 覆盖计划
 
@@ -46,7 +99,7 @@ included-p0-behavior
 included-p1-context
 ```
 
-默认纳入：门锁/门窗状态、按钮事件、人体/区域存在、灯/插座/窗帘开关或手动事件、家电开始/结束/运行模式。默认排除：battery、RSSI、fault、配置、累计量、连续功率、路由 client-id、摄像头/音频/通话内容。
+默认纳入：门窗状态、按钮事件、人体/区域存在、灯/插座/窗帘开关或手动事件、家电开始/结束/运行模式。门锁状态只有用户明确同意后才可纳入；含人员、账号或开锁身份的事件/参数继续排除。默认排除：battery、RSSI、fault、配置、累计量、连续功率、路由 client-id、摄像头/音频/通话内容。
 
 ### 覆盖必须分三层报告
 
@@ -96,7 +149,7 @@ baseline、missing、ambiguous 都不能计作用户行为。报告必须保存 
 
 零参数 event 和需要显式传播证据的 event 可进入一个 `signalOr`，再驱动 rule-local `varSetNumber` 计数器。property capture 本身有变量副作用，允许 `outputs.output=[]`。全图变量只用 `R<rule-id>`，不污染 global。
 
-构建顺序固定：
+常规路径由 `learn start` 编译和写入，不让 Agent 手工逐节点拼出另一套观察图。`start` 内部顺序固定：
 
 ```text
 official local backup + dry-run
@@ -106,11 +159,12 @@ official local backup + dry-run
 → validate --spec-aware
 → lint --strict
 → view/readback
-→ enable only with explicit authorization
-→ baseline/log/readback smoke
+→ 保持 ready-disabled
+→ 获明确授权后由 start --enable --plan-id <reviewed-plan-id> 重新规划核对并启用
+→ baseline/journal/readback smoke
 ```
 
-要求 errors=0、warnings 逐条审计；通常本图也应 warnings=0。至少证明一个 property raw value、一个 event source/link、规则 enable 状态和无设备输出。采集期冻结 node id、spec mapping 和 graph；不要 layout、编辑或重复 enable。
+`start` 必须把 `--baseline-quiet-ms`、`--baseline-hard-cap-ms` 与 `--debounce-ms` 的实际值写入 start intent/coverage；Agent 应根据目标网关的实测延迟显式选择，未覆盖时也要把 CLI 默认值作为本 session 的冻结参数报告。要求 errors=0、warnings 逐条审计；通常本图也应 warnings=0。至少证明一个 property raw value、一个 event source/link、规则 enable 状态和无设备输出。采集期冻结 node id、spec mapping 和 graph；不要 layout、编辑或重复 enable。若 `start` 中断，先用 `learn status` 读取已落盘阶段和已创建资源，不能把失败当成自动回滚成功。
 
 图摘要必须拆成两个用途不同的 digest：
 
@@ -130,29 +184,28 @@ semantic digest 改变会终止当前连续证据段，并要求记录 gap、重
   plan.json
   coverage.json
   inventory.private.json
+  device-map.private.json
   specs/
   graphs/rule.json
   state.json
   journal.ndjson
   gaps.ndjson
-  completeness.json
   profile.json
   profile.md
   corrections.ndjson
-  corrections.md
 ```
 
 目录必须 `0700`，文件必须 `0600`。若在 Git 项目内，先写本地 `.git/info/exclude` 或使用项目已有私有 ignore，再用 `git check-ignore` 证明；raw DID、设备名、活动、登录码绝不能进入 Git、Issue、PR 或公开 fixture。
 
-`inventory.private.json` 保存 DID/真实名称/node mapping；公开或可共享的 profile 使用稳定匿名 key。登录码是一次性也不能写入会话文件。
+`inventory.private.json` 保存冻结 inventory；`device-map.private.json` 保存真实 DID、名称、型号、房间与稳定匿名 `deviceKey` 的本地对应关系，必须在生成澄清问题前写好，供 Agent 在本机向用户指明要查哪台设备。公开或可共享的 profile 只能使用匿名 key。登录码是一次性也不能写入会话文件。
 
-`session.json` 至少保存 session/rule/graph ID、开始与计划结束时间、`semanticDigest`、`layoutDigest`、预期 enable 状态、下一步操作和待确认区域清单。`state.json` 是 capture-state/checkpoint：保存有界的日志指纹、累计计数、最后成功轮询和完整性状态；`journal.ndjson` 只追加本次学习规则的记录；`gaps.ndjson` 追加重叠丢失、分页上限、网络中断、语义图漂移或意外停用等缺口。`corrections.ndjson` 是用户确认与修正的 append-only 权威记录，`corrections.md` 只是可重新生成的人读视图。`handoff.md` 用不依赖旧对话的文字说明当前状态、恢复步骤、证据边界和回访问题，让新的 Agent session 可以续接。
+`session.json` 至少保存 study/session/rule/graph ID、durable phase、开始与计划结束时间、`semanticDigest`、`layoutDigest`、预期 enable 状态和待确认区域清单。`state.json` 是 capture-state/checkpoint：保存有界的日志指纹、累计计数、最后成功轮询和完整性状态；`journal.ndjson` 只追加本次学习规则的记录；`gaps.ndjson` 追加重叠丢失、分页上限、网络中断、语义图漂移或意外停用等缺口。`corrections.ndjson` 是用户确认与修正的 append-only 权威记录。`handoff.md` 用不依赖旧对话的文字说明当前 phase、study ID、准确 `--study-dir` 恢复命令、证据边界和回访问题，让新的 Agent session 可以续接；登录码和其他认证材料不得写入其中。
 
 ## 采集期与完整性
 
-底层日志是全网关分页流；当前网关日志接口未公开保证 retention、块大小或容量。普通 `rule logs --follow` 只有进程内去重和 stdout，不是可恢复的一周采集器。若没有另外运行并验证过的持久采集过程，就明确把试验标为 best-effort，并建议先做 24 小时，不能直接承诺一周完整。
+底层日志是全网关分页流；当前网关日志接口未公开保证 retention、块大小或容量。普通 `rule logs --follow` 只有进程内去重和 stdout，不是可恢复的一周采集器。正式 24 小时至一周观察必须运行 `xgg learn capture --study-dir <private-study-dir> --follow`，并通过 `learn status` 验证 supervisor owner/heartbeat、last healthy capture、checkpoint 和 gaps；只启用规则、只运行一次 capture 或让普通日志 stdout 挂着都不能称为 durable 长周期采集。
 
-长期证据的主路径固定为：增量读取 logs → 原始顺序写入 `journal.ndjson` → 原子更新 checkpoint → 从 journal 派生 observations。`rule trace` 是基于当前图和有界日志的诊断投影，只用于调查特定 source、分支、链路或计数异常；不能替代 journal、不能作为长期计数主来源，也不能覆盖 graph drift 前的原始证据。
+长期证据的主路径固定为：增量读取 logs → 筛选本 study 规则 → 原始顺序 append+fsync `journal.ndjson` → append+fsync gaps → 原子更新 checkpoint → 从 journal 派生 observations。写 journal 成功但 checkpoint 更新失败时，恢复必须通过稳定 batch ID 去重并只补交 checkpoint；写失败则保留上次确认的 checkpoint 并报告 degraded。`rule trace` 是基于当前图和有界日志的诊断投影，只用于调查特定 source、分支、链路或计数异常；不能替代 journal、不能作为长期计数主来源，也不能覆盖 graph drift 前的原始证据。
 
 ### 先折叠 source transaction，再计行为
 
@@ -165,6 +218,8 @@ semantic digest 改变会终止当前连续证据段，并要求记录 gap、重
 
 一个 source transaction 最多贡献一次该来源的行为 observation。counter 值可以用于诊断采集链是否漏跑，但不能当成家庭行为次数的独立第二票。
 
+学习开始时把当前有效 IANA 时区冻结进 coverage/start intent；`finish`、跨日 routine 和 point-event 日桶必须始终复用该值，不能随下一次 Agent 所在主机变化。零参数按钮等一次性事件按 `source + local date` 保存日桶、首末网关时间、准确计数和 raw evidence refs；画像可用每日首个直接事件形成候选时间窗，但不能把整个观察期压成一个 `event-count` 后再声称掌握跨日规律。
+
 ### 状态区间必须 gap-aware
 
 状态持续时间只在连续证据段内计算。日志 overlap 丢失、分页上限、网络中断、解析缺口、规则 disable/re-enable、网关重启或 `semanticDigest` 改变都会切断连续段：
@@ -176,12 +231,12 @@ semantic digest 改变会终止当前连续证据段，并要求记录 gap、重
 
 用户回来时，顺序不可反：
 
-1. 读取 `session.json`，分别核对 live `semanticDigest`、`layoutDigest`、规则 ID 和 enable 状态；语义漂移或意外停用先写入 gaps，不能覆盖原证据。
-2. 在规则仍启用时完成最后一次日志拉取、journal fsync、checkpoint 原子更新和 completeness 落盘；需要 trace 时从会话 start time 扫描，并递增 `--max-blocks` 直到 stop reason 不再是 `max-blocks`。
-3. 然后 disable，readback `enable=false`。
-4. 从 observation 生成按设备分组的未映射区域代号问题，主动请用户打开米家 App 确认实际位置、当前地图和未使用区域；此时不能先生成带猜测的正式画像。
-5. 把用户回答以带 `asOf` 的新记录追加到 `corrections.ndjson`，保留旧修正与 raw evidence 不变，再生成 `corrections.md` 视图。
-6. 结合 observations、gaps 和 corrections 生成 `profile.json/profile.md`；成功落盘后，再单独询问是否 delete rule/raw data。
+1. 先运行 `xgg learn status --study-dir <private-study-dir>`；分别核对 durable phase、live `semanticDigest`、`layoutDigest`、规则 ID 和 enable 状态。语义漂移或意外停用先写入 gaps，不能覆盖原证据。`capture` / `capture --follow` 一旦确认 `SEMANTIC_GRAPH_DRIFT`，必须在 gap 落盘后立即用受快照与 mutation lease 保护的 fail-safe disable 停用并 readback，再转入可恢复的 `finishing`；不能让已失去“无物理输出”证明的未知图继续无人值守运行。
+2. 运行 `xgg learn finish --study-dir <private-study-dir>`。规则仍启用且语义未漂移时，它必须完成最后一次日志拉取、journal/gap fsync、checkpoint 原子更新和 completeness 落盘；需要 trace 时再从会话 start time 有界扫描。若规则已被意外停用或语义图已经漂移，必须先持久化 `RULE_UNEXPECTEDLY_DISABLED` / `SEMANTIC_GRAPH_DRIFT` gap，再按有缺口的证据收尾，绝不能重新启用或混入漂移后的日志。
+3. 正常路径只有 final capture 已提交后才能 disable，并必须 readback `enable=false`。最终抓取的网络/持久化失败保留可恢复 finish checkpoint并返回非零；已持久化的意外停用/语义漂移 gap 则允许生成明确标为 gapped 且非 sufficient 的画像，不能声称连续完整。
+4. `finish` 从 observation 生成按设备分组的未映射区域代号问题，并进入 `awaiting-clarification`；Agent 主动请用户打开米家 App 确认实际位置、当前地图和未使用区域，此时不能先生成带猜测的正式画像。
+5. 按 `xgg learn clarify --help` 的当前参数契约，把每个用户回答以带 `asOf` 的新记录追加到 `corrections.ndjson`，保留旧修正与 raw evidence 不变，再重新运行 `finish`。
+6. `finish` 结合 observations、gaps 和 corrections 原子生成 `profile.json/profile.md`；随后用 `xgg learn profile --study-dir <private-study-dir>` 读取 freshness 和 `reusableForRuleAuthoring`。成功落盘并通过读取后，再单独询问是否 delete rule/raw data。
 
 空日志不证明行为没发生。`empty-block` 只说明本次扫描触到当前接口末端；`gateway-retention-unknown` 始终保留。图漂移、未解析行、max-block、网络中断和意外停用都必须进入 gaps/completeness 元数据，不能混入上面的 coverage reason code。
 
@@ -211,7 +266,7 @@ semantic digest 改变会终止当前连续证据段，并要求记录 gap、重
 
 - 重复同值、短暂 off/on、相邻区域同时 occupancy、进入/离开事件延迟都先按有记录的 debounce/overlap 容忍参数归并；
 - 同时活跃区域表示一个区域集合或不确定边，不强行排成唯一严格序列；
-- 每条候选 edge/path 保存支持 transaction、观察次数、时间窗、替代解释和 confidence；
+- 每条候选 edge/path 使用用户确认后的语义描述两端，同时保留 raw label、支持 transaction、观察次数、时间窗、替代解释、confidence 及实际采用的 correction IDs；
 - gap、未确认区域或仅有一次抖动证据会中断/降低路径置信度，不得被平滑掉；
 - 拓扑描述的是传感器区域之间的可观察转移，不代表人员身份、人数或建筑学上的唯一通路。
 
@@ -219,10 +274,11 @@ semantic digest 改变会终止当前连续证据段，并要求记录 gap、重
 
 以后创建任何家庭自动化前：
 
-1. 查找最新未过期的 `profile.json/profile.md`；
-2. 读取 append-only `corrections.ndjson`、其 `corrections.md` 视图和 `automationConstraints`；
-3. 检查 observed range、coverage、gaps、generatedAt/expiresAt；
-4. 只有需要复核时才读取原始 journal、source transaction 和 private mapping；
-5. 新规则的阈值和时段必须引用画像证据，证据不足就询问用户或先做短期补采。
+1. 对候选 study 运行 `xgg learn profile --study-dir <private-study-dir>`，让命令核对当前 live graph 与 inventory/spec，再读取 freshness `status`、`reusableForRuleAuthoring` 和 reason codes；不要只看文件存在或 phase complete。无网关连接时可加 `--local-only` 检查，但该结果不能授权规则设计。
+2. 只有 `status=current` 且 `reusableForRuleAuthoring=true` 时，才读取 `profile.json/profile.md` 作为当前证据；`stale`、`expired`、`invalidated`、`insufficient` 或缺少画像时回退到用户确认或新建聚焦观察。
+3. 读取 append-only `corrections.ndjson` 与画像中的 `userConfirmed`、`automationConstraints`。
+4. 检查 observed range、coverage、gaps、generatedAt/expiresAt，以及当前 inventory/semantic digest 是否使画像失效。
+5. 只有需要复核时才读取原始 journal、source transaction 和 private mapping；这些私有标识不能复制进新规则说明、Issue 或 PR。
+6. 新规则的阈值和时段必须引用画像中的 observation/userConfirmed evidence；hypothesis 仍需用户确认，证据不足就询问用户或先做短期补采。
 
-画像不是永久真相。家庭成员、家具、区域配置或设备变化后应标记过期并重新观察。
+画像不是永久真相。到达 `expiresAt`、采集语义改变、关键设备 inventory 漂移，或家庭成员、家具、区域配置发生变化后，应标记 expired/invalidated 并重新观察。

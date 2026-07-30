@@ -69,6 +69,23 @@ xgg variable list --pretty
 
 6 位登录码来自米家 App 的中枢网关设备页（若中枢网关是路由器或家庭屏自带的，则在对应设备内的中枢网关功能页面获取）。登录码短时有效且通常只能用一次；认证失效或退出码 3 时，请获取新码后重新 `xgg login`。
 
+## 新家庭先学习习惯
+
+为新家庭创建第一条自动化前，Agent 应优先用一张无物理输出的观察图收集 24 小时至一周证据，而不是从设备名称猜作息。标准生命周期是 `plan → start（disabled）→ start --enable --plan-id <reviewed-plan-id> → capture → status → finish →（如需澄清：clarify → 再次 finish）→ profile`：
+
+```bash
+xgg learn plan --include-context --pretty
+xgg learn start --study-dir .xgg-private/habit-learning/home --include-context
+# 审阅上一步输出的唯一 planId，并取得用户明确授权后才可启用：
+xgg learn start --study-dir .xgg-private/habit-learning/home \
+  --enable --plan-id <reviewed-plan-id>
+xgg learn capture --study-dir .xgg-private/habit-learning/home --follow
+```
+
+后续 Agent 或新 session 必须先从私有 `handoff.md` 找回准确目录，再运行 `xgg learn status --study-dir <private-study-dir>`；观察结束时运行 `xgg learn finish --study-dir <private-study-dir>`。`finish` 会先完成最终采集并落盘，再停用规则并 readback。`capture` 或 `capture --follow` 若确认线上语义图已漂移，会先持久化 gap，再立即 fail-safe 停用并 readback 该规则，然后转入可恢复的 `finishing`。若返回 `A-1`、`Zone-1` 等不透明区域问题，按 `xgg learn clarify --help` 让用户查阅米家 App 后追加确认，再重新 `finish`；最后用 `xgg learn profile --study-dir <private-study-dir>` 检查画像的完整性和 freshness。
+
+规划器默认保留一张统一观察图，并覆盖已知分区人在传感器的整体状态、全部区域状态、可通知照度、区域事件参数和可用的 `people-num`。`people-num`、多房间同时活动或事件次数都不得用于推断家庭人数或人员身份。原始 DID、设备名、日志、私有映射和登录码只能保存在已排除 Git 的 study 目录；CLI 会把目录设为 `0700`、数据文件设为 `0600`。完整的恢复、覆盖、缺口、区域澄清和画像复用契约位于随包 Skill 的 `skills/xgg-rule-authoring/references/habit-learning.md`，执行上述流程前必须读取。
+
 ## AI Agent
 
 Agent 使用时建议设置快照目录：

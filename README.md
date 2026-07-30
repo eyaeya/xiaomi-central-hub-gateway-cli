@@ -67,7 +67,36 @@ Agent 应先运行只读规划器：
 xgg learn plan --include-context --pretty
 ```
 
-它会实时读取设备清单和 spec，输出逐设备、逐信号的纳入/排除理由，以及唯一 `graph` 的候选 source。首次结果可用来向用户展示房间 ID 和设备 ID；取得排除选择后，使用 `--exclude-room <room-id...>`、`--exclude-device <did...>` 重新规划。该命令只做覆盖规划，不会创建规则，也不是持久采集器；当前长周期采集仍必须按 Skill 契约另行持续落盘。
+它会实时读取设备清单和 spec，输出逐设备、逐信号的纳入/排除理由，以及唯一 `graph` 的候选 source。首次结果可用来向用户展示房间 ID 和设备 ID；取得排除选择后，使用 `--exclude-room <room-id...>`、`--exclude-device <did...>` 重新规划。`plan` 始终只读；审阅计划后才进入 `start（disabled）→ start --enable --plan-id <reviewed-plan-id> → capture → status → finish →（如需澄清：clarify → 再次 finish）→ profile` 生命周期。
+
+创建阶段先把图保持 disabled，并显式冻结本次分析参数；输出中的 `planId` 必须由 Agent 审阅并原样带入启用命令，启用前 CLI 会重新读取 inventory/spec 并拒绝已经漂移的计划：
+
+```bash
+xgg learn start --study-dir .xgg-private/habit-learning/home \
+  --include-context \
+  --baseline-quiet-ms 2000 \
+  --baseline-hard-cap-ms 60000 \
+  --debounce-ms 5000
+xgg learn start --study-dir .xgg-private/habit-learning/home \
+  --enable --plan-id <reviewed-plan-id>
+```
+
+正在执行本 README 的 Agent 不应凭记忆拼接生命周期参数；先读取各子命令 `--help`，并把 `start` 使用的 `--study-dir` 私有目录写进项目 handoff；study ID 以该目录中的 lifecycle state 为准。各命令的稳定职责如下：
+
+- `xgg learn start`：保存计划、覆盖、inventory/spec、分析参数和一张无物理输出的完整规则图，先创建为 disabled；只有用户明确授权、提供审阅过的 `--plan-id`，并通过在线重规划、lint 与 readback 后才能启用。
+- `xgg learn capture`：执行一次可恢复的增量抓取；需要覆盖 24 小时至一周时使用其 `--follow` 模式持续写入私有 journal、checkpoint 和 gap，不用 `rule logs --follow` 代替。若确认线上语义图已漂移，它会先持久化 gap，再立即 fail-safe 停用并 readback 该规则，然后转入可恢复的 `finishing`，不能让未知图继续无人值守运行。
+- `xgg learn status`：每个新 Agent session 或进程异常后首先运行，报告 durable phase、capture 完整性、规则预期状态和待确认问题；它本身不修改网关。
+- `xgg learn finish`：在规则仍启用时先完成并 fsync 最后一批 capture，再停用并 readback；有未解释区域时进入等待澄清状态，不冒充画像已完成。
+- `xgg learn clarify`：把用户查阅米家 App 后给出的区域语义或其他修正按生效时间追加，不覆写 journal 或旧修正；随后重新运行 `finish` 完成画像。
+- `xgg learn profile`：读取匿名画像并默认核对当前 live graph 与 inventory/spec，返回 `current`、`stale`、`expired`、`invalidated` 或 `insufficient` 等 freshness 判定；`--local-only` 仅供离线检查且不会授权规则复用。只有明确标为可复用于规则设计的画像才能作为后续阈值或时段证据。
+
+用户隔天或换一个 Agent session 回来时，从私有 `handoff.md` 取回准确的 study 目录，然后先执行本地状态检查；需要核对 live graph 时去掉 `--local-only` 并提供当前网关连接参数：
+
+```bash
+xgg learn status --study-dir <private-study-dir> --local-only
+```
+
+根据 status 的 durable phase 恢复；若前一命令输出了 `next`，优先使用其中的精确命令。需要续采时运行 `xgg learn capture --study-dir <private-study-dir> --follow`；到达观察终点后运行 `xgg learn finish --study-dir <private-study-dir>`。若返回分组区域问题，先向用户逐项询问，再按 `xgg learn clarify --help` 的当前参数契约追加回答、重新运行 `finish`，最后用 `xgg learn profile --study-dir <private-study-dir>` 读取 freshness 和可复用性。不要仅因 24 小时或计划结束时间已到就跳过最终 capture，也不要在 profile 成功落盘前删除观察规则或 raw data。
 
 单图只说明采集源位于同一规则，不等于“全屋完整”。Agent 必须分别报告**设备覆盖、房间覆盖和信号覆盖**的分母、纳入、排除、实际出现、baseline-only、ambiguous 与 missing；离线设备、无 spec/push、用户排除的空间或从未出现的预期来源都要单列，不能用一个总百分比掩盖缺口。
 
@@ -75,9 +104,9 @@ xgg learn plan --include-context --pretty
 
 启用后的 baseline 不能固定取前 5 秒，也不能把首次拉取全部算作 baseline。Agent 要记录 enable 边界和预期 preload 来源，使用有记录的 quiet period 与 hard cap 等待基线，并把未到达或无法区分的来源标成 missing / ambiguous。长期证据的主路径是增量 logs → 私有 `journal.ndjson`；`rule trace` 只用于针对性诊断，不能代替长期 journal。
 
-分析时按 source transaction 把同一次来源触发产生的 source、连线、聚合器和 counter 日志折叠成一次 observation；支持链和 counter 只证明图执行，不额外计作生活行为。状态区间不得跨越日志 gap、规则停用或语义图漂移；gap 后第一条状态只能重新锚定。已确认的区域语义以带 `asOf` 的 append-only correction 保存，再在连续证据段内用可配置的抖动容忍形成候选拓扑路径。
+分析时按 source transaction 把同一次来源触发产生的 source、连线、聚合器和 counter 日志折叠成一次 observation；支持链和 counter 只证明图执行，不额外计作生活行为。状态区间不得跨越日志 gap、规则停用或语义图漂移；gap 后第一条状态只能重新锚定。学习开始时冻结 IANA 时区，后续换 Agent/主机也沿用它；零参数按钮等一次性事件按来源与本地日期保留日桶、首末时间和证据引用，不能只剩一个全周期总次数。已确认的区域语义以带 `asOf` 的 append-only correction 保存；只有 correction 对应观察时段已经生效时，才可在连续证据段内用冻结的抖动容忍参数形成候选拓扑路径。当前 App 标签不能默认回投到过去。
 
-`people-num` 与多房间同时 occupancy 都禁止用于推断家庭人数。每次 session 还要分开保存 `semanticDigest` 与 `layoutDigest`：前者用于判断采集语义是否漂移，后者只审计画布位置、尺寸等展示变化。上述增量日志、checkpoint、gap、digest 和修正均持续写入 `<agent-project>/.xgg-private/habit-learning/<session-id>/`，并证明目录未进入 Git；做不到时必须明确标为 best-effort。用户回来后固定按“核对语义摘要与启用状态 → 最终拉取并落盘 → 停用并 readback → 请用户在米家 App 确认区域代号 → 追加修正 → 生成画像”的顺序收尾，再以该画像作为后续自动化的证据。
+`people-num` 与多房间同时 occupancy 都禁止用于推断家庭人数。每次 session 还要分开保存 `semanticDigest` 与 `layoutDigest`：前者用于判断采集语义是否漂移，后者只审计画布位置、尺寸等展示变化。上述增量日志、checkpoint、gap、digest 和修正均持续写入 `<agent-project>/.xgg-private/habit-learning/<session-id>/`，并证明目录未进入 Git；原始 DID、名称和匿名 `deviceKey` 的对应关系只写入权限为 `0600` 的 `device-map.private.json`，供本地 Agent 向用户提问，不能进入公开画像。用户回来后固定按“核对语义摘要与启用状态 → 最终拉取并落盘 → 停用并 readback → 请用户在米家 App 确认区域代号 → 追加修正 → 生成画像”的顺序收尾；后续 Agent 仍须检查 observed range、coverage、gaps、`expiresAt` 与 freshness，不能把过期、失效或证据不足的画像当成家庭永久事实。
 
 ### 用 LLM Agent 设计并创建自动化（主用法）
 
