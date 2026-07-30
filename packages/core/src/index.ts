@@ -27,6 +27,7 @@ export {
 } from './schemas/node-identifier.js';
 export { isGhostDevice } from './schemas/device.js';
 export type { DeviceEligibilityFields } from './schemas/device.js';
+export * from './schemas/habit-learning.js';
 export {
   VARIABLE_IDENTIFIER_CONSTRAINT,
   VARIABLE_IDENTIFIER_PATTERN,

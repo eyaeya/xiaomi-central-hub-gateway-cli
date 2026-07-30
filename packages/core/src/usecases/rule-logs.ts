@@ -3,7 +3,7 @@ import { agentCall } from './agent-call.js';
 
 // The gateway exposes only one log RPC — `/api/getLog` — and it returns a
 // newline-delimited "block" of raw log lines for the whole gateway, not for
-// any specific rule. Codex M8 reverse-engineering (REPORT.md task 1):
+// any specific rule. The observed gateway contract is:
 //   - param: `{ num: number }` — block index, increment from 0 until empty
 //     or the complete raw block repeats (server-side cursor).
 //   - response: `{ jsonrpc, id, result: string }` where `result` is the
@@ -146,6 +146,11 @@ export interface FetchRuleLogsInputs extends ResourceDeps {
 export interface FetchRuleLogsResult {
   /** Parsed entries in chronological block order: oldest block to newest, preserving each block. */
   entries: RuleLogEntry[];
+  /**
+   * Every fetched non-empty raw line in the same oldest-to-newest order.
+   * Internal checkpointing data; CLI output must not expose these lines.
+   */
+  rawLines: string[];
   /** Raw lines we could not parse. Internal diagnostic data; CLI output must expose only counts. */
   unparsed: string[];
   /** How many blocks we actually fetched. */
@@ -209,7 +214,9 @@ export async function fetchRuleLogs(input: FetchRuleLogsInputs): Promise<FetchRu
 
   const entries: RuleLogEntry[] = [];
   const unparsed: string[] = [];
-  for (const lines of rawBlocks.reverse()) {
+  const chronologicalBlocks = [...rawBlocks].reverse();
+  const rawLines = chronologicalBlocks.flat();
+  for (const lines of chronologicalBlocks) {
     for (const line of lines) {
       const parsed = parseLogLine(line);
       if (parsed) {
@@ -219,7 +226,7 @@ export async function fetchRuleLogs(input: FetchRuleLogsInputs): Promise<FetchRu
       }
     }
   }
-  return { entries, unparsed, blocksRead, cursorWrapped, stopReason, maxBlocks };
+  return { entries, rawLines, unparsed, blocksRead, cursorWrapped, stopReason, maxBlocks };
 }
 
 export interface FilterRuleLogsOpts {

@@ -11,6 +11,7 @@ const canonicalSkillFiles = [
   'SKILL.md',
   'references/device-semantics.md',
   'references/graph-model.md',
+  'references/habit-learning.md',
   'references/node-catalog.md',
   'references/operations.md',
   'references/recipes.md',
@@ -125,6 +126,104 @@ test('root and npm READMEs require one complete CLI plus Skill installation flow
   assert.ok(rootReadme.includes('test -f "$CLI_SKILL/SKILL.md"'));
   assert.ok(rootReadme.includes('Refusing to overlay existing Skill directory'));
   assert.ok(rootReadme.includes('diff -qr "$CLI_SKILL" "$AGENT_SKILL_DIR"'));
+});
+
+test('root README routes Agents through one-graph household habit learning before direct automation', async () => {
+  const rootReadme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
+  const habitReference = await readFile(
+    path.join(skillRoot, 'references', 'habit-learning.md'),
+    'utf8',
+  );
+  const habitHeading = '### 新家庭先学习习惯，再设计第一条自动化（推荐）';
+  const directHeading = '### 用 LLM Agent 设计并创建自动化（主用法）';
+  assert.ok(rootReadme.indexOf(habitHeading) >= 0, 'README must expose habit learning');
+  assert.ok(
+    rootReadme.indexOf(habitHeading) < rootReadme.indexOf(directHeading),
+    'habit learning must be offered before direct automation',
+  );
+  for (const fragment of [
+    'skills/xgg-rule-authoring/references/habit-learning.md',
+    '一张统一观察图',
+    'xgg learn plan --include-context --pretty',
+    '--exclude-room <room-id...>',
+    '--exclude-device <did...>',
+    '不能按来源数量、房间、优先级、A/B 区或 16 路估算预先拆成多张规则',
+    '单图只说明采集源位于同一规则，不等于“全屋完整”',
+    '设备覆盖、房间覆盖和信号覆盖',
+    '所有具备 notify 的整体及分区照度',
+    'people-num',
+    'enable 边界和预期 preload 来源',
+    'source transaction',
+    '不得跨越日志 gap',
+    'semanticDigest',
+    'layoutDigest',
+    '.xgg-private/habit-learning/<session-id>/',
+    '最终拉取并落盘 → 停用并 readback',
+  ]) {
+    assert.ok(rootReadme.includes(fragment), `README habit workflow must include ${fragment}`);
+  }
+  assert.match(
+    `${rootReadme}\n${habitReference}`,
+    /\bxgg learn plan\b/,
+    'caller-facing habit workflow must advertise the implemented read-only planner',
+  );
+  assert.doesNotMatch(
+    `${rootReadme}\n${habitReference}`,
+    /\bxgg learn (?:start|capture|status|finish)\b/,
+    'caller-facing habit workflow must not advertise absent lifecycle commands',
+  );
+});
+
+test('habit-learning reference preserves long-window evidence boundaries', async () => {
+  const reference = await readFile(path.join(skillRoot, 'references', 'habit-learning.md'), 'utf8');
+  for (const fragment of [
+    '设备覆盖：',
+    '房间覆盖：',
+    '信号覆盖：',
+    '不能固定为 5 秒',
+    'quiet period',
+    'hard cap',
+    '`missing`',
+    '`ambiguous`',
+    '先折叠 source transaction，再计行为',
+    'supportRefs',
+    'counter 和其他下游执行行',
+    '状态区间必须 gap-aware',
+    '任何频次、持续时间、路径或作息结论都不得跨 gap 拼接',
+    '`asOf`',
+    'append-only correction',
+    '从分区语义形成候选拓扑',
+    '传感器抖动与视野重叠',
+    '长期证据的主路径固定为',
+    '`rule trace` 是基于当前图和有界日志的诊断投影',
+    '不得把多个房间的 occupancy overlap',
+    '`semanticDigest`',
+    '`layoutDigest`',
+  ]) {
+    assert.ok(
+      reference.includes(fragment),
+      `habit-learning evidence contract must include ${fragment}`,
+    );
+  }
+});
+
+test('habit-learning reference reason codes exactly match the Core planning schema', async () => {
+  const schema = await readFile(
+    path.join(repositoryRoot, 'packages', 'core', 'src', 'schemas', 'habit-learning.ts'),
+    'utf8',
+  );
+  const reference = await readFile(path.join(skillRoot, 'references', 'habit-learning.md'), 'utf8');
+  const schemaBlock = schema.match(
+    /export const HABIT_LEARNING_REASON_CODES = \[([\s\S]*?)\] as const;/,
+  )?.[1];
+  const referenceBlock = reference.match(
+    /机器计划只使用当前 schema 的以下精确 reason code：\n\n```text\n([\s\S]*?)\n```/,
+  )?.[1];
+  assert.ok(schemaBlock, 'Core habit-learning reason-code schema must be readable');
+  assert.ok(referenceBlock, 'habit-learning reference must list exact reason codes');
+  const schemaCodes = [...schemaBlock.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  const referenceCodes = referenceBlock.split('\n').filter(Boolean);
+  assert.deepEqual(referenceCodes, schemaCodes);
 });
 
 test('README verification snippets fail closed for placeholders and the wrong Agent', async () => {

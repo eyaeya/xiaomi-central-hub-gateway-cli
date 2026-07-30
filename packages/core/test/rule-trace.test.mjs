@@ -141,6 +141,13 @@ test('log pagination preserves duplicates and orders old blocks before new block
 
   assert.equal(result.stopReason, 'duplicate-block');
   assert.equal(result.blocksRead, 3);
+  assert.deepEqual(result.rawLines, [
+    repeated,
+    repeated,
+    '3|1000|i|rule-1|sink|old',
+    repeated,
+    '3|1000|i|rule-1|sink|new',
+  ]);
   assert.deepEqual(
     result.entries.map((entry) => entry.info),
     ['same', 'same', 'old', 'same', 'new'],
