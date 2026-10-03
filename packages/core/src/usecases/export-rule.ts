@@ -201,8 +201,8 @@ export async function exportRuleFromView(
     id: view.id,
     nodes: [] as unknown[],
     cfg: {
+      ...view.cfg,
       id: view.id,
-      uiType: view.cfg.uiType,
       enable: false,
       userData: { ...view.cfg.userData },
     },
@@ -1608,7 +1608,7 @@ function renderTimeRange(n: {
   if (typeof props.mingTextShow === 'boolean') {
     flags.push({ name: '--ming-text-show', value: String(props.mingTextShow) });
   }
-  addDayFilterFlags(flags, props.filter);
+  addDayFilterFlags(flags, props.filter, 'timeRange', n.id);
   return { kind: 'node-add', nodeId: n.id, type: 'timeRange', flags, comment: 'timeRange' };
 }
 
@@ -1791,7 +1791,7 @@ function renderAlarmClock(n: {
       flags.push({ name: '--offset-min', value: String(offsetMinutes) });
     }
   }
-  addDayFilterFlags(flags, props.filter);
+  addDayFilterFlags(flags, props.filter, 'alarmClock', n.id);
   return { kind: 'node-add', nodeId: n.id, type: 'alarmClock', flags, comment: 'alarmClock' };
 }
 
@@ -1875,17 +1875,26 @@ function hms(t: { hour: number; minute: number; second: number }): string {
   return `${pad(t.hour)}:${pad(t.minute)}:${pad(t.second)}`;
 }
 
-function addDayFilterFlags(flags: ExportFlag[], rawFilter: unknown): void {
+function addDayFilterFlags(
+  flags: ExportFlag[],
+  rawFilter: unknown,
+  nodeType: 'alarmClock' | 'timeRange',
+  nodeId: string,
+): void {
   if (!rawFilter || typeof rawFilter !== 'object') return;
   const filter = rawFilter as { inHoliday?: boolean; day?: number[] };
+  // An empty weekday set cannot be authored by the typed CLI. Omitting it
+  // would select every day and could re-enable physical actions on new days.
+  // Refuse even permissive export rather than emit a runnable semantic change.
+  if (Array.isArray(filter.day) && filter.day.length === 0) {
+    throw new ConfigError(
+      `cannot export ${nodeType} node ${nodeId} losslessly: props.filter.day is empty; omitting --days would change the schedule to every day. Select at least one day in the source rule before exporting.`,
+      { nodeId, nodeType, path: 'props.filter.day' },
+    );
+  }
   if (filter.inHoliday === false) flags.push({ name: '--weekday-only' });
   else if (filter.inHoliday === true) flags.push({ name: '--holiday-only' });
-  // Only emit --days for a NON-empty day array. An empty `filter.day: []`
-  // (already invalid per validate-graph's "至少选择一天") otherwise produced
-  // `--days ''`, which re-imports as `[NaN]` and makes buildDayFilter throw — a
-  // round-trip crash. Skipping it keeps the replay parseable.
-  else if (Array.isArray(filter.day) && filter.day.length > 0)
-    flags.push({ name: '--days', value: filter.day.join(',') });
+  else if (Array.isArray(filter.day)) flags.push({ name: '--days', value: filter.day.join(',') });
 }
 
 async function ensureSpec(

@@ -40,6 +40,7 @@ const LOCK_RETRY_JITTER_MS = 30;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class LegacySessionFileError extends AuthRequiredError {}
+class LockPublicationRaceError extends Error {}
 
 // Verified against the original v1 schema at e499290a98c425416a2e76e07f31ef9a9ccbd03f
 // and its v2 migration at 28535f6f65a2f0e9898b1f78ee8811e1fbadf51b.
@@ -282,7 +283,7 @@ export class SessionStore {
           // A stale reclaimer can remove an empty directory between mkdir()
           // and owner publication. That is ordinary lock contention, not a
           // storage failure; retry with a fresh generation token.
-          if (isMissingFile(e)) continue;
+          if (isMissingFile(e) || e instanceof LockPublicationRaceError) continue;
           throw e;
         }
 
@@ -418,6 +419,11 @@ export class SessionStore {
     // directory, then publish it with rename. A crash can therefore leave an
     // empty lock directory or an unrelated temporary file, but never a
     // truncated canonical owner that permanently blocks stale recovery.
+    const lockPath = this.lockPath(path);
+    const originalDirectory = await fs.lstat(lockPath);
+    if (!originalDirectory.isDirectory()) {
+      throw new Error(`Session lock path is not a directory: ${lockPath}`);
+    }
     const temporaryPath = `${this.lockPath(path)}.owner-${owner.token}.tmp`;
     let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
     try {
@@ -427,7 +433,23 @@ export class SessionStore {
       await handle.sync();
       await handle.close();
       handle = undefined;
-      await fs.rename(temporaryPath, this.lockOwnerPath(path, owner.token));
+      try {
+        await fs.rename(temporaryPath, this.lockOwnerPath(path, owner.token));
+      } catch (error) {
+        // Darwin can return EINVAL, rather than ENOENT, when the destination
+        // directory is removed during rename. Only retry after proving that
+        // this directory generation disappeared; unrelated EINVAL must remain
+        // a storage failure instead of being hidden as ordinary contention.
+        if (
+          hasErrorCode(error, 'EINVAL') &&
+          (await directoryWasReplaced(lockPath, originalDirectory))
+        ) {
+          throw new LockPublicationRaceError('session lock changed during owner publication', {
+            cause: error,
+          });
+        }
+        throw error;
+      }
     } finally {
       await handle?.close().catch(() => {});
       await fs.unlink(temporaryPath).catch((e: unknown) => {
@@ -477,6 +499,19 @@ export class SessionStore {
 
   private lockOwnerPath(path: string, token: string): string {
     return join(this.lockPath(path), this.lockOwnerFile(token));
+  }
+}
+
+async function directoryWasReplaced(
+  path: string,
+  original: { dev: number; ino: number },
+): Promise<boolean> {
+  try {
+    const current = await fs.lstat(path);
+    return current.dev !== original.dev || current.ino !== original.ino;
+  } catch (error) {
+    if (isMissingFile(error)) return true;
+    return false;
   }
 }
 

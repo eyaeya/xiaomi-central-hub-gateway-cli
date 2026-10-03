@@ -238,6 +238,101 @@ test(
   },
 );
 
+for (const replacement of [false, true]) {
+  test(
+    `retries Darwin owner-publication EINVAL when its directory is ${replacement ? 'replaced' : 'removed'}`,
+    testTimeout,
+    async (t) => {
+      const directory = await fs.mkdtemp(join(tmpdir(), 'xgg-session-rename-race-'));
+      t.after(() => fs.rm(directory, { recursive: true, force: true }));
+      const sessionFile = join(directory, 'session.json');
+      const lockDirectory = `${join(await fs.realpath(directory), 'session.json')}.lock`;
+      const displacedDirectory = `${lockDirectory}.displaced`;
+      const replacementToken = '00000000-0000-4000-8000-000000000099';
+      const replacementOwner = join(lockDirectory, `owner-${replacementToken}.json`);
+      const replacementRecord = JSON.stringify({
+        token: replacementToken,
+        pid: process.pid,
+        createdAt: new Date().toISOString(),
+      });
+      const { SessionStore } = await import(storeModuleUrl);
+      const originalRename = fs.rename;
+      const publicationFailed = deferred();
+      let injected = false;
+      let pending;
+      fs.rename = async (from, to) => {
+        if (!injected && String(to).startsWith(`${lockDirectory}/owner-`)) {
+          injected = true;
+          // Keep the old inode allocated so the replacement provably has a
+          // different identity on every filesystem used by this test.
+          await originalRename.call(fs, lockDirectory, displacedDirectory);
+          if (replacement) {
+            await fs.mkdir(lockDirectory);
+            await fs.writeFile(replacementOwner, replacementRecord);
+          }
+          publicationFailed.resolve();
+          throw Object.assign(new Error('destination directory removed during rename'), {
+            code: 'EINVAL',
+          });
+        }
+        return originalRename.call(fs, from, to);
+      };
+      try {
+        pending = new SessionStore({ path: sessionFile }).write(makeSession(1));
+        pending.catch(() => {});
+        await publicationFailed.promise;
+        if (replacement) {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          assert.equal(await fs.readFile(replacementOwner, 'utf8'), replacementRecord);
+          await assert.rejects(fs.access(sessionFile), { code: 'ENOENT' });
+          await fs.unlink(replacementOwner);
+          await fs.rmdir(lockDirectory);
+        }
+        await pending;
+      } finally {
+        fs.rename = originalRename;
+        await fs.unlink(replacementOwner).catch(() => {});
+        await pending?.catch(() => {});
+      }
+      assert.equal(injected, true);
+      const parsed = JSON.parse(await fs.readFile(sessionFile, 'utf8'));
+      assert.deepEqual(Object.keys(parsed.sessions), [makeSession(1).host]);
+      await fs.rmdir(displacedDirectory);
+      await assertPrivateAtomicResult(directory, sessionFile);
+    },
+  );
+}
+
+test('preserves owner-publication EINVAL when the lock directory did not change', async (t) => {
+  const directory = await fs.mkdtemp(join(tmpdir(), 'xgg-session-rename-invalid-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const sessionFile = join(directory, 'session.json');
+  const lockDirectory = `${join(await fs.realpath(directory), 'session.json')}.lock`;
+  const { SessionStore } = await import(storeModuleUrl);
+  const originalRename = fs.rename;
+  const originalError = Object.assign(new Error('unrelated invalid rename argument'), {
+    code: 'EINVAL',
+  });
+  let publicationAttempts = 0;
+  fs.rename = async (from, to) => {
+    if (String(to).startsWith(`${lockDirectory}/owner-`)) {
+      publicationAttempts += 1;
+      throw originalError;
+    }
+    return originalRename.call(fs, from, to);
+  };
+  try {
+    await assert.rejects(
+      new SessionStore({ path: sessionFile }).write(makeSession(1)),
+      (error) => error === originalError,
+    );
+  } finally {
+    fs.rename = originalRename;
+  }
+  assert.equal(publicationAttempts, 1, 'unrelated EINVAL must not be silently retried');
+  assert.deepEqual(await fs.readdir(directory), []);
+});
+
 test('lock recovery refuses to follow a lock-path symlink', async (t) => {
   if (process.platform === 'win32') {
     t.skip('creating symbolic links may require elevated privileges on Windows');

@@ -19,6 +19,7 @@ const HYPOTHESIS = '3'.repeat(64);
 const CONSTRAINT = '4'.repeat(64);
 const SEMANTIC_DIGEST = 'a'.repeat(64);
 const INVENTORY_HASH = 'b'.repeat(64);
+const PLAN_ID = 'e'.repeat(64);
 
 function correction(input) {
   return createHabitLearningCorrection({
@@ -682,6 +683,7 @@ test('profile generation keeps four layers separate and enforces freshness for r
   const input = {
     sourceSemanticDigest: SEMANTIC_DIGEST,
     sourceInventoryHash: INVENTORY_HASH,
+    sourcePlanId: PLAN_ID,
     generatedAt: 1_000,
     observedFrom: 100,
     observedUntil: 900,
@@ -746,6 +748,7 @@ test('profile generation keeps four layers separate and enforces freshness for r
   assert.equal(profile.profileId, repeated.profileId);
   assert.equal(profile.sourceSemanticDigest, SEMANTIC_DIGEST);
   assert.equal(profile.sourceInventoryHash, INVENTORY_HASH);
+  assert.equal(profile.sourcePlanId, PLAN_ID);
   assert.match(profile.profileId, /^[a-f0-9]{64}$/);
   assert.equal(profile.expiresAt, 2_000);
   assert.deepEqual(
@@ -766,6 +769,7 @@ test('profile generation keeps four layers separate and enforces freshness for r
       evaluatedAt: 1_500,
       currentSemanticDigest: SEMANTIC_DIGEST,
       currentInventoryHash: INVENTORY_HASH,
+      currentPlanId: PLAN_ID,
     }),
     {
       evaluatedAt: 1_500,
@@ -786,6 +790,36 @@ test('profile generation keeps four layers separate and enforces freshness for r
     evaluateHabitLearningProfileFreshness({
       profile,
       evaluatedAt: 1_500,
+      currentSemanticDigest: SEMANTIC_DIGEST,
+      currentInventoryHash: INVENTORY_HASH,
+      currentPlanId: 'f'.repeat(64),
+    }).reasons,
+    ['plan-drift'],
+  );
+  assert.deepEqual(
+    evaluateHabitLearningProfileFreshness({
+      profile,
+      evaluatedAt: 1_500,
+      currentSemanticDigest: SEMANTIC_DIGEST,
+      currentInventoryHash: INVENTORY_HASH,
+    }).reasons,
+    ['live-drift-check-required'],
+  );
+  const { sourcePlanId: _sourcePlanId, ...legacyProfile } = profile;
+  assert.deepEqual(
+    evaluateHabitLearningProfileFreshness({
+      profile: legacyProfile,
+      evaluatedAt: 1_500,
+      currentSemanticDigest: SEMANTIC_DIGEST,
+      currentInventoryHash: INVENTORY_HASH,
+      currentPlanId: PLAN_ID,
+    }).reasons,
+    ['source-plan-unavailable'],
+  );
+  assert.deepEqual(
+    evaluateHabitLearningProfileFreshness({
+      profile,
+      evaluatedAt: 1_500,
     }),
     {
       evaluatedAt: 1_500,
@@ -801,6 +835,7 @@ test('profile generation keeps four layers separate and enforces freshness for r
       evaluatedAt: 1_500,
       currentSemanticDigest: 'c'.repeat(64),
       currentInventoryHash: 'd'.repeat(64),
+      currentPlanId: PLAN_ID,
     }),
     {
       evaluatedAt: 1_500,
@@ -822,6 +857,7 @@ test('bounded, invalidated, and forbidden-inference profiles fail closed', () =>
   const profile = generateHabitLearningProfile({
     sourceSemanticDigest: SEMANTIC_DIGEST,
     sourceInventoryHash: INVENTORY_HASH,
+    sourcePlanId: PLAN_ID,
     generatedAt: 1_000,
     observedFrom: 100,
     observedUntil: 900,
@@ -852,6 +888,7 @@ test('bounded, invalidated, and forbidden-inference profiles fail closed', () =>
       evaluatedAt: 1_100,
       currentSemanticDigest: SEMANTIC_DIGEST,
       currentInventoryHash: INVENTORY_HASH,
+      currentPlanId: PLAN_ID,
     }).status,
     'insufficient',
   );
@@ -862,6 +899,7 @@ test('bounded, invalidated, and forbidden-inference profiles fail closed', () =>
       minimumCompleteness: 'bounded',
       currentSemanticDigest: SEMANTIC_DIGEST,
       currentInventoryHash: INVENTORY_HASH,
+      currentPlanId: PLAN_ID,
     }).status,
     'current',
   );
@@ -879,6 +917,7 @@ test('bounded, invalidated, and forbidden-inference profiles fail closed', () =>
       generateHabitLearningProfile({
         sourceSemanticDigest: SEMANTIC_DIGEST,
         sourceInventoryHash: INVENTORY_HASH,
+        sourcePlanId: PLAN_ID,
         generatedAt: 1_000,
         observedFrom: 100,
         observedUntil: 900,

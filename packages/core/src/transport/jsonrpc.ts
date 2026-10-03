@@ -13,6 +13,7 @@ interface PendingRequest {
   resolve: (v: unknown) => void;
   reject: (e: unknown) => void;
   timer: ReturnType<typeof setTimeout>;
+  onInterrupted?: (cause: NetworkError) => Error;
 }
 
 interface JsonRpcResponse {
@@ -82,17 +83,18 @@ export class JsonRpcRouter {
       this.loop = null;
     }
     await physicalClose;
-    for (const p of this.pending.values()) {
-      clearTimeout(p.timer);
-      p.reject(new NetworkError('router stopped'));
-    }
-    this.pending.clear();
+    this.failAllPending(new NetworkError('router stopped'));
   }
 
   request(
     method: string,
     params: unknown,
-    opts?: { timeoutMs?: number; onTimeout?: (timeoutMs: number) => Error },
+    opts?: {
+      timeoutMs?: number;
+      onTimeout?: (timeoutMs: number) => Error;
+      /** Classify a sent request whose response is lost when the session ends. */
+      onInterrupted?: (cause: NetworkError) => Error;
+    },
   ): Promise<unknown> {
     if (!this.running) throw new Error('router not started');
     const id = this.nextId++;
@@ -106,7 +108,12 @@ export class JsonRpcRouter {
             : new NetworkError(`request ${id} (${method}) timeout after ${timeoutMs}ms`),
         );
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, {
+        resolve,
+        reject,
+        timer,
+        ...(opts?.onInterrupted !== undefined && { onInterrupted: opts.onInterrupted }),
+      });
       try {
         this.opts.transport.send(
           this.opts.channel.sendJson({ jsonrpc: '2.0', id, method, params }),
@@ -156,10 +163,10 @@ export class JsonRpcRouter {
     }
   }
 
-  private failAllPending(e: unknown): void {
+  private failAllPending(e: NetworkError): void {
     for (const p of this.pending.values()) {
       clearTimeout(p.timer);
-      p.reject(e);
+      p.reject(p.onInterrupted ? p.onInterrupted(e) : e);
     }
     this.pending.clear();
   }

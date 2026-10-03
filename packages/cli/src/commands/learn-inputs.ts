@@ -57,6 +57,7 @@ function describeSpecFailure(
 export async function collectHabitLearningPlannerInputs(
   inventory: DeviceInventory,
   timeoutMs: number,
+  cache: 'default' | 'reload' = 'default',
 ): Promise<{
   devices: HabitLearningDeviceInput[];
   specsByUrn: Map<string, DeviceSpec>;
@@ -71,7 +72,7 @@ export async function collectHabitLearningPlannerInputs(
   const loadSpec = (urn: string): Promise<SpecLoad> => {
     const existing = specLoads.get(urn);
     if (existing !== undefined) return existing;
-    const pending = getDeviceSpec(urn, { timeoutMs }).then(
+    const pending = getDeviceSpec(urn, { timeoutMs, cache }).then(
       (spec): SpecLoad => ({ ok: true, spec }),
       (error: unknown): SpecLoad => ({ ok: false, error }),
     );

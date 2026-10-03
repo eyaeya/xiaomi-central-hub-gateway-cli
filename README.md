@@ -557,6 +557,10 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 
 `xgg device spec <did> --pretty` 是设备卡片的能力选择入口；它与 `device list/get --pretty` 都显示 spec URN 的稳定 `deviceType` token 和 `device-template` 的中文 `deviceTypeDescription`，目录失败会明示并只回退 token。spec 输出按规则用途分成三组：事件与 notify 属性对应 `deviceInput` / `deviceInputSetVar`，read 属性对应 `deviceGet` / `deviceGetSetVar`，write 属性与 action 对应 `deviceOutput`；每组内部仍按标准与 proprietary/vendor 分组，`device-information` 元数据不会混入可自动化能力。property 显示 selector short-name、完整 URN、原始 format、UI 投影 dtype、value-list/range，action input 与 event argument 会按 PIID 解析成 property 详情；`action.out` 仅标作 MIoT 元数据，不能绑定到 `deviceOutput`，也不是规则图输出 pin。其他中文语义采用当前 xgg 的 best-effort 优先级：值标签为 `multiLanguage → normalization → raw`，service/property/event 名称为 `multiLanguage → template → raw`，action 名称为 `multiLanguage → raw → template`，action input 属性名为 `multiLanguage → raw`；目录请求失败会在 `Catalog status` 明示并回退。跨 service 重复 short-name 不会合并，创建卡片时按对应 service 的 `siid` 加 `--device-siid` 消歧；长行按 120 个终端显示列完整换行，中文、组合字符、emoji 和长 URN 不会被误切或截断。三条 device 命令省略 `--pretty` 时原有紧凑 JSON shape 保持不变，也不会发起语义目录请求。
 
+## 2026-10-03 兼容性复查
+
+当前实机的登录、设备/规则读取、6 条规则的 spec-aware 校验与严格导出、临时软件变量规则的正反分支均已核对。v2.1.1 修复了写入断连后的崩溃/结果不明处理、MIoT 能力漂移后的旧画像复用，空星期集合导出后误变成每天，以及 macOS 并发会话锁竞争的问题。完整固件版本无法确认；测试范围、DNS 限制和历史规则告警见 [兼容性审查记录](docs/compatibility-2026-10-03.md)。
+
 ## 重要限制
 
 - 当前 xgg 对规则、变量、设备与备份操作使用 WebSocket 承载的加密二进制协议 RPC，登录使用米家 App 提供的 6 位码。这不是对所有固件、服务或未来版本“绝不存在 HTTP API”的证明。

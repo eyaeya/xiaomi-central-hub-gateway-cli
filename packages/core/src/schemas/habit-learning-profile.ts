@@ -252,6 +252,8 @@ export const HabitLearningProfileSchema = z
     sourceSemanticDigest: z.string().regex(SHA256_HEX_PATTERN),
     /** Private inventory identity captured when the study was planned. */
     sourceInventoryHash: z.string().regex(SHA256_HEX_PATTERN),
+    /** Frozen plan includes MIoT value semantics; absent on legacy profiles. */
+    sourcePlanId: z.string().regex(SHA256_HEX_PATTERN).optional(),
     generatedAt: z.number().int().nonnegative(),
     observedFrom: z.number().int().nonnegative(),
     observedUntil: z.number().int().nonnegative(),
@@ -348,6 +350,8 @@ export const HabitLearningProfileFreshnessSchema = z
         'live-drift-check-required',
         'semantic-digest-mismatch',
         'inventory-drift',
+        'source-plan-unavailable',
+        'plan-drift',
       ]),
     ),
   })

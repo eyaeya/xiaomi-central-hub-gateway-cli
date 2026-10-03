@@ -1337,6 +1337,7 @@ function attachProfile(command: Command): void {
         }
         let currentSemanticDigest: string | undefined;
         let currentInventoryHash: string | undefined;
+        let currentPlanId: string | undefined;
         if (options.localOnly !== true) {
           const persisted = await requireCompilationArtifacts(artifacts);
           const deps = gatewayDeps(options);
@@ -1344,7 +1345,11 @@ function attachProfile(command: Command): void {
             inspectLiveRule(persisted.compilation, deps),
             listDevices(deps),
           ]);
-          const collected = await collectHabitLearningPlannerInputs(inventory, deps.timeoutMs);
+          const collected = await collectHabitLearningPlannerInputs(
+            inventory,
+            deps.timeoutMs,
+            'reload',
+          );
           const currentPlan = planHabitLearning({
             devices: collected.devices,
             includeContext: persisted.plan.policy.includeContext,
@@ -1354,6 +1359,7 @@ function attachProfile(command: Command): void {
           });
           currentSemanticDigest = live.semanticDigest;
           currentInventoryHash = currentPlan.inventory.inventoryHash;
+          currentPlanId = currentPlan.planId;
         }
         const freshness = evaluateHabitLearningProfileFreshness({
           profile,
@@ -1361,6 +1367,7 @@ function attachProfile(command: Command): void {
           minimumCompleteness: options.minimumCompleteness,
           ...(currentSemanticDigest !== undefined && { currentSemanticDigest }),
           ...(currentInventoryHash !== undefined && { currentInventoryHash }),
+          ...(currentPlanId !== undefined && { currentPlanId }),
         });
         emit(
           {
@@ -1582,7 +1589,7 @@ async function planFromLiveGateway(
   intent: StudyStartIntent,
 ): Promise<HabitLearningPlan> {
   const inventory = await listDevices(deps);
-  const collected = await collectHabitLearningPlannerInputs(inventory, deps.timeoutMs);
+  const collected = await collectHabitLearningPlannerInputs(inventory, deps.timeoutMs, 'reload');
   return planHabitLearning({
     devices: collected.devices,
     includeContext: intent.includeContext,
@@ -3003,6 +3010,7 @@ async function buildProfile(
   return generateHabitLearningProfile({
     sourceSemanticDigest: persisted.compilation.digests.semantic,
     sourceInventoryHash: persisted.plan.inventory.inventoryHash,
+    sourcePlanId: persisted.plan.planId,
     generatedAt,
     observedFrom: profileObservedFrom,
     observedUntil: profileObservedUntil,

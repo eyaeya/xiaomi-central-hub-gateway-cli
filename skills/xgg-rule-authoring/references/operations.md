@@ -62,6 +62,8 @@ export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 | 4 | 客户端 schema/响应解析失败 |
 | 5 | 本地配置、安全 guard、参数或校验失败 |
 
+已提交的写入若因网关连接或 IPC 中断而丢失响应，会返回 `NOT_CONFIRMED`；网关可能已经执行。先读取实际状态并检查快照/变更隔离，不得盲目重试。
+
 `rule lint` JSON 的顶层 `ok:true` 表示**lint 命令成功执行**，不是“规则无问题”。Agent 必须同时检查进程退出码与 `summary.errors`/`summary.warnings`；`validate`、lint、mutation 的 `ok` 不能脱离各自契约统一解释。不要写 `cmd && ...` 后丢失需要记录的 warning/error 退出码。
 
 ## 创建修改与原子写入
@@ -155,6 +157,7 @@ XGG_NODE_ENTRY="$(pwd -P)/packages/cli/dist/cli.js" \
 
 路径含空格仍保持单一 argv，脚本不用 `eval`/拆词。脚本是逐命令事务，不是 replay-wide lease；global/local **预检**全为只读，失败时没有写入，但通过后仍可能并发漂移。same-ID 会在 graph staging 前逐个兼容创建缺失 local；按上段预先 disable 后，若此阶段中断，旧图保持原内容但仍是 disabled，同时只留下部分 local 创建。未按要求预先停用的旧图则可能仍 enabled，这正是禁止跳过该步骤的原因。clone 先预留 disabled 空壳，再创建 local。任何 target graph staging 之后失败，才会留下 disabled partial graph/变量。执行期间停止网页和其他 writer；失败后按所处阶段同时 readback 规则 enable/图与变量，并用逐写 snapshot 检查/恢复。成功后固定跑 spec-aware validate、strict lint 与 view/readback，只有用户授权才触发。
 
+- `alarmClock` / `timeRange` 的 `filter.day: []` 无法用 typed CLI 保真表达；strict 与 permissive export 都拒绝，避免省略日期后变成每天。先在源规则选择有效日期，或保存整图 JSON 供审查，不执行近似重放。
 - strict export 在任何 staging 前读取源网关可发现的 modeled local/global 变量，按引用路径拒绝缺失 global、实际类型 mismatch、access/no-push、设备 literal/ref/action-index 契约和不可无损的 modeled 节点；permissive 必须给明确 warning，只有 no-push probe 会补 transient `--allow-no-push`。
 - 能由 typed model、nop Delta/几何与表达式 DSL 无损表示的字段可 round-trip；表达式 elements 若有变量/常量词法边界歧义，所有 export 模式都拒绝，先给源表达式加显式分隔。
 - 未建模 future node 用完整 opaque `--cfg` 同 ID 重放；CLI 无法发现/改写 opaque payload 内的 local 或 global 引用，所以带 opaque 节点拒绝 `--target-id` clone；same-ID 的信息性 warning 也意味着 strict export 与生成的 preflight 不能证明其内部依赖，启用前须独立审阅并另行证明。
