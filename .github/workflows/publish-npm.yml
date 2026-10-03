@@ -207,6 +207,111 @@ jobs:
           }
           NODE
 
+      # Keep this helper in the workflow so dispatching an older release tag also uses it.
+      - name: Prepare registry confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/xgg-confirm-npm.mjs" <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import { realpathSync } from 'node:fs';
+          import { setTimeout as delay } from 'node:timers/promises';
+          import { pathToFileURL } from 'node:url';
+
+          export function readPackage(name, version, timeoutMs, run = spawnSync) {
+            const result = run('npm', [
+              'view', `${name}@${version}`, 'version', 'dependencies', '--json',
+              '--prefer-online', '--fetch-retries=0', `--fetch-timeout=${timeoutMs}`,
+            ], {
+              encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL',
+              maxBuffer: 1024 * 1024,
+            });
+            let metadata;
+            try {
+              metadata = JSON.parse(result.stdout);
+            } catch {
+              // Do not print raw npm output: it can contain credentials or config details.
+            }
+            if (result.status === 0) {
+              return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+                ? { metadata }
+                : { error: 'invalid registry metadata' };
+            }
+            const errors = {
+              E404: 'version not visible',
+              ETARGET: 'version not visible',
+              E401: 'registry authentication failed',
+              E403: 'registry access denied',
+              E429: 'registry rate limited',
+              ENOTFOUND: 'registry DNS lookup failed',
+              EAI_AGAIN: 'registry DNS lookup failed',
+              ECONNRESET: 'registry connection reset',
+              ETIMEDOUT: 'registry request timed out',
+              ENOENT: 'npm executable unavailable',
+            };
+            const code = result.error?.code ?? metadata?.error?.code;
+            return { error: Object.hasOwn(errors, code) ? errors[code] : 'registry request failed' };
+          }
+
+          export async function confirmPackages(version, {
+            includeCli = false, lookup = readPackage, now = Date.now, sleep = delay,
+            timeoutMs = 600_000, intervalMs = 10_000, log = console.log,
+          } = {}) {
+            const packages = ['@eyaeya/xgg-core'];
+            if (includeCli) packages.push('@eyaeya/xgg-cli');
+            const deadline = now() + timeoutMs;
+            let attempt = 0;
+            let lastState = 'no registry response';
+            while (now() < deadline) {
+              attempt += 1;
+              const pending = [];
+              for (const name of packages) {
+                const remaining = deadline - now();
+                if (remaining <= 0) {
+                  pending.push(`${name}: deadline reached`);
+                  break;
+                }
+                const result = await lookup(name, version, Math.min(15_000, remaining));
+                if (result.error) {
+                  pending.push(`${name}: ${result.error}`);
+                } else if (result.metadata?.version !== version) {
+                  pending.push(`${name}: version mismatch`);
+                } else if (
+                  name === '@eyaeya/xgg-cli' &&
+                  result.metadata.dependencies?.['@eyaeya/xgg-core'] !== `^${version}`
+                ) {
+                  pending.push(`${name}: core dependency mismatch`);
+                }
+              }
+              if (pending.length === 0 && now() <= deadline) {
+                log(`Confirmed ${packages.join(' and ')}@${version} after ${attempt} attempt(s).`);
+                return;
+              }
+              lastState = pending.join('; ') || 'deadline reached';
+              const remaining = Math.max(0, deadline - now());
+              log(`Registry attempt ${attempt}: ${lastState}; ${Math.ceil(remaining / 1000)}s remaining.`);
+              if (remaining > 0) await sleep(Math.min(intervalMs, remaining));
+            }
+            throw new Error(`Registry confirmation timed out after ${timeoutMs / 1000}s: ${lastState}.`);
+          }
+
+          if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+            const [version, mode] = process.argv.slice(2);
+            if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version ?? '') ||
+                !['core', 'all'].includes(mode)) {
+              console.error('Expected a stable package version and core/all confirmation mode.');
+              process.exitCode = 1;
+            } else {
+              try {
+                await confirmPackages(version, { includeCli: mode === 'all' });
+              } catch (error) {
+                console.error(error.message);
+                process.exitCode = 1;
+              }
+            }
+          }
+          NODE
+
       - name: Check immutable registry state
         id: registry
         shell: bash
@@ -243,14 +348,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in {1..12}; do
-            if npm view "@eyaeya/xgg-core@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
-              exit 0
-            fi
-            sleep 5
-          done
-          echo 'Published core did not become visible in time.' >&2
-          exit 1
+          node "$RUNNER_TEMP/xgg-confirm-npm.mjs" "$PACKAGE_VERSION" core
 
       - name: Publish CLI
         if: steps.registry.outputs.cli_exists != 'true'
@@ -267,26 +365,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          confirmed=false
-          for attempt in {1..12}; do
-            core_version="$(npm view "@eyaeya/xgg-core@${PACKAGE_VERSION}" version \
-              2>/dev/null || true)"
-            cli_version="$(npm view "@eyaeya/xgg-cli@${PACKAGE_VERSION}" version \
-              2>/dev/null || true)"
-            cli_core="$(npm view "@eyaeya/xgg-cli@${PACKAGE_VERSION}" \
-              'dependencies.@eyaeya/xgg-core' 2>/dev/null || true)"
-            if [ "$core_version" = "$PACKAGE_VERSION" ] \
-              && [ "$cli_version" = "$PACKAGE_VERSION" ] \
-              && [ "$cli_core" = "^${PACKAGE_VERSION}" ]; then
-              confirmed=true
-              break
-            fi
-            sleep 5
-          done
-          if [ "$confirmed" != true ]; then
-            echo 'Published packages did not reach the expected registry state in time.' >&2
-            exit 1
-          fi
+          node "$RUNNER_TEMP/xgg-confirm-npm.mjs" "$PACKAGE_VERSION" all
           {
             echo '### npm release'
             echo

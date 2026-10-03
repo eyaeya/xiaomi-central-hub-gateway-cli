@@ -13,7 +13,7 @@ The served official editor is v1.6.1, with HTML build tag `2026-04-08 14:16:59`.
 - The temporary rule and its local variables were removed. Official-format backups before and after the probe were byte-identical (six rules and 91 variables).
 - Trace is a bounded projection of retained logs. Its completeness metadata reported unknown retention, unavailable historical topology and the configured scan limit; it does not prove complete historical execution.
 
-MIoT requests initially failed because the workstation's normal DNS lookup for `miot-spec.org` timed out. A fresh public DNS lookup and a process-only address override allowed requests to the original HTTPS hostname, with certificate verification retained. The successful spec-aware checks used freshly fetched official definitions, not old cached fixtures. No system DNS, gateway configuration or persistent endpoint was changed. Normal CLI use on that workstation still depends on repairing or recovering its DNS resolution.
+MIoT requests initially failed because the workstation's normal DNS lookup for `miot-spec.org` timed out. A fresh public DNS lookup and a process-only address override allowed requests to the original HTTPS hostname, with certificate verification retained. The successful spec-aware checks used freshly fetched official definitions, not old cached fixtures. No system DNS, gateway configuration or persistent endpoint was changed. Normal DNS subsequently recovered. The independently installed v2.1.1 then repeated spec-aware validation on all six rules through the normal network path, again with zero errors and the same legacy-ID warnings.
 
 Raw household inventories, rule contents, credentials, snapshots and downloaded official bundles remain private and are not release assets.
 
@@ -32,3 +32,9 @@ The fixes address reproduced client defects; this review does not attribute them
 The final clean-checkout `pnpm check` passed lint, build and all 733 tests. `pnpm audit --prod` reported zero known vulnerabilities across 14 production dependencies.
 
 Run `pnpm install --frozen-lockfile`, `pnpm check`, and `pnpm pack:release` from a clean checkout. Smoke-test both tarballs in an isolated installation and verify their version, CLI help, dependency pairing and allowed package contents. Focused regressions cover encrypted connection loss, explicit rejection, no-send failure, both schedule exporters, normal schedule replay, legacy profile handling and fresh-spec failure/drift.
+
+## npm publication follow-up
+
+npm accepted both v2.1.1 package uploads, but explicitly reported that package processing could take a few minutes. The release workflow waited only about one minute, so it failed first while confirming core visibility and then, on retry, while confirming CLI visibility. This was a confirmation-window failure after accepted publication; the build and package smoke tests had passed.
+
+The workflow now uses a bounded ten-minute confirmation window with limited per-request time, exact package/dependency checks and diagnostic progress. The helper is embedded in the workflow so dispatching it for an older release tag does not depend on a new helper file being present in that tag. Published versions remain immutable.
