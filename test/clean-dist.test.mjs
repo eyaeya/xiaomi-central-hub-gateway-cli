@@ -59,20 +59,22 @@ test('npm workflow publishes explicit local tarball paths', async () => {
   assert.doesNotMatch(workflow, /npm publish "release-artifacts\//);
 });
 
-test('npm workflow retries final registry confirmation after publishing CLI', async () => {
+test('npm workflow embeds confirmation so older release tags can use the current checks', async () => {
   const workflow = await readFile(
     join(repositoryRoot, '.github', 'workflows', 'publish-npm.yml'),
     'utf8',
   );
-  const confirmation = workflow.match(
-    /- name: Confirm both packages[\s\S]*?(?=\n {6}- name:|\s*$)/,
-  )?.[0];
-
-  assert.ok(confirmation, 'workflow must retain a final package confirmation step');
-  assert.match(confirmation, /for attempt in \{1\.\.12\}; do/);
-  assert.match(confirmation, /core_version=.*xgg-core/);
-  assert.match(confirmation, /cli_version=.*xgg-cli/);
-  assert.match(confirmation, /cli_core=[\s\S]*?dependencies\.@eyaeya\/xgg-core/);
-  assert.match(confirmation, /if \[ "\$confirmed" != true \]; then/);
-  assert.match(confirmation, /exit 1/);
+  assert.match(workflow, /cat > "\$RUNNER_TEMP\/xgg-confirm-npm\.mjs" <<'NODE'/);
+  for (const [step, mode] of [
+    ['Confirm core is available', 'core'],
+    ['Confirm both packages', 'all'],
+  ]) {
+    const confirmation = workflow.match(
+      new RegExp(`- name: ${step}[\\s\\S]*?(?=\\n {6}- name:|\\s*$)`),
+    )?.[0];
+    assert.ok(confirmation, `workflow must retain ${step}`);
+    assert.ok(
+      confirmation.includes(`node "$RUNNER_TEMP/xgg-confirm-npm.mjs" "$PACKAGE_VERSION" ${mode}`),
+    );
+  }
 });
