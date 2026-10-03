@@ -503,6 +503,8 @@ export function deriveHabitLearningHypotheses(
 export interface GenerateHabitLearningProfileInput {
   sourceSemanticDigest: string;
   sourceInventoryHash: string;
+  /** Required for authoring reuse; optional only for legacy callers/artifacts. */
+  sourcePlanId?: string;
   generatedAt: number;
   observedFrom: number;
   observedUntil: number;
@@ -578,6 +580,7 @@ export function generateHabitLearningProfile(
     profileVersion: HABIT_LEARNING_PROFILE_VERSION,
     sourceSemanticDigest: input.sourceSemanticDigest,
     sourceInventoryHash: input.sourceInventoryHash,
+    ...(input.sourcePlanId !== undefined && { sourcePlanId: input.sourcePlanId }),
     generatedAt: input.generatedAt,
     observedFrom: input.observedFrom,
     observedUntil: input.observedUntil,
@@ -619,6 +622,8 @@ export interface EvaluateHabitLearningProfileFreshnessInput {
   currentSemanticDigest?: string;
   /** Current inventory identity, when the caller has refreshed live inventory. */
   currentInventoryHash?: string;
+  /** Current plan identity, computed using freshly fetched MIoT semantics. */
+  currentPlanId?: string;
 }
 
 /**
@@ -656,7 +661,11 @@ export function evaluateHabitLearningProfileFreshness(
       reasons: ['profile-expired'],
     });
   }
-  if (input.currentSemanticDigest === undefined || input.currentInventoryHash === undefined) {
+  if (
+    input.currentSemanticDigest === undefined ||
+    input.currentInventoryHash === undefined ||
+    input.currentPlanId === undefined
+  ) {
     return HabitLearningProfileFreshnessSchema.parse({
       evaluatedAt: input.evaluatedAt,
       status: 'stale',
@@ -665,7 +674,16 @@ export function evaluateHabitLearningProfileFreshness(
       reasons: ['live-drift-check-required'],
     });
   }
-  const driftReasons: Array<'semantic-digest-mismatch' | 'inventory-drift'> = [];
+  if (profile.sourcePlanId === undefined) {
+    return HabitLearningProfileFreshnessSchema.parse({
+      evaluatedAt: input.evaluatedAt,
+      status: 'stale',
+      reusableForRuleAuthoring: false,
+      minimumCompleteness,
+      reasons: ['source-plan-unavailable'],
+    });
+  }
+  const driftReasons: Array<'semantic-digest-mismatch' | 'inventory-drift' | 'plan-drift'> = [];
   if (
     input.currentSemanticDigest !== undefined &&
     input.currentSemanticDigest !== profile.sourceSemanticDigest
@@ -678,6 +696,7 @@ export function evaluateHabitLearningProfileFreshness(
   ) {
     driftReasons.push('inventory-drift');
   }
+  if (input.currentPlanId !== profile.sourcePlanId) driftReasons.push('plan-drift');
   if (driftReasons.length > 0) {
     return HabitLearningProfileFreshnessSchema.parse({
       evaluatedAt: input.evaluatedAt,

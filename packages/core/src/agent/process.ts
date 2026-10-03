@@ -171,6 +171,18 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentHandle> {
         try {
           return await router.request(method, params, {
             ...(timeoutMs !== undefined && { timeoutMs }),
+            ...(kind === 'write' && {
+              onInterrupted: (cause: NetworkError) =>
+                new NotConfirmedError(
+                  `gateway call ${method} was sent but its response was not confirmed (the write may or may not have applied)`,
+                  {
+                    method,
+                    causeCode: cause.code,
+                    causeMessage: cause.message,
+                    hint: 'inspect live state before retrying the write',
+                  },
+                ),
+            }),
             onTimeout: (ms) =>
               kind === 'write'
                 ? new NotConfirmedError(

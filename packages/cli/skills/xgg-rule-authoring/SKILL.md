@@ -3,7 +3,7 @@ name: xgg-rule-authoring
 description: Use when an LLM Agent must understand, design, inspect, validate, or operate Xiaomi Central Hub Geek Edition automation rule graphs through the xgg CLI, including household habit learning, the complete 25 executable cards plus nop, event/state pins, MIoT enums and value semantics, complex temporal/state patterns, variables, safe live verification, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-1114866e94a3463846571eb3a81fa207aa9fec16eb73f2297f20c6c708f5204e -->
+<!-- xgg-skill-content-build: sha256-14eb0aa6efcc14540c10c7ee626984dd71eb1e6331ec41b9d37a6d2f7a1b1c9c -->
 
 # xgg 中枢网关自动化编译器
 

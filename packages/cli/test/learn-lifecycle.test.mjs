@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { afterEach, beforeEach } from 'node:test';
 
 import {
   createHabitLearningCorrection,
@@ -13,6 +13,7 @@ import {
   createIpcServer,
   deriveHabitLearningHypotheses,
 } from '@eyaeya/xgg-core';
+import { __resetSpecCache } from '../../core/dist/http-client.js';
 import {
   buildProfileAnalysisContract,
   describeHabitLearningProfileRegion,
@@ -29,6 +30,11 @@ import { buildProgram } from '../dist/program.js';
 const baseUrl = 'http://learn-lifecycle.test';
 const agentStartedAt = '2026-07-30T10:00:00.000Z';
 const deviceUrn = 'urn:miot-spec-v2:device:switch:0000A003:habit-lifecycle-fixture:1';
+
+// Fixtures reuse one registry URL while varying its semantics. Preserve cache
+// behavior inside each test without allowing one fixture to seed the next.
+beforeEach(__resetSpecCache);
+afterEach(__resetSpecCache);
 
 function endpointPath(root) {
   if (process.platform === 'win32') {
@@ -622,6 +628,74 @@ test('learn lifecycle creates one safe graph, captures, disables, and writes an 
   );
 });
 
+test('learn profile refreshes specs and refuses same-URN semantic drift and legacy provenance', async (t) => {
+  const fake = await startFakeGateway(t);
+  const originalFetch = globalThis.fetch;
+  const originalNoRefresh = process.env.XGG_NO_REFRESH_HINT;
+  let currentSpec = fixtureSpec();
+  let fetchFails = false;
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    if (fetchFails) return new Response('', { status: 503 });
+    return new Response(JSON.stringify(currentSpec), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  process.env.XGG_NO_REFRESH_HINT = '1';
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    if (originalNoRefresh === undefined) Reflect.deleteProperty(process.env, 'XGG_NO_REFRESH_HINT');
+    else process.env.XGG_NO_REFRESH_HINT = originalNoRefresh;
+  });
+  await prepareAndEnableStudy(fake);
+  const argumentsFor = (command) => [
+    'learn',
+    command,
+    '--study-dir',
+    fake.studyDir,
+    '--base-url',
+    baseUrl,
+    '--session-file',
+    fake.sessionFile,
+  ];
+  await captureStdout(() => buildProgram().parseAsync(argumentsFor('finish'), { from: 'user' }));
+  const readProfile = () =>
+    captureStdout(() =>
+      buildProgram().parseAsync([...argumentsFor('profile'), '--minimum-completeness', 'bounded'], {
+        from: 'user',
+      }),
+    );
+  const [baseline] = await readProfile();
+  assert.equal(baseline.freshness.reusableForRuleAuthoring, true);
+  const requestsBeforeDrift = requests;
+  currentSpec = fixtureSpec();
+  currentSpec.services[0].properties[0]['value-list'] = [
+    { value: 0, description: 'On' },
+    { value: 1, description: 'Off' },
+  ];
+  const [drifted] = await readProfile();
+  assert.equal(drifted.freshness.status, 'stale');
+  assert.equal(drifted.freshness.reusableForRuleAuthoring, false);
+  assert.deepEqual(drifted.freshness.reasons, ['plan-drift']);
+  assert.ok(requests > requestsBeforeDrift, 'freshness must refresh a cached same-URN spec');
+
+  fetchFails = true;
+  const [unavailable] = await readProfile();
+  assert.equal(unavailable.freshness.reusableForRuleAuthoring, false);
+  assert.deepEqual(unavailable.freshness.reasons, ['plan-drift']);
+  fetchFails = false;
+  currentSpec = fixtureSpec();
+  const profilePath = join(fake.studyDir, 'profile.json');
+  const legacyProfile = JSON.parse(await readFile(profilePath, 'utf8'));
+  Reflect.deleteProperty(legacyProfile, 'sourcePlanId');
+  await writeFile(profilePath, JSON.stringify(legacyProfile), { mode: 0o600 });
+  const [legacy] = await readProfile();
+  assert.equal(legacy.freshness.reusableForRuleAuthoring, false);
+  assert.deepEqual(legacy.freshness.reasons, ['source-plan-unavailable']);
+});
+
 test('learn start checks the canonical target behind a symlinked parent for Git exposure', async (t) => {
   if (process.platform === 'win32') {
     t.skip('directory symlink setup is platform-dependent on Windows');
@@ -839,8 +913,9 @@ test('learn start freezes analysis settings and requires a reviewed, live-curren
   const fake = await startFakeGateway(t);
   const originalFetch = globalThis.fetch;
   const originalNoRefresh = process.env.XGG_NO_REFRESH_HINT;
+  let currentSpec = fixtureSpec();
   globalThis.fetch = async () =>
-    new Response(JSON.stringify(fixtureSpec()), {
+    new Response(JSON.stringify(currentSpec), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
@@ -985,6 +1060,36 @@ test('learn start freezes analysis settings and requires a reviewed, live-curren
     'live drift must abort before enable mutation',
   );
   assert.equal([...fake.rules.values()][0].cfg.enable, false);
+  fake.setDeviceOverrides({});
+  currentSpec = fixtureSpec();
+  currentSpec.services[0].properties[0]['value-list'][0].description = 'Changed enum meaning';
+  const callsBeforeSpecDrift = fake.calls.length;
+  await assert.rejects(
+    buildProgram().parseAsync(
+      [
+        'learn',
+        'start',
+        '--study-dir',
+        fake.studyDir,
+        '--enable',
+        '--plan-id',
+        output[0].planId,
+        '--base-url',
+        baseUrl,
+        '--session-file',
+        fake.sessionFile,
+      ],
+      { from: 'user' },
+    ),
+    /live inventory or MIoT semantics changed/,
+  );
+  assert.equal(
+    fake.calls
+      .slice(callsBeforeSpecDrift)
+      .some(({ method }) => method === '/api/changeGraphConfig'),
+    false,
+    'a cached same-URN spec must not hide semantic drift before enable',
+  );
 });
 
 test('learn start serializes concurrent lifecycle writers before planning or mutation', async (t) => {

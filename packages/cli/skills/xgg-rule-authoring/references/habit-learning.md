@@ -58,6 +58,7 @@ xgg learn profile --help
 - `finish` 可恢复且顺序固定：规则仍启用时完成最终 capture、fsync journal/gaps、原子提交 checkpoint，然后 disable 并 readback `enable=false`。最终抓取或停用确认失败时保持 `finishing`/degraded 并非零退出；不能越过失败生成“完成”画像。
 - `clarify` 把一条带 `recordedAt`、有效时间 `asOf` 和来源的用户修正追加到 `corrections.ndjson`，不覆写早期修正或 raw evidence。区域问题必须让用户查米家 App，不能由 Agent 从活动轨迹猜。
 - `profile` 只返回不含原始设备标识的画像与 freshness 判定。默认会读取当前 live graph、inventory/spec 做漂移核对；`--local-only` 只用于离线检查，必定返回不可直接复用。只有 `reusableForRuleAuthoring=true` 的 `current` 画像可作为后续规则证据；`stale`、`expired`、`invalidated` 或 `insufficient` 一律回退为向用户提问或发起新的聚焦观察。
+- 画像保存来源 `sourcePlanId`；在线 `profile` 与启用前重规划会强制刷新 MIoT spec，并比较完整计划指纹。同 URN 的枚举含义、单位、值域或能力变化也会阻止复用（`plan-drift`）。旧画像缺少该指纹时返回 `source-plan-unavailable`；不得手填指纹使旧证据看似有效，应重新完成来源核对或采集。
 
 生命周期 checkpoint 使用 `preparing → ready-disabled → observing / observing-degraded → finishing → awaiting-clarification → complete`。不要根据墙钟或对话记忆自行推进 phase，以 `status` 读取的 durable state 为准。
 
