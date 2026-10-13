@@ -150,14 +150,14 @@ const HINTS: HintRule[] = [
   {
     code: 'AUTH_EXPIRED',
     command: '*',
-    hint: 'First reuse Mi Home authorization with `xgg cloud login`, then `xgg cloud gateway login --did <GATEWAY_DID>`. If cloud bootstrap is unsupported, ask for a fresh code and use `xgg login --code <CODE>`.',
+    hint: 'First reuse Mi Home authorization with `xgg cloud login`, then `xgg cloud gateway login --did <GATEWAY_DID>`. If cloud bootstrap is unavailable or manual login is chosen, ask for the gateway management URL/IP and a fresh 6-digit code, then use `xgg login --code <CODE> --base-url <BASE_URL>`.',
   },
 
   // AUTH_REQUIRED
   {
     code: 'AUTH_REQUIRED',
     command: '*',
-    hint: 'First use `xgg cloud login` and `xgg cloud gateway login --did <GATEWAY_DID>`. Use `xgg login --code <CODE>` only when cloud bootstrap is unavailable or manual login is chosen.',
+    hint: 'First use `xgg cloud login` and `xgg cloud gateway login --did <GATEWAY_DID>`. If cloud bootstrap is unavailable or manual login is chosen, ask for the gateway management URL/IP and a fresh 6-digit code, then use `xgg login --code <CODE> --base-url <BASE_URL>`.',
   },
 
   // NOT_FOUND — agent-facing paths where a named resource (scope, id, etc.)

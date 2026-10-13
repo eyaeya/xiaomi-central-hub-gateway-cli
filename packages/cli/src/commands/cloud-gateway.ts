@@ -12,13 +12,31 @@ export function cloudGatewayCommand(): Command {
     'Bootstrap a gateway session through Mi Home.',
   );
   const command = new Command('login')
-    .description('Fetch a gateway code in memory and log in; reuse a live daemon when possible.')
+    .description(
+      'Discover the gateway address through Mi Home, fetch a code in memory and log in; reuse a live daemon when possible.',
+    )
     .requiredOption('--did <did>', 'explicit gateway, router or smart-screen cloud DID')
-    .option('--base-url <url>', 'override the gateway address (or XGG_BASE_URL)')
+    .option(
+      '--base-url <url>',
+      'explicit address override (or XGG_BASE_URL); otherwise discover through Mi Home',
+    )
     .option('--session-file <path>', 'gateway session file (or XGG_SESSION_FILE)')
     .option('--auth-file <path>', 'Mi Home auth file (or XGG_CLOUD_AUTH_FILE)')
     .option('--timeout <ms>', 'cloud request timeout in milliseconds')
-    .option('--pretty', 'pretty-print JSON');
+    .option('--pretty', 'pretty-print JSON')
+    .addHelpText(
+      'after',
+      `
+With a known cloud DID, no gateway IP or manual code is required. When neither
+--base-url nor XGG_BASE_URL is set, Mi Home supplies the gateway management URL.
+The login code stays in memory. The returned baseUrl and nextCommand retain the
+address needed by later local commands. The gateway must be reachable on your LAN.
+
+Examples:
+  $ xgg cloud gateway login --did <GATEWAY_DID>
+  $ xgg cloud gateway login --did <GATEWAY_DID> --base-url <BASE_URL>
+`,
+    );
   command.action(
     wrap('cloud.gateway.login', async () => {
       const opts = command.optsWithGlobals();

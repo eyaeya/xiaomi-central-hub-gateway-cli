@@ -30,7 +30,7 @@ export function loginCommand(): Command {
       'after',
       `
 Example:
-  $ xgg login --code <CODE>
+  $ xgg login --code <CODE> --base-url <BASE_URL>
 
 Security:
   --code may be visible in the parent process argv and shell history.

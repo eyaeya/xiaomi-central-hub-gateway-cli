@@ -21,9 +21,9 @@
 
 GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli)。npm 包：[`@eyaeya/xgg-cli`](https://www.npmjs.com/package/@eyaeya/xgg-cli)、[`@eyaeya/xgg-core`](https://www.npmjs.com/package/@eyaeya/xgg-core)。
 
-## v2.2.0：扫码一次，贯通设备直控与中枢联调
+## v3.0.0：扫码后自主定位中枢，贯通云端直控与自动化
 
-新增原生 TypeScript `xgg cloud`，基于 [Do1e/mijia-api](https://github.com/Do1e/mijia-api) 的云端协议整合，**无需 Python 或 uv，也无需先登录网关即可操作云端设备**。
+原生 TypeScript `xgg cloud` 基于 [Do1e/mijia-api](https://github.com/Do1e/mijia-api) 的云端协议整合，**无需 Python 或 uv，也无需先登录网关即可操作云端设备**。
 
 | 新能力 | 对用户和 Agent 的价值 |
 | --- | --- |
@@ -33,7 +33,42 @@ GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaey
 | 两个方向验证自动化 | 中枢规则执行后从云端观察设备；云端改变设备后从中枢读取规则日志和变量。 |
 | 安全恢复和证据留存 | 可读属性先保存原值，写入后回读，测试后恢复；写入状态未知时不自动重发。 |
 
-v2.2.0 在 v2.1.1 的网关能力基础上增加云端直控，保留习惯学习、规则 trace、保真导入导出、设备替换和写入保护。完整变更见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。本次覆盖主要云端业务路径，尚未提供上游 MCP 服务和批量物理写入等接口，不宣称与 mijia-api 全功能等价。
+v3.0.0 整合 v2.2.0 已提供的云端能力，本轮补全中枢定位、未知 IP 时的云端地址发现，以及手动地址与登录码回退；习惯学习、规则 trace、保真导入导出、设备替换和写入保护继续保留。完整变更见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。本次覆盖主要云端业务路径，尚未提供上游 MCP 服务和批量物理写入等接口，不宣称与 mijia-api 全功能等价。
+
+### 不知道中枢 IP，也可以从米家清单开始
+
+先扫码或复用云端授权，再列出目标家庭的设备。中枢候选包括独立中枢设备、内置中枢的路由器，以及部分家庭屏；需要结合具体型号、固件与米家设备页判断，不能只筛独立 hub，也不能把所有路由器或家庭屏当作中枢。候选不唯一时先向用户确认目标，不能自动选清单第一台。
+
+官方型号示例（2026-10-13 查阅）：
+
+| 候选类别 / 型号 | 官方资料可确认的范围 |
+| --- | --- |
+| [小米中枢网关](https://www.mi.com/shop/buy/detail?product_id=15755) | 独立中枢产品。 |
+| [路由器 BE6500 Pro](https://www.mi.com/xiaomi-routers/6500pro) | 内置中枢，官方明确支持米家极客版。 |
+| [智能家庭屏 11](https://www.mi.com/xiaomi-smartdisplay-11) | 官方确认集成中枢；本页没有确认极客版或 xgg RPC。 |
+| [智能家庭屏 Pro 8](https://www.mi.com/xiaomi-smartdisplay-pro-8) | 官方要求另购中枢；其蓝牙 Mesh 能力不能当作内置中枢。 |
+
+蓝牙/Mesh 网关、中枢能力、极客版及两个云端 RPC 是不同层次。即使型号声明支持极客版，也要验证目标固件和当前角色；设备昵称“BE6500”不能代替完整 SKU 核对。
+
+```bash
+xgg cloud home list
+xgg cloud device list --home-id <HOME_ID>
+# 确定目标 DID 后，不提供 --base-url，由云端发现地址并取码。
+xgg cloud gateway login --did <GATEWAY_DID>
+# 按返回的 nextCommand.argv 检查状态，或显式使用返回的 baseUrl。
+xgg status --base-url <RETURNED_BASE_URL>
+```
+
+云端发现要求本次调用既不传 `--base-url`，也没有遗留的 `XGG_BASE_URL` 覆盖目标；已知且确认有效的地址仍可显式传入。登录成功不代表获得远程网络通路，本机仍须能访问返回的局域网地址。使用自定义 session 文件时，状态及后续操作必须继续携带同一 `--session-file`。
+
+纯网络故障先检查地址、端口、是否同网及路由，不立即索取或更换登录码。无法确定目标时先确认候选设备。只有云端地址发现/取码不支持，或确实缺少地址、认证信息时，才说明具体缺口，引导用户打开米家 App 对应设备的中枢/极客版页面，并只补充所缺信息；需要手动认证时使用当前地址与新的六位码：
+
+```bash
+xgg login --base-url <USER_PROVIDED_URL> --code <FRESH_CODE>
+xgg status --base-url <USER_PROVIDED_URL>
+```
+
+完整候选识别、无已知地址登录与回退流程见 [中枢定位指南](skills/xgg-rule-authoring/references/gateway-discovery.md)。
 
 ### Agent 友好的扫码流程
 
@@ -101,9 +136,13 @@ Agent 写操作使用 `XGG_AGENT_MODE=1` 和私有 `XGG_SNAPSHOTS_DIR`。可读�
 
 ### 本轮实机验收与边界
 
+本轮中枢定位验证清除了地址、会话和登录码的环境覆盖，使用新 session，仅传目标 DID、云端授权文件和 session 文件。CLI 从云端发现地址后自主取码，返回 `reused:false`，随后同目标 `status.live=true`。该证据来自一台路由器集成中枢，不能外推为全部候选型号兼容。
+
+下面保留 v2.2.0 云端集成轮次的设备与联调验收记录：
+
 受测家庭共 37 台设备，30 台在线、7 台离线。本轮筛选 17 台可逆写入候选：1 台因设备直读保护未通过而没有写入；实际写入 16 台，最终 16 台均通过原值恢复回读。其中 **14 台的测试变化已回读确认**；另 2 台（摄像头亮度、窗帘唤醒设置）只有写入 ACK，测试变化未得到确认，不能计作动作成功。
 
-v2.2.0 构建还验证了两个方向：中枢输出驱动灯变化，云端 `watch` 记录 `false → true → false`；云端改变灯后，中枢观察变量变为 `1`，恢复后变为 `0`。两条测试规则均已停用并保留。这些是设备报告与规则链证据，未宣称肉眼观察了每台设备。
+此前 v2.2.0 构建验证了两个方向：中枢输出驱动灯变化，云端 `watch` 记录 `false → true → false`；云端改变灯后，中枢观察变量变为 `1`，恢复后变为 `0`。两条测试规则均已停用并保留。这些是设备报告与规则链证据，未宣称肉眼观察了每台设备。
 
 本轮已验证已有云端授权复用，以及**独立新授权扫码确认 → 云端设备查询 → 新独立 session 自动取码登录中枢 → 规则列表读取**的完整链路，全程无需用户手抄六位码。扫码时改用唯一图片路径后成功；这一对比支持旧图缓存解释，未取得界面缓存内部证据。未操作全部场景、音箱指令或不可恢复动作。详见 [云端审查与实测记录](docs/superpowers/reviews/2026-10-13-cloud-review-results.md)。
 
@@ -728,7 +767,7 @@ npm publish release-artifacts/eyaeya-xgg-cli-*.tgz --access public
 
 ## Agent 权威参考
 
-供 AI Agent 操作本 CLI 的完整权威指南见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。云端登录、设备直控与两种联调路径读取 [`references/cloud-workflows.md`](skills/xgg-rule-authoring/references/cloud-workflows.md)。首次设计/改写规则必须按入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或实机写入时再读取对应的 `device-semantics.md`、`recipes.md`、`operations.md`；新家庭观察、区域语义回访和画像复用则读取 [`references/habit-learning.md`](skills/xgg-rule-authoring/references/habit-learning.md)。这套材料覆盖 25 种执行卡片 + `nop`、event/state 图模型、完整 flags/defaults/enums、MIoT label→wire value、复杂 reset/stop 模式和证据分层，并明确禁止使用未经当前 xgg 校验的历史、第三方节点 JSON。
+供 AI Agent 操作本 CLI 的完整权威指南见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。中枢候选定位、未知地址和手动回退读取 [`references/gateway-discovery.md`](skills/xgg-rule-authoring/references/gateway-discovery.md)；云端登录、设备直控与两种联调路径读取 [`references/cloud-workflows.md`](skills/xgg-rule-authoring/references/cloud-workflows.md)。首次设计/改写规则必须按入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或实机写入时再读取对应的 `device-semantics.md`、`recipes.md`、`operations.md`；新家庭观察、区域语义回访和画像复用则读取 [`references/habit-learning.md`](skills/xgg-rule-authoring/references/habit-learning.md)。这套材料覆盖 25 种执行卡片 + `nop`、event/state 图模型、完整 flags/defaults/enums、MIoT label→wire value、复杂 reset/stop 模式和证据分层，并明确禁止使用未经当前 xgg 校验的历史、第三方节点 JSON。
 
 ## License
 
