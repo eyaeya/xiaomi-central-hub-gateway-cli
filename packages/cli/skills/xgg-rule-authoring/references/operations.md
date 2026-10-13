@@ -30,17 +30,16 @@ node packages/cli/dist/cli.js --help
 
 ## 登录与写前保护
 
-先读 [cloud-workflows.md](cloud-workflows.md) 的扫码与自主取码流程。优先 `cloud login` 复用米家授权；需扫码时先完成准备、生成后立即展示未过期二维码，引导米家 App 确认，使用返回的 `nextCommand.argv` 保留账号路径继续等待。旧码过期后必须生成新码，不能要求扫描旧图。已有 live daemon 可直接复用；否则确定真实中枢 DID 后：
+先读 [cloud-workflows.md](cloud-workflows.md) 的扫码与自主取码流程。优先 `cloud login` 复用米家授权；需扫码时先完成准备、生成后立即展示未过期二维码，引导米家 App 确认，使用返回的 `nextCommand.argv` 保留账号路径继续等待。旧码过期后必须生成新码，不能要求扫描旧图。已有明确地址的 live daemon 可直接复用；中枢设备/DID/IP 未知时读 [gateway-discovery.md](gateway-discovery.md)。确定真实中枢 DID 后，未知地址应由云端发现：
 
 ```bash
-xgg status --base-url http://<gateway-ip>:8086
-xgg cloud gateway login --did <GATEWAY_DID> --base-url http://<gateway-ip>:8086
+env -u XGG_BASE_URL xgg cloud gateway login --did <GATEWAY_DID>
 # 登录成功后按返回的 nextCommand.argv 验证；后续命令沿用其 baseUrl/session-file
 export XGG_AGENT_MODE=1
 export XGG_SNAPSHOTS_DIR="$PWD/.xgg-local/snapshots"
 ```
 
-- `AUTH_REQUIRED` / `AUTH_EXPIRED` 或 exit 3 先区分云端与网关认证域；仅云端取码不支持、目标不能确定或用户选择手动流程时，才说明原因并索取六位码。码短时有效，绝不写入日志报告、仓库、Issue/PR 或命令历史示例。
+- `AUTH_REQUIRED` / `AUTH_EXPIRED` 或 exit 3 先区分云端与网关认证域；云端发现/取码不支持、目标不能确定或用户选择手动流程时，按定位指南询问缺失的极客完整 URL（或 LAN IP 加端口）以及最新六位码；手动 login 后先 status 验证；为避免环境漂移，手动 login 与后续命令显式传入同一 `--session-file`。网络不可达先排连接，不反复索码。码短时有效，绝不写入日志报告、仓库、Issue/PR 或命令历史示例。
 - Agent 写操作始终启用当前工作目录下的私有 snapshot 目录，并排除版本控制。网关写保存网关快照；云端保存独立审计和可读取的原值，不依赖网关 dump。恢复测试必须提前读到原值，不能借 write-only 例外绕过；动作审计不代表可恢复。
 - 普通工作不使用 `--no-snapshot`、`--no-validate`、`--no-var-check`。它们只用于已经解释风险、可回滚的协议/修复实验。
 - 写前先 `rule view` 记录 `enable`；已启用规则的 node/edge/layout/set 修改可能立即生效。

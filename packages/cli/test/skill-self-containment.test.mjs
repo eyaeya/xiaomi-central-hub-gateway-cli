@@ -11,6 +11,7 @@ const canonicalSkillFiles = [
   'SKILL.md',
   'references/cloud-workflows.md',
   'references/device-semantics.md',
+  'references/gateway-discovery.md',
   'references/graph-model.md',
   'references/habit-learning.md',
   'references/node-catalog.md',

@@ -1,6 +1,6 @@
 {
   "name": "xgg-public-release",
-  "version": "2.2.0",
+  "version": "3.0.0",
   "private": true,
   "description": "Public release workspace for xgg cloud device control and local gateway automation",
   "type": "module",

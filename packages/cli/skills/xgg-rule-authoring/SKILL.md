@@ -3,13 +3,13 @@ name: xgg-rule-authoring
 description: Use when an Agent controls Xiaomi Home devices through xgg cloud or authors and debugs Central Hub Geek Edition rules, including Mi Home QR authorization, automatic gateway login, cloud/local verification, household habit learning, all 25 cards plus nop, event/state semantics, variables, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-86482c62d632387450fce29ac6cc7d34a14bb392bcc79d53aa1d53c61cc62931 -->
+<!-- xgg-skill-content-build: sha256-1e04776ce1c9b410f0e06dc3ed3e74855284e6a4e44c0dc20bafdee37eb444a4 -->
 
 # xgg 米家云端控制与中枢网关自动化编译器
 
 ## 云端任务路由
 
-扫码登录、设备直接读写/观察、云端与网关双向联调，先读 [references/cloud-workflows.md](references/cloud-workflows.md)。优先米家 App 扫码云端授权，再自主获取中枢六位码；已有授权和 live daemon 均复用；扫码续接采用返回的 `nextCommand.argv`，网关引导后保留返回的 baseUrl 和所选 session 文件用于后续命令。只做云端操作无需读取规则卡目录。写前、写后与恢复核验用 `get/watch --source device`，auto/cache 不可冒充实时状态；设备直读失败时不得把缓存当恢复证明。规则任务继续遵循下面完整编译与验收契约，不能因云端可控而省略网关 spec/日志证明。
+扫码登录、设备直接读写/观察、云端与网关双向联调，先读 [references/cloud-workflows.md](references/cloud-workflows.md)。优先米家 App 扫码云端授权，再自主获取中枢六位码；已有授权和 live daemon 均复用；扫码续接采用返回的 `nextCommand.argv`，网关引导后保留返回的 baseUrl 和所选 session 文件用于后续命令。不知道承载设备、DID 或地址时读 [references/gateway-discovery.md](references/gateway-discovery.md)，先定位再云端发现地址。只做云端操作无需读取规则卡目录。写前、写后与恢复核验用 `get/watch --source device`，auto/cache 不可冒充实时状态；设备直读失败时不得把缓存当恢复证明。规则任务继续遵循下面完整编译与验收契约，不能因云端可控而省略网关 spec/日志证明。
 
 ## 目标
 
@@ -44,6 +44,7 @@ description: Use when an Agent controls Xiaomi Home devices through xgg cloud or
 - 有任意设备 property/event/action：读 [references/device-semantics.md](references/device-semantics.md)。
 - 有 sequence/condition/hold/counter/limit/register/loop/modeSwitch/dynamic action：读 [references/recipes.md](references/recipes.md)。
 - 云端登录、设备 get/set/watch 或与网关联调：读 [references/cloud-workflows.md](references/cloud-workflows.md)。
+- 中枢设备/DID/IP 未知、候选无法定位，或需人工登录兜底：读 [references/gateway-discovery.md](references/gateway-discovery.md)。
 - 要网关实机写入、变量/表达式、日志/trace、备份或恢复：读 [references/operations.md](references/operations.md)。
 - 新家庭首次配置、24 小时至一周行为观察、区域语义回访或画像复用：读 [references/habit-learning.md](references/habit-learning.md)。
 
@@ -197,7 +198,7 @@ export XGG_AGENT_MODE=1
 export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 ```
 
-- 出现 auth required/expired 或 exit 3，停止当前写入并区分认证域：云端授权走扫码；网关会话优先 `cloud gateway login` 自主取码，仅明确不支持时回退手动码。登录码永不落入仓库、Issue/PR 或报告；未知结果的写入不自动重放。
+- 出现 auth required/expired 或 exit 3，停止当前写入并区分认证域：云端授权走扫码；网关会话优先 `cloud gateway login` 自主取码，云端发现/取码不支持时按定位指南回退完整地址加新码。登录码永不落入仓库、Issue/PR 或报告；未知结果的写入不自动重放。
 - 已启用规则的 node/edge/layout/set 修改可能立即生效。写前读 enable；需要隔离时按授权先 disable，或离线构造后单次 set。
 - mutation lease 只串行 xgg，不是网页 CAS；写期间停止网页编辑。
 - 不用 `--no-snapshot/--no-validate/--no-var-check` 绕过正常失败。

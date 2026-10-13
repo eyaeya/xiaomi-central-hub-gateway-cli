@@ -1,12 +1,35 @@
-# xgg v2.2.0 · 米家云端直控与中枢自动化，终于能一起验证
+# xgg v3.0.0 · 从米家扫码到自主发现中枢，云端与本地一起验证
 
-xgg 从“让 Agent 编写中枢自动化”，扩展为“让 Agent 控制设备，并用云端状态与中枢日志共同验证自动化”。本次增加原生 TypeScript 米家云端能力、在对话中展示二维码的登录流程，以及云端自动获取中枢六位码的会话引导。
+xgg 将米家云端直控、Agent 对话扫码、中枢地址发现、自动取码和双向联调整合为完整工作流。用户不知道中枢 IP 时，Agent 也能先从米家设备清单确定候选，再通过云端发现地址并登录；云端路径不可用时，有明确的手动地址与六位码回退。
 
-v2.2.0 在 v2.1.1 基础上新增云端能力，保留习惯学习、结构化 trace、规则保真导入导出、设备替换和既有写入保护。`@eyaeya/xgg-core`、`@eyaeya/xgg-cli` 与随包 Skill 一同升级。
+v3.0.0 基于已发布的 v2.2.0，统一交付已有云端能力与本轮中枢定位、登录引导修订。本次由项目维护者按能力升级指定 3.0.0 大版本号；已有命令与习惯学习、结构化 trace、规则保真导入导出、设备替换和写入保护继续保留。`@eyaeya/xgg-core`、`@eyaeya/xgg-cli` 与随包 Skill 一同升级。
+
+## 本轮重点：不知道 IP，也能自主找到并登录中枢
+
+登录不再以用户提前抄好 IP 和六位码为默认前提。Agent 先完成米家扫码授权、列出目标家庭设备，再从独立中枢、内置中枢的路由器和部分家庭屏中确认实际候选。设备名或品类只是识别线索，具体型号、固件及云端 RPC 必须逐一核对；多候选时先确认目标，不能取清单第一台。
+
+官方产品页提供了具体区分：[BE6500 Pro](https://www.mi.com/xiaomi-routers/6500pro) 内置中枢且支持极客版；[家庭屏 11](https://www.mi.com/xiaomi-smartdisplay-11) 确认集成中枢，但未确认极客 RPC；[家庭屏 Pro 8](https://www.mi.com/xiaomi-smartdisplay-pro-8) 则明确需要另购中枢。蓝牙 Mesh、内置中枢与支持取码 RPC 不能互相替代，产品昵称也不能代替完整型号。
+
+```bash
+xgg cloud home list
+xgg cloud device list --home-id <HOME_ID>
+# 省略 --base-url，且不保留旧 XGG_BASE_URL 覆盖，让云端发现地址。
+xgg cloud gateway login --did <GATEWAY_DID>
+# 按 nextCommand.argv 续接，或显式使用返回地址。
+xgg status --base-url <RETURNED_BASE_URL>
+```
+
+纯网络故障先核对地址、端口、是否同网及路由，不立即换码。只有云端地址发现/取码不支持，或确实需要补充地址、认证信息时，才说明具体失败原因，引导用户从对应米家设备的中枢/极客版页面补充所缺信息；需要手动认证时使用当前地址与新的六位码：
+
+```bash
+xgg login --base-url <USER_PROVIDED_URL> --code <FRESH_CODE>
+```
+
+本轮已实测去除地址、会话及登录码的环境覆盖，使用新的独立 session，仅凭明确 DID 与云端授权发现地址、取得码并登录，返回 `reused:false`，随后 `status.live=true`。本机仍须可访问发现的局域网地址；这证明了目标路由器集成中枢的流程，不代表全部候选型号都支持相关 RPC。完整流程加入随包 Skill 的 `references/gateway-discovery.md`。
 
 ## 直接操作米家设备，不必先经过中枢规则
 
-新增 `xgg cloud` 命令组，基于 [Do1e/mijia-api](https://github.com/Do1e/mijia-api) 的公开实现整合为原生 TypeScript，不要求 Python、uv 或运行中的网关 daemon。
+v2.2.0 已提供的 `xgg cloud` 命令组基于 [Do1e/mijia-api](https://github.com/Do1e/mijia-api) 的公开实现整合为原生 TypeScript，不要求 Python、uv 或运行中的网关 daemon。
 
 - 发现家庭、房间和设备，按 DID 或唯一名称选择目标。
 - 查询 MIoT spec，读取单个、多个或全部可读属性；按类型、枚举与范围校验设置值和动作参数。
@@ -24,9 +47,9 @@ xgg cloud device watch --did <DID> --property light.on --source device
 
 `watch` 是有界轮询，默认间隔 3 秒、持续 60 秒，不是服务端事件推送；时间戳表示采样观察时间。采样错误不会被伪装成设备状态变化，间隔内的短暂变化仍可能遗漏。
 
-## 新增设备直读来源，避免缓存造成恢复误判
+## 明确设备直读来源，避免缓存造成恢复误判
 
-实机测试发现：设备已恢复，云端默认数据源仍可能返回恢复前的缓存值。新增 `--source auto|device|cache`，明确每次查询使用的来源。`device get` 默认 `auto` 保持兼容，`device watch` 默认 `device`；设备写入前的原值读取固定为 `device`，不降级到缓存。输出中的 `sourcePolicy` 让 Agent 可以核对实际请求策略。
+实机测试发现：设备已恢复，云端默认数据源仍可能返回恢复前的缓存值。使用 v2.2.0 已提供的 `--source auto|device|cache`，明确每次查询使用的来源。`device get` 默认 `auto` 保持兼容，`device watch` 默认 `device`；设备写入前的原值读取固定为 `device`，不降级到缓存。输出中的 `sourcePolicy` 让 Agent 可以核对实际请求策略。
 
 回读和恢复验收使用 `--source device`，请求设备 RPC 查询；并非所有设备都支持该模式，失败时不能退回缓存后宣称验证成功。`auto` / `cache` 的结果及 `updateTime` 只能作为缓存或上报证据，不能证明设备刚刚改变状态。设备直读也仍然是设备报告值，不能替代现场观察。
 
@@ -74,7 +97,7 @@ xgg rule logs <RULE_ID> --since <ISO_TIMESTAMP> --json --base-url <RETURNED_BASE
 
 API ACK、`accepted`、设备回读、网关执行日志各自提供不同证据。日志中的成功或云端上报的新值，不等于现场肉眼确认物理动作。对超时或状态未知的写入，先查询设备与日志，不自动重发。
 
-## 审查带来的升级
+## 延续云端能力审查带来的升级
 
 - **更完整的读取路径：** 支持批量属性读取和无需账号的公共 spec 查询，减少逐个属性调用及不必要的认证。
 - **更清晰的身份与定位：** 家庭、房间与设备信息一起使用；缓存复用查询结果，减少多步操作的重复请求。
@@ -88,7 +111,7 @@ API ACK、`accepted`、设备回读、网关执行日志各自提供不同证据
 
 这次覆盖主要云端业务路径，**没有宣称完全替代 mijia-api 的所有入口和工具**。上游 MCP 服务、批量 set/action、按场景名称或批量运行场景的便利入口、绕过 spec 的原始 MIoT 高层入口、磁盘 spec 缓存、消息检查业务输出和 HAR 解密辅助工具尚未集成；地区与语言目前使用中国区 / zh_CN，没有提供多地区切换。具体设备能否执行某项操作取决于账号权限、在线状态、设备 spec 与固件；不可恢复动作不能用“测试后恢复”笼统代替风险判断。
 
-本轮真实设备验收覆盖了 37 台设备的清单（30 台在线、7 台离线），从中选择 17 台进行可逆写入验证：
+此前 v2.2.0 云端集成轮次的真实设备验收覆盖了 37 台设备的清单（30 台在线、7 台离线），从中选择 17 台进行可逆写入验证：
 
 | 验收项 | 结果 |
 | --- | --- |
@@ -97,19 +120,19 @@ API ACK、`accepted`、设备回读、网关执行日志各自提供不同证据
 | 测试变化确认 | 14 台变化已回读确认；2 台仅有 ACK，未确认测试变化。 |
 | 未确认项 | 摄像头亮度和窗帘唤醒设置，不能计作动作成功。 |
 
-v2.2.0 构建的**中枢 → 云端**测试中，网关输出驱动灯变化，云端 `watch` 观察到 `false → true → false`；**云端 → 中枢**测试中，云端改变灯后，中枢变量记录 `1`，恢复后记录 `0`。两条测试规则均停用并保留。恢复确认、设备报告的测试变化和现场物理动作是不同结论，没有宣称 16 台全部动作成功或肉眼观测全部效果。
+此前 v2.2.0 构建的**中枢 → 云端**测试中，网关输出驱动灯变化，云端 `watch` 观察到 `false → true → false`；**云端 → 中枢**测试中，云端改变灯后，中枢变量记录 `1`，恢复后记录 `0`。两条测试规则均停用并保留。恢复确认、设备报告的测试变化和现场物理动作是不同结论，没有宣称 16 台全部动作成功或肉眼观测全部效果。
 
-已有授权复用和**从新扫码到中枢的完整链路**均已验证：使用独立的新授权文件，米家 App 扫码确认后 CLI 返回 `authenticated:true`；该新授权成功查询云端设备，并通过新的独立网关 session 自动取码、登录及读取规则列表，全程无需手抄六位码。改用唯一图片路径后的成功对比支持界面缓存复用旧图的解释，未取得界面缓存内部证据。所有动作、场景、音箱指令和统计类型没有因此获得全量实机认证。完整证据与未覆盖范围见 [云端审查与实测记录](docs/superpowers/reviews/2026-10-13-cloud-review-results.md)。
+v2.2.0 轮次的已有授权复用和**从新扫码到中枢的完整链路**均已验证：使用独立的新授权文件，米家 App 扫码确认后 CLI 返回 `authenticated:true`；该新授权成功查询云端设备，并通过新的独立网关 session 自动取码、登录及读取规则列表，全程无需手抄六位码。改用唯一图片路径后的成功对比支持界面缓存复用旧图的解释，未取得界面缓存内部证据。所有动作、场景、音箱指令和统计类型没有因此获得全量实机认证。完整证据与未覆盖范围见 [云端审查与实测记录](docs/superpowers/reviews/2026-10-13-cloud-review-results.md)。
 
 ## 升级 CLI 与完整 Skill
 
 按 [README 安装流程](README.md#安装人类与-ai-agent) 安装 CLI，并用对应版本的 Git tag 安装完整 Skill，包含 `references/`。已有安装也要同步更新 Skill，不能只替换二进制。
 
 ```bash
-npm install -g @eyaeya/xgg-cli@2.2.0
+npm install -g @eyaeya/xgg-cli@3.0.0
 xgg --version
 xgg cloud --help
-npx --yes skills add eyaeya/xiaomi-central-hub-gateway-cli@v2.2.0 --global --all
+npx --yes skills add eyaeya/xiaomi-central-hub-gateway-cli@v3.0.0 --global --all
 ```
 
 Agent 仍须执行 README 的全局 Skill 发现验证，确认实际调用者能够加载该 Skill。源码开发则运行 `pnpm install`、`pnpm build`，通过 `node packages/cli/dist/cli.js` 调用当前 checkout，并用 `skills add .` 安装同一份指南。
