@@ -28,7 +28,7 @@
 
 “当前状态是否满足”与“触发瞬间查询一次”不是同一需求。前者用持续 source/state，后者用 `deviceGet`。设备不推送 property 时，不要期待 property-mode `deviceInput` 可靠触发；若该 property 有 `read`，可由可靠 event/alarm/loop 驱动 `deviceGet` 做分支，或用 `deviceGetSetVar` 捕获当前值；没有 read 就没有通用主动查询降级。no-push event 的瞬时参数、次数与顺序不能由 `deviceGet` 重建：改用业务等价的可靠 event source；只有需求本质是“采样当前状态”、且存在等价 readable property 时才重设计为查询，否则明确判定当前设备/固件无法可靠实现。
 
-`deviceInput` / `deviceInputSetVar` 的 property 与 event 都是 push source，目标设备实例必须 `pushAvailable=true`；property 还必须有 `notify`。设备报告 `pushAvailable=true` 且 property 有 `notify` 时，直接使用正常 push source，日志属于运行验收而不是 author 前置条件。`--allow-no-push` 只允许**本次 typed node add** 越过设备级 push gate；它不持久化、不绕过 notify/read/write，也不会凭空让属性/event 产生上报。在线 spec-aware 会保留 no-push error，strict lint 会保留同一 source 的 no-push warning/exit 1；只有用户明确授权的隔离临时探针，才可把目标 source 的 spec-aware no-push 作为唯一允许的 error，并显式接受同源 lint warning。其他 errors 为零，其他 warnings 仍逐项审计；图必须无物理副作用且测试后立即 disable/delete。若探针日志仍不能证明 push，按上一段区分 property 查询降级与 event 不可重建边界，不能把无日志当成能力证明。
+`deviceInput` / `deviceInputSetVar` 的 property 与 event 都是 push source，目标设备实例必须 `pushAvailable=true`；property 还必须有 `notify`。设备报告 `pushAvailable=true` 且 property 有 `notify` 时，直接使用正常 push source，日志属于运行验收而不是 author 前置条件。`--allow-no-push` 只允许**本次 typed node add** 越过设备级 push gate；它不持久化、不绕过 notify/read/write，也不会凭空让属性/event 产生上报。在线 spec-aware 会保留 no-push error，strict lint 会保留同一 source 的 no-push warning/exit 1；只有用户明确授权的隔离临时探针，才可把目标 source 的 spec-aware no-push 作为唯一允许的 error，并显式接受同源 lint warning。其他 errors 为零，其他 warnings 仍逐项审计；图必须无物理副作用且测试后立即 disable 并保留供用户核对；只有用户要求清理时才 delete。若探针日志仍不能证明 push，按上一段区分 property 查询降级与 event 不可重建边界，不能把无日志当成能力证明。
 
 ## 如何从 spec 取参数
 

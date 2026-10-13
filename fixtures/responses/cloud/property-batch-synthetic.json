@@ -1,0 +1,22 @@
+[
+  {
+    "did": "device-demo",
+    "siid": 2,
+    "piid": 2,
+    "code": -4001
+  },
+  {
+    "did": "device-demo",
+    "siid": 2,
+    "piid": 1,
+    "code": 0,
+    "value": true,
+    "updateTime": 100
+  },
+  {
+    "did": "device-demo",
+    "siid": 2,
+    "piid": 3,
+    "code": 1
+  }
+]

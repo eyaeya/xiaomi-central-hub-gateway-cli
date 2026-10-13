@@ -1,0 +1,16 @@
+{
+  "device_info": [
+    {
+      "did": "device-demo",
+      "name": "Example lamp",
+      "model": "example.light.v1",
+      "spec_type": "urn:miot-spec-v2:device:light:0000A001:example-lamp:1",
+      "isOnline": true,
+      "token": "SYNTHETIC_SECRET",
+      "ssid": "SYNTHETIC_NETWORK",
+      "longitude": "0"
+    }
+  ],
+  "has_more": false,
+  "max_did": "device-demo"
+}

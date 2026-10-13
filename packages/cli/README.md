@@ -1,6 +1,24 @@
 # @eyaeya/xgg-cli
 
-小米中枢网关极客版命令行工具。安装后提供 `xgg` 命令，可登录网关、读取设备/规则/变量、编辑自动化规则图、管理变量与备份，并读取规则运行日志。
+米家云端设备控制与小米中枢网关极客版命令行工具。安装后提供 `xgg`：直接读写米家设备，自主取码登录中枢，读取设备/规则/变量，编辑自动化规则图、管理变量与备份、学习家庭习惯，并读取规则运行日志与 trace。
+
+## v2.2.0：云端直控与中枢联调
+
+新增原生 TypeScript `xgg cloud`，无需 Python、uv 或运行中的网关 daemon。米家扫码授权后，可以发现家庭/房间/设备、读取和设置属性、执行动作，访问场景、耗材、统计和小爱音箱；需要中枢时，再通过云端自主取得六位码并复用本地会话。v2.1.1 的规则、习惯学习、导入导出、设备替换及写入保护继续保留。
+
+- **对话扫码：** `cloud login` 返回本地二维码 PNG 的 `qrImagePath`、可展示的 `qrMarkdown`、有效期 `expiresAt` 与 `nextAction`。Agent 展示二维码，引导用户用米家 App 确认，再执行 `--complete`；已有授权可复用，失效仍需重新扫码。
+- **明确读取来源：** `device get` 默认 `--source auto`，可能返回缓存。测试变化和恢复验收使用 `--source device` 请求设备 RPC；`cache` 只读最后上报缓存。不是所有设备都支持直读，失败时不能降级缓存后宣称恢复成功。
+- **双向联调：** 中枢规则执行后从云端回读/观察设备；云端改变设备后从中枢日志/变量核对触发链。`watch` 默认设备直读、每 3 秒采样、60 秒截止，是有界轮询而非推送。
+- **写前与恢复：** CLI 可读属性写前固定从设备读取原值，未确认就阻止写入；测试后先停测试入口，再恢复原值并回读。动作、场景和语音记录仅供审计，不能当作可撤销备份；状态未知的写入不自动重发。
+
+```bash
+xgg cloud device list
+xgg cloud device spec --did <DID>
+xgg cloud device get --did <DID> --properties light.on,light.brightness --source device
+xgg cloud device watch --did <DID> --property light.on --source device
+```
+
+云端 spec 校验访问权限、类型、范围和动作参数。API ACK、缓存、设备报告和中枢日志是不同证据，不能等同于肉眼确认物理效果。完整更新与验收边界见 [v2.2.0 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v2.2.0/RELEASE_NOTES.md)；尚未提供上游 MCP 服务或批量物理写入等全部能力。
 
 ## 安装（CLI + Agent Skill）
 
@@ -59,7 +77,14 @@ GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaey
 ## 快速使用
 
 ```bash
-xgg login --code <6位登录码> --base-url http://<gateway-ip>:8086
+xgg cloud login
+# 如需新授权：展示 qrMarkdown，用户用米家 App 扫码确认后再执行：
+xgg cloud login --complete --wait-ms 30000
+xgg cloud device list
+xgg cloud gateway login --did <GATEWAY_DID>
+# 将登录返回的 baseUrl 原样填入；也可先按 nextCommand.argv 执行生成的 status。
+export XGG_BASE_URL="<RETURNED_BASE_URL>"
+# 若登录指定自定义 session-file，同时设置 XGG_SESSION_FILE 为同一绝对路径。
 xgg status
 xgg device list --pretty
 xgg device get <did> --pretty
@@ -67,7 +92,11 @@ xgg rule list --pretty
 xgg variable list --pretty
 ```
 
-6 位登录码来自米家 App 的中枢网关设备页（若中枢网关是路由器或家庭屏自带的，则在对应设备内的中枢网关功能页面获取）。登录码短时有效且通常只能用一次；认证失效或退出码 3 时，请获取新码后重新 `xgg login`。
+云端授权默认兼容 `~/.config/mijia-api/auth.json`，可以复用或刷新已有授权；待扫码尚未完成时继续 `--complete`，过期时用 `cloud login --restart`。二维码、登录链接和凭据必须保持私有。
+
+`cloud gateway login` 返回 `baseUrl`、`nextCommand.argv` 与 `nextAction`，不打印六位码。登录不会隐式选择默认网关，后续本地命令仍须传同一 `--base-url` / `--session-file`，或使用对应的 `XGG_BASE_URL` / `XGG_SESSION_FILE`。电脑仍须可达中枢局域网地址。
+
+退出码 3 先区分认证域：云端授权失效走扫码；网关会话失效优先用已有云端授权自动取码。只有设备不支持取码或用户选择手动方式时，才从米家 App 对应中枢页面取得六位码，运行 `xgg login --code <CODE> --base-url <URL>`。不要在设备写入结果未知后自动重放写入。
 
 ## 新家庭先学习习惯
 
@@ -101,7 +130,7 @@ export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 $(npm root -g)/@eyaeya/xgg-cli/skills/xgg-rule-authoring/SKILL.md
 ```
 
-同一份文档也可在 GitHub 仓库中的 `skills/xgg-rule-authoring/SKILL.md` 查看。Skill 是一个完整目录，不是单文件提示词。陌生 Agent 首次编写规则必须从入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或真实网关操作时，再读取 `device-semantics.md`、`recipes.md`、`operations.md`。尚未发布到 npm 的源码变更要用当前 checkout 的 `node packages/cli/dist/cli.js`，并通过 `npx --yes skills add . --global --all` 安装同一 checkout 的完整 Skill；重装全局包不会获得未发布变更。
+同一份文档也可在 GitHub 仓库中的 `skills/xgg-rule-authoring/SKILL.md` 查看。Skill 是一个完整目录，不是单文件提示词。云端登录、直控、恢复及双向联调先读 `references/cloud-workflows.md`。陌生 Agent 首次编写规则必须从入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或真实网关操作时，再读取 `device-semantics.md`、`recipes.md`、`operations.md`。尚未发布到 npm 的源码变更要用当前 checkout 的 `node packages/cli/dist/cli.js`，并通过 `npx --yes skills add . --global --all` 安装同一 checkout 的完整 Skill；重装全局包不会获得未发布变更。
 
 ## 常用流程
 
@@ -214,7 +243,7 @@ Replacement discovery 默认排除 ghost device。显式用 `--target-did` 聚�
 
 克隆规则时，CLI 只把 `R<source-id>` 规则内变量迁移到 `R<target-id>`，先只读断言全部可发现的 modeled `global` 依赖存在且类型匹配，再预检完整的已捕获本地变量计划；随后以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备本地变量、节点和边。含 opaque 节点时会直接拒绝 clone，因为无法证明或改写其内部变量引用。只有源规则启用时才在脚本末尾追加 enable。已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前停止，且永不覆盖。已有目标本地变量只有在类型、当前值和显示名完全兼容时才保留；真实创建仍会重新检查变量竞态。网关没有 replay-wide/cross-variable transaction，预检后并发变量漂移仍可能让脚本中途停止，可用每次写前生成的 snapshot 恢复。`global` 变量不会被创建或改写。
 
-默认 stdout 输出 JSON，适合脚本和 Agent 解析；加 `--pretty` 输出人读表格。`rule trace` 也遵循此约定。例外：`rule logs` 默认输出人读表格，需要 JSON 时显式加 `--json`。
+默认 stdout 输出 JSON，适合脚本和 Agent 解析；加 `--pretty` 输出人读表格。`rule trace` 也遵循此约定。例外：`rule logs` 默认输出人读表格，需要 JSON 时显式加 `--json`；`cloud device watch` 始终输出逐行 NDJSON 观察事件。
 
 Skill 正文包含可 grep 的 `xgg-skill-content-build` 标记。摘要覆盖按相对 POSIX 路径排序的整个 Skill 文件树；每项按“路径、字节长度、原始字节”入 hash，只有 `SKILL.md` 的 marker 行及其换行不参与计算。测试会拒绝正文或任一 reference 变化但摘要未更新的陈旧标记，并保证仓库与 npm 包内的整个 Skill 目录字节一致。安装或升级后仍应递归比较包内与已安装目录；marker 相同只能快速识别内容版本，不能替代完整目录校验。
 

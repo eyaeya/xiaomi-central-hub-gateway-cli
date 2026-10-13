@@ -1,11 +1,15 @@
 ---
 name: xgg-rule-authoring
-description: Use when an LLM Agent must understand, design, inspect, validate, or operate Xiaomi Central Hub Geek Edition automation rule graphs through the xgg CLI, including household habit learning, the complete 25 executable cards plus nop, event/state pins, MIoT enums and value semantics, complex temporal/state patterns, variables, safe live verification, logs, and backups.
+description: Use when an Agent controls Xiaomi Home devices through xgg cloud or authors and debugs Central Hub Geek Edition rules, including Mi Home QR authorization, automatic gateway login, cloud/local verification, household habit learning, all 25 cards plus nop, event/state semantics, variables, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-14eb0aa6efcc14540c10c7ee626984dd71eb1e6331ec41b9d37a6d2f7a1b1c9c -->
+<!-- xgg-skill-content-build: sha256-86482c62d632387450fce29ac6cc7d34a14bb392bcc79d53aa1d53c61cc62931 -->
 
-# xgg 中枢网关自动化编译器
+# xgg 米家云端控制与中枢网关自动化编译器
+
+## 云端任务路由
+
+扫码登录、设备直接读写/观察、云端与网关双向联调，先读 [references/cloud-workflows.md](references/cloud-workflows.md)。优先米家 App 扫码云端授权，再自主获取中枢六位码；已有授权和 live daemon 均复用；扫码续接采用返回的 `nextCommand.argv`，网关引导后保留返回的 baseUrl 和所选 session 文件用于后续命令。只做云端操作无需读取规则卡目录。写前、写后与恢复核验用 `get/watch --source device`，auto/cache 不可冒充实时状态；设备直读失败时不得把缓存当恢复证明。规则任务继续遵循下面完整编译与验收契约，不能因云端可控而省略网关 spec/日志证明。
 
 ## 目标
 
@@ -39,7 +43,8 @@ description: Use when an LLM Agent must understand, design, inspect, validate, o
 
 - 有任意设备 property/event/action：读 [references/device-semantics.md](references/device-semantics.md)。
 - 有 sequence/condition/hold/counter/limit/register/loop/modeSwitch/dynamic action：读 [references/recipes.md](references/recipes.md)。
-- 要登录、实机写入、变量/表达式、日志/trace、备份或恢复：读 [references/operations.md](references/operations.md)。
+- 云端登录、设备 get/set/watch 或与网关联调：读 [references/cloud-workflows.md](references/cloud-workflows.md)。
+- 要网关实机写入、变量/表达式、日志/trace、备份或恢复：读 [references/operations.md](references/operations.md)。
 - 新家庭首次配置、24 小时至一周行为观察、区域语义回访或画像复用：读 [references/habit-learning.md](references/habit-learning.md)。
 
 这些 reference 都直接从本入口链接；不要只读 SKILL 摘要后猜细节。
@@ -125,7 +130,7 @@ typed node-add 省略 `--pos`：XGG 会按卡片内容和编辑态/极简态计�
 
 node/edge/layout/set 写入默认保留 live `enable`；已启用规则的多步编辑可能立即生效，不能把末尾 enable 当生效边界。先 readback；需要隔离时按授权先 disable，或离线构造后单次原子 set。默认图写路径会在线检查可发现的 modeled 变量引用是否存在及其实际类型；opaque/future payload 不在该证明内。`--no-var-check` 只供明确 raw probe/修复，不关闭 scope/schema/spec/enable gates。
 
-`--allow-no-push` 只允许本次 typed `deviceInput` / `deviceInputSetVar` property/event 做目标网关运行探针；不持久化、不绕过 notify/read/write，也不证明设备会发出。在线 spec-aware 会保留路径化 no-push error，strict lint 也会保留同一 source 的 no-push warning/exit 1，因此该图不能冒充通过常规 error gate。只有用户明确授权验证固件扩展时，才可在无物理副作用的专用临时规则中，把 spec-aware 的这一条 error 作为唯一允许的 error，并显式接受 strict lint 的同源 warning：其他 errors 为零，其他 warnings 仍须逐项审计，enable 后立即取 logs/readback，随后 disable/delete。strict export 仍拒绝 no-push，permissive export 才会 warning 并补回 transient flag；此例外不能作为生产规则验收。
+`--allow-no-push` 只允许本次 typed `deviceInput` / `deviceInputSetVar` property/event 做目标网关运行探针；不持久化、不绕过 notify/read/write，也不证明设备会发出。在线 spec-aware 会保留路径化 no-push error，strict lint 也会保留同一 source 的 no-push warning/exit 1，因此该图不能冒充通过常规 error gate。只有用户明确授权验证固件扩展时，才可在无物理副作用的专用临时规则中，把 spec-aware 的这一条 error 作为唯一允许的 error，并显式接受 strict lint 的同源 warning：其他 errors 为零，其他 warnings 仍须逐项审计，enable 后立即取 logs/readback，随后 disable 并保留供用户核对，仅用户要求清理时 delete。strict export 仍拒绝 no-push，permissive export 才会 warning 并补回 transient flag；此例外不能作为生产规则验收。
 
 优先 typed shortcut。只有以下场景使用 raw：
 
@@ -192,7 +197,7 @@ export XGG_AGENT_MODE=1
 export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 ```
 
-- 出现 auth required/expired 或 exit 3，停止写入并索取新的一次性码；码永不落入仓库、Issue/PR 或报告。
+- 出现 auth required/expired 或 exit 3，停止当前写入并区分认证域：云端授权走扫码；网关会话优先 `cloud gateway login` 自主取码，仅明确不支持时回退手动码。登录码永不落入仓库、Issue/PR 或报告；未知结果的写入不自动重放。
 - 已启用规则的 node/edge/layout/set 修改可能立即生效。写前读 enable；需要隔离时按授权先 disable，或离线构造后单次 set。
 - mutation lease 只串行 xgg，不是网页 CAS；写期间停止网页编辑。
 - 不用 `--no-snapshot/--no-validate/--no-var-check` 绕过正常失败。
@@ -227,4 +232,4 @@ export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 - snapshot/backup 和临时规则/变量清理状态；
 - 网页 F5 提醒。
 
-content build marker 是整个 Skill 文件树的 SHA-256：相对 POSIX 路径排序后，每项按路径、字节长度和原始字节计算，只有本文件的 marker 行及其换行不参与。它用于识别版本号相同但正文或 reference 过期的副本；仓库、package mirror、实际安装 Skill 仍必须递归字节一致。
+content build marker 是整个 Skill 文件树的 SHA-256：相对 POSIX 路径排序后，每项按路径、字节长度和原始字节计算，只有本文件的 marker 行及其换行不参与。它用于识别版本号相同但正文或 reference 过期的副本。同一版本来源的仓库、package mirror 和安装副本应递归比较；不同规则版本只同步经过审阅的增量，不能为字节一致覆盖较新规则能力。

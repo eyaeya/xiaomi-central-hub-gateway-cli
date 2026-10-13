@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { agentCommand } from './commands/agent.js';
 import { apiCommand } from './commands/api.js';
 import { backupCommand } from './commands/backup.js';
+import { cloudCommand } from './commands/cloud.js';
 import { deviceCommand } from './commands/device.js';
 import { dumpCommand } from './commands/dump.js';
 import { learnCommand } from './commands/learn.js';
@@ -16,12 +17,13 @@ export function buildProgram(): Command {
   const program = new Command();
   program
     .name('xgg')
-    .description('Xiaomi Gateway Geek Edition CLI for AI Coding')
+    .description('Xiaomi smart home CLI: cloud device control and local gateway automation')
     .version(VERSION)
     .exitOverride();
 
   program.addCommand(apiCommand());
   program.addCommand(backupCommand());
+  program.addCommand(cloudCommand());
   program.addCommand(deviceCommand());
   program.addCommand(dumpCommand());
   program.addCommand(learnCommand());
@@ -42,6 +44,9 @@ export function buildProgram(): Command {
     'after',
     `
 Examples:
+  $ xgg cloud login                               Scan in Mi Home to authorize
+  $ xgg cloud gateway login --did <DID>            Fetch the code and bind the gateway
+  $ xgg cloud device list                         Discover cloud devices
   $ xgg login --code <CODE>                        Bind agent to gateway
   $ xgg dump > inventory.json                      Export best-effort indexes
   $ xgg learn plan --include-context --pretty      Plan a read-only household study

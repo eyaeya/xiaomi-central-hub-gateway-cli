@@ -150,14 +150,14 @@ const HINTS: HintRule[] = [
   {
     code: 'AUTH_EXPIRED',
     command: '*',
-    hint: 'Ask the user for a fresh 6-digit code, then `xgg login --code <NEW_CODE>`.',
+    hint: 'First reuse Mi Home authorization with `xgg cloud login`, then `xgg cloud gateway login --did <GATEWAY_DID>`. If cloud bootstrap is unsupported, ask for a fresh code and use `xgg login --code <CODE>`.',
   },
 
   // AUTH_REQUIRED
   {
     code: 'AUTH_REQUIRED',
     command: '*',
-    hint: 'Run `xgg login --code <CODE>` to start a session.',
+    hint: 'First use `xgg cloud login` and `xgg cloud gateway login --did <GATEWAY_DID>`. Use `xgg login --code <CODE>` only when cloud bootstrap is unavailable or manual login is chosen.',
   },
 
   // NOT_FOUND — agent-facing paths where a named resource (scope, id, etc.)
@@ -344,6 +344,9 @@ function specificity(r: HintRule): number {
 }
 
 export function lookupHint(code: string, command: string, message?: string): string {
+  if (command.startsWith('cloud.') && !command.startsWith('cloud.gateway.')) {
+    return lookupCloudHint(code);
+  }
   const matches = HINTS.filter((r) => {
     if (r.code !== code && r.code !== '*') return false;
     if (r.command !== command && r.command !== '*') return false;
@@ -360,6 +363,31 @@ export function lookupHint(code: string, command: string, message?: string): str
   matches.sort((a, b) => specificity(b) - specificity(a));
   const top = matches[0];
   return top ? top.hint : '';
+}
+
+function lookupCloudHint(code: string, reason?: unknown): string {
+  if (reason === 'invalid-credentials') {
+    return 'The local cloud credential file is damaged. Run `xgg cloud login --restart` to rebuild authorization, then display the returned QR image and scan it with the Mi Home app.';
+  }
+  switch (code) {
+    case 'AUTH_REQUIRED':
+    case 'AUTH_EXPIRED':
+      return 'Run `xgg cloud login`, display qrMarkdown or qrImagePath and ask the user to scan with the Mi Home app. Then run `xgg cloud login --complete`; pending means keep the same QR and continue waiting.';
+    case 'NETWORK':
+      return 'Check Internet connectivity and --timeout. After a write timeout, query the device before retrying; the operation may already have executed.';
+    case 'SCHEMA':
+      return 'Cloud data did not match the expected schema. Check docs/api/cloud.md and the sanitized error details.';
+    case 'CONFIG':
+      return 'Check `xgg cloud <command> --help`. Agent-mode writes require --snapshots-dir or XGG_SNAPSHOTS_DIR and forbid --no-snapshot.';
+    case 'NOT_FOUND':
+      return 'Check `xgg cloud device list` and `xgg cloud device spec --did <DID>` for the exact device and property/action identifiers.';
+    case 'NOT_CONFIRMED':
+      return 'Cloud acknowledgement does not confirm physical execution. Query the device before deciding whether to retry.';
+    case 'GATEWAY':
+      return 'The Xiaomi cloud or device rejected the request. Inspect the cloud/result code and verify the device is online.';
+    default:
+      return '';
+  }
 }
 
 export interface ErrorJson {
@@ -380,7 +408,10 @@ export function formatErrorJson(err: unknown): ErrorJson {
       error: {
         code: err.code,
         message: err.message,
-        hint: lookupHint(err.code, command, err.message),
+        hint:
+          err.details?.domain === 'cloud'
+            ? lookupCloudHint(err.code, err.details?.reason)
+            : lookupHint(err.code, command, err.message),
         details: err.details,
       },
     };

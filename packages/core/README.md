@@ -1,6 +1,6 @@
 # @eyaeya/xgg-core
 
-`@eyaeya/xgg-core` 是 `xgg` 的协议、会话、schema、资源和用例层。它面向需要在 Node.js 程序中复用小米中枢网关极客版能力的开发者。
+`@eyaeya/xgg-core` 是 `xgg` 的协议、会话、schema、资源和用例层。它面向需要在 Node.js 程序中复用米家云端设备控制与小米中枢网关极客版能力的开发者。
 
 大多数用户应该直接安装 CLI：
 
@@ -23,12 +23,41 @@ npm tarball 只包含：
 - `dist/`
 - `LICENSE`
 - `README.md`
+- `THIRD_PARTY_NOTICES.md`
 
-npm 包只包含运行 core 所需的 `dist`、许可证与本 README；它不依赖仓外参考文件、开发文档、探测记录或快照。
+npm 包只包含运行 core 所需的 `dist`、许可证、第三方通知与本 README；它不依赖仓外参考文件、开发文档、探测记录或快照。
 
 ## 说明
 
-网关通信不是普通 HTTP API，而是通过 WebSocket 承载的加密二进制协议。除低层逃生口外，core 层会用 schema 校验网关返回，避免调用方直接依赖未建模响应。
+网关本地通过 WebSocket 承载的加密二进制协议通信，新增云端 transport 独立使用 HTTPS。除低层逃生口外，core 层使用 schema 校验返回，避免调用方直接依赖未建模响应。
+
+## v2.2.0 云端 SDK
+
+原生 TypeScript 云端实现不要求 Python 或网关 daemon。公共导出包括 `CloudClient`、`createCloudTransport`、`cloudLoginStart` / `cloudLoginComplete`、`cloudStatus` / `cloudLogout` 与 `loginGatewayViaCloud`，以及独立的云端快照工具。支持设备与家庭发现、MIoT spec、属性读写、动作、场景、耗材、统计和音箱；已有网关 SDK、workflow 租约、规则与习惯学习能力继续保留。
+
+已有云端授权时，可直接创建客户端读取设备报告值：
+
+```ts
+import { CloudClient, createCloudTransport } from '@eyaeya/xgg-core';
+
+const cloud = new CloudClient(createCloudTransport());
+const devices = await cloud.listDevices();
+const reading = await cloud.getProperty(
+  { did: '<DID>' },
+  { property: 'light.on' },
+  { source: 'device' },
+);
+```
+
+默认授权文件兼容 `~/.config/mijia-api/auth.json`；`createCloudTransport({ authFile, timeoutMs })` 可指定独立文件和有界超时。认证函数支持可注入 fetch/store 便于测试。`cloudLoginStart` 与 `cloudLoginComplete` 提供有界两阶段扫码流程；二维码 PNG 生成与对话展示由 CLI 层提供。凭据可复用/刷新，失效仍需重新授权，不能记录 token 或扫码秘密。
+
+`getProperty` / `getProperties` 的 `source` 为 `auto | device | cache`，默认 `auto`。验证刚执行的操作或恢复原值时显式用 `device`；它请求设备 RPC，不降级为缓存，但并非所有设备都支持。`cache`、自动来源的缓存及 `updateTime` 不能证明即时状态。元数据缓存只缓存家庭/设备/spec，不能把它当作设备状态订阅；CLI 的 watch 也是轮询，并非服务端推送。
+
+`loginGatewayViaCloud` 根据明确 DID 取地址与验证码，并在内存内交给网关登录流程，优先复用 live daemon。SDK 调用者必须向它提供 `agentBinary`，并将返回的 `host` 作为后续本地调用的 `baseUrl`，同时复用相同的 session 文件；不会隐式选择默认网关。CLI 另提供 `baseUrl`、`nextCommand.argv` 和 `nextAction` 来引导后续操作，六位码不进入结果。仍须能够从当前主机访问中枢局域网地址。
+
+云端物理写入不使用网关 workflow 租约，也不会自动套用 CLI 的 Agent guard 或写前快照。直接调用 SDK 的程序负责授权范围、设备直读原值、快照、写后回读及恢复；可使用导出的云端快照工具。云端 mutation 不自动重发，结果未知时抛出 `NotConfirmedError`；动作、场景和音箱审计不是可逆备份。逐属性错误及 `accepted` 必须分别处理，不能仅凭 API ACK 宣称设备已经执行。
+
+云端协议参考 [Do1e/mijia-api](https://github.com/Do1e/mijia-api)，来源与保留的许可见随包 `THIRD_PARTY_NOTICES.md`。本次未包含上游所有 MCP、批量物理写入及开发辅助入口，完整范围见 [v2.2.0 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v2.2.0/RELEASE_NOTES.md)。
 
 ## 写操作与 workflow 租约
 

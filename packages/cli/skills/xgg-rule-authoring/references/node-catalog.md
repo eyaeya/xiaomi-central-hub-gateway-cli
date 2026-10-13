@@ -234,7 +234,7 @@ string=248
 
 ## typed access、比较、变量与 output 契约
 
-设备卡资格先于值域：`deviceInput` / `deviceInputSetVar` property 必须有 `notify`，`deviceGet` / `deviceGetSetVar` 必须有 `read`，property `deviceOutput` 必须有 `write`；两类 Input 卡的 property/event push source 还要求设备实例 `pushAvailable=true`。`--allow-no-push` 只放行本次 typed add 的设备级 push gate，不持久化、不绕任何 access、不证明会发出；online spec-aware 仍返回 no-push error，strict lint 仍返回同一 source 的 no-push warning/exit 1。常规规则必须 errors=0，所有 warnings 逐项审计、解释并明确接受；只有获明确授权的隔离临时探针，才可把目标 source 的 spec-aware no-push 作为唯一允许的 error，并显式接受同源 lint warning、无物理副作用、取证后立即 disable/delete。strict export 拒绝 access mismatch/no-push；permissive export 只为 no-push 明确 warning 并补 transient flag。
+设备卡资格先于值域：`deviceInput` / `deviceInputSetVar` property 必须有 `notify`，`deviceGet` / `deviceGetSetVar` 必须有 `read`，property `deviceOutput` 必须有 `write`；两类 Input 卡的 property/event push source 还要求设备实例 `pushAvailable=true`。`--allow-no-push` 只放行本次 typed add 的设备级 push gate，不持久化、不绕任何 access、不证明会发出；online spec-aware 仍返回 no-push error，strict lint 仍返回同一 source 的 no-push warning/exit 1。常规规则必须 errors=0，所有 warnings 逐项审计、解释并明确接受；只有获明确授权的隔离临时探针，才可把目标 source 的 spec-aware no-push 作为唯一允许的 error，并显式接受同源 lint warning、无物理副作用、取证后立即 disable 并保留供用户核对；只有用户要求清理时才 delete。strict export 拒绝 access mismatch/no-push；permissive export 只为 no-push 明确 warning 并补 transient flag。
 
 `preload` 只用于 `deviceInput` / `deviceInputSetVar` property 与 `varChange`，默认 false；true 表示 enable 时先查询/评估一次，后续 notify/change 路径不变。它不能制造 notify/read/push。当前 `onLoad` 节点契约只证明它是无输入 event source；此前目标网关安全实测确认 disable→enable 会触发，save/restart/restore 等时机仍未证明。
 

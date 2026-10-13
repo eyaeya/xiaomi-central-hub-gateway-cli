@@ -1,4 +1,6 @@
 import type { ResourceDeps } from '../resources/index.js';
+import { RuleLogBlockResponse } from '../schemas/rule-logs.js';
+import { parseOrThrow } from '../transport/errors.js';
 import { agentCall } from './agent-call.js';
 
 // The gateway exposes only one log RPC — `/api/getLog` — and it returns a
@@ -55,8 +57,9 @@ export function parseLogLine(raw: string): RuleLogEntry | null {
   const [version, tsStr, type, graphId, ...rest] = parts;
   if (version !== '3') return null;
   if (graphId === undefined || tsStr === undefined) return null;
+  if (!/^\d+$/.test(tsStr)) return null;
   const timestamp = Number(tsStr);
-  if (!Number.isFinite(timestamp)) return null;
+  if (!validTimestamp(timestamp)) return null;
   if (type !== 'r' && type !== 'l' && type !== 'i' && type !== 'e') return null;
 
   const base: RuleLogEntry = {
@@ -181,7 +184,7 @@ export async function fetchRuleLogs(input: FetchRuleLogsInputs): Promise<FetchRu
   let stopReason: FetchRuleLogsResult['stopReason'] = 'max-blocks';
 
   for (let num = 0; num < maxBlocks; num += 1) {
-    const raw = await agentCall({
+    const response = await agentCall({
       baseUrl: input.baseUrl,
       method: '/api/getLog',
       params: { num },
@@ -190,8 +193,9 @@ export async function fetchRuleLogs(input: FetchRuleLogsInputs): Promise<FetchRu
       ...(input.ipcClient !== undefined && { ipcClient: input.ipcClient }),
       ...(input.timeoutMs !== undefined && { timeoutMs: input.timeoutMs }),
     });
+    const raw = parseOrThrow(RuleLogBlockResponse, response, 'getLog response');
     blocksRead = num + 1;
-    if (typeof raw !== 'string' || raw.length === 0) {
+    if (raw.length === 0) {
       stopReason = 'empty-block';
       break;
     }
@@ -265,12 +269,23 @@ export function filterRuleLogs(entries: RuleLogEntry[], opts: FilterRuleLogsOpts
  */
 export function parseTimestamp(raw: string | number | undefined): number | undefined {
   if (raw === undefined) return undefined;
-  if (typeof raw === 'number') return raw;
+  if (typeof raw === 'number') {
+    if (!validTimestamp(raw)) throw new Error(`unparseable timestamp: ${raw} (outside date range)`);
+    return raw;
+  }
   const asNum = Number(raw);
-  if (Number.isFinite(asNum) && /^\d+$/.test(raw.trim())) return asNum;
+  if (/^\d+$/.test(raw.trim())) {
+    if (!validTimestamp(asNum))
+      throw new Error(`unparseable timestamp: ${raw} (outside date range)`);
+    return asNum;
+  }
   const asDate = Date.parse(raw);
   if (Number.isNaN(asDate)) {
     throw new Error(`unparseable timestamp: ${raw} (expected epoch-ms or ISO-8601)`);
   }
   return asDate;
+}
+
+function validTimestamp(value: number): boolean {
+  return Number.isSafeInteger(value) && !Number.isNaN(new Date(value).getTime());
 }

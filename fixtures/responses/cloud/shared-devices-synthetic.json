@@ -1,0 +1,17 @@
+{
+  "list": [
+    {
+      "did": "shared-demo",
+      "name": "Shared lamp",
+      "model": "example.light.v1",
+      "spec_type": "urn:miot-spec-v2:device:light:0000A001:example-lamp:1",
+      "isOnline": true,
+      "owner": {
+        "userid": 42
+      },
+      "token": "SYNTHETIC_SECRET"
+    }
+  ],
+  "has_more": true,
+  "next_start_did": "next-demo"
+}

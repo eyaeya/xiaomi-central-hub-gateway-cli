@@ -156,6 +156,7 @@ jobs:
               'package/dist/',
             ];
             if (name === '@eyaeya/xgg-cli') allowed.push('package/skills/');
+            if (name === '@eyaeya/xgg-core') allowed.push('package/THIRD_PARTY_NOTICES.md');
             for (const entry of listing.stdout.trim().split('\n')) {
               if (!allowed.some((prefix) => entry === prefix || entry.startsWith(prefix))) {
                 throw new Error(`${tarball} contains unexpected entry: ${entry}`);
