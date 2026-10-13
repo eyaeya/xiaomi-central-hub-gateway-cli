@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "consumes_data": [
+        {
+          "did": "device-demo",
+          "name": "Example purifier",
+          "details": [
+            {
+              "id": 1,
+              "description": "Filter",
+              "value": "80",
+              "consumable_type": "filter",
+              "left_time": "200",
+              "update_time": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

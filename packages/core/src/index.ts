@@ -64,3 +64,9 @@ export {
   toWsUrl,
 } from './transport/index.js';
 export type { SessionChannelOptions } from './transport/index.js';
+
+export * from './cloud/auth.js';
+export * from './cloud/transport.js';
+export * from './cloud/resources.js';
+export * from './cloud/gateway.js';
+export * from './cloud/snapshot.js';

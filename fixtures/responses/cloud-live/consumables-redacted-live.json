@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "consumes_data": [
+        {
+          "did": "device-demo",
+          "name": "Example purifier",
+          "details": [
+            {
+              "description": "左侧滤芯",
+              "value": "0",
+              "consumable_type": "左侧滤芯"
+            },
+            {
+              "description": "右侧滤芯",
+              "value": "0",
+              "consumable_type": "右侧滤芯"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "device_info": [
+    {
+      "did": "device-demo",
+      "name": "Example lamp",
+      "model": "philips.light.mono1",
+      "isOnline": true,
+      "spec_type": "urn:miot-spec-v2:device:light:0000A001:philips-mono1:1"
+    }
+  ],
+  "has_more": false,
+  "max_did": "cursor-demo"
+}

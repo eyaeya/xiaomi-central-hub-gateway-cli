@@ -30,18 +30,22 @@ node packages/cli/dist/cli.js --help
 
 ## 登录与写前保护
 
+先读 [cloud-workflows.md](cloud-workflows.md) 的扫码与自主取码流程。优先 `cloud login` 复用米家授权；需扫码时先完成准备、生成后立即展示未过期二维码，引导米家 App 确认，使用返回的 `nextCommand.argv` 保留账号路径继续等待。旧码过期后必须生成新码，不能要求扫描旧图。已有 live daemon 可直接复用；否则确定真实中枢 DID 后：
+
 ```bash
-xgg status
-xgg login --code <one-time-code> --base-url http://<gateway-ip>:8086
+xgg status --base-url http://<gateway-ip>:8086
+xgg cloud gateway login --did <GATEWAY_DID> --base-url http://<gateway-ip>:8086
+# 登录成功后按返回的 nextCommand.argv 验证；后续命令沿用其 baseUrl/session-file
 export XGG_AGENT_MODE=1
-export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
+export XGG_SNAPSHOTS_DIR="$PWD/.xgg-local/snapshots"
 ```
 
-- 只有 `AUTH_REQUIRED` / `AUTH_EXPIRED` 或退出码 3 时才索取新码；登录码一次性、短时有效，绝不写入日志报告、仓库、Issue/PR 或命令历史示例。
-- Agent 写操作始终启用当前工作目录下的 snapshot 目录。不要用 `/tmp` 或全局目录保存家庭配置快照。
+- `AUTH_REQUIRED` / `AUTH_EXPIRED` 或 exit 3 先区分云端与网关认证域；仅云端取码不支持、目标不能确定或用户选择手动流程时，才说明原因并索取六位码。码短时有效，绝不写入日志报告、仓库、Issue/PR 或命令历史示例。
+- Agent 写操作始终启用当前工作目录下的私有 snapshot 目录，并排除版本控制。网关写保存网关快照；云端保存独立审计和可读取的原值，不依赖网关 dump。恢复测试必须提前读到原值，不能借 write-only 例外绕过；动作审计不代表可恢复。
 - 普通工作不使用 `--no-snapshot`、`--no-validate`、`--no-var-check`。它们只用于已经解释风险、可回滚的协议/修复实验。
 - 写前先 `rule view` 记录 `enable`；已启用规则的 node/edge/layout/set 修改可能立即生效。
-- Flag 覆盖 env：`--base-url`、`--session-file`、`--snapshots-dir` 分别覆盖同名 XGG env。
+- 登录不会隐式设置其他本地命令的默认网关。后续 status/rule/variable/logs 保留返回的 `--base-url`，或显式设置 `XGG_BASE_URL`；自定义 session 文件也须持续传 `--session-file` / `XGG_SESSION_FILE`。
+- Flag 覆盖 env：`--base-url`、`--session-file`、`--snapshots-dir` 分别覆盖同名 XGG env。云端凭据用 `--auth-file` / `XGG_CLOUD_AUTH_FILE`。
 
 ## 输出和退出码
 
@@ -212,7 +216,7 @@ xgg rule node add --rule-id <rid> --type varSetNumber \
 
 ## 一次性读取设备属性与低层 API
 
-当前 xgg typed command surface 没有“客户端随时读取任意设备属性”的通用命令；这不是对所有私有固件接口的绝对不存在证明。需要主动取一次当前值时，把可读 property 导入变量：
+直接读取设备当前属性使用 `xgg cloud device get --source device`；持续有界轮询使用 `cloud device watch --source device`，详见 [cloud-workflows.md](cloud-workflows.md)。写前、写后及恢复验证不得将 auto/cache 当设备实时读回；设备直读失败时应报告证据缺口。只读传感器可用 auto/cache 并注明 updateTime。云端读不需要为此创建网关变量或规则。网关本地没有通用直接读取属性的 typed RPC；当需要验证网关自身所见，或云端不可用时，才把可读 property 导入变量：
 
 ```bash
 xgg device spec <did> --pretty
@@ -229,7 +233,7 @@ xgg rule lint --rule-id <rid> --strict
 # 审查完整下游并获授权后 enable，再读 variable/logs
 ```
 
-string property 对应 string；其他 format（包括 bool）对应 number，bool 用 0/1。持续 notify 则用 property `deviceInputSetVar` + `variable watch --follow`；`--preload` 只控制 enable 时首次查询，不制造 notify/read/push。测试后按授权删除临时规则/变量。
+string property 对应 string；其他 format（包括 bool）对应 number，bool 用 0/1。持续 notify 则用 property `deviceInputSetVar` + `variable watch --follow`；`--preload` 只控制 enable 时首次查询，不制造 notify/read/push。测试后停止临时规则并保留供用户核对；仅用户要求清理时删除规则/变量。
 
 仅当已明确掌握 method 与 params、而当前 typed CLI 尚未覆盖该 RPC 时，才用下面的 escape hatch；`--params` 与 `--params-file` 二选一：
 
@@ -255,7 +259,7 @@ xgg rule lint --rule-id <rid> --strict
 | lint | edge endpoint、duplicate/fan-in、pin color、必需输入、保存键；strict 加 reachability | 目标设备真实执行结果 |
 | enable | 重跑保存校验、硬拦不可达 sink，并对 persisted deviceOutput variable ref 聚焦 fail-closed 拉取 spec | 其他设备卡的完整 live spec 证明；触发与动作成功证明 |
 
-`rule set` 允许暂时不可达的增量图，`enable` 才硬拦；因此每批编辑后主动 strict lint。**任何含设备卡的规则**都不能省略 `--spec-aware`；离线 body/stdin 没有 live device/variable inventory，不能伪称已验证目标网关。常规业务规则必须让 spec-aware/strict lint errors=0；每条 warning 都要按路径逐项审计、解释并明确接受，未解释或未接受的 warning 视为阻断。已证明可终止的 self-loop、兼容旧节点 ID，以及同 ID 无损保留的 opaque/future 卡片可产生 advisory warning，但不能批量忽略。唯一允许 spec-aware error 的窄例外是用户明确授权验证固件扩展的 no-push 临时探针：仍运行并保存两份结果，只允许目标 source 的路径化 no-push error；strict lint 对同一 source 的 no-push warning（exit 1）也须显式接受，其他 errors 为零、其他 warnings 仍逐项审计。图必须隔离且下游只有安全软件 marker，enable 后立即取 logs/readback，再 disable/delete。该例外不使 validate/lint 变成 clean，也不能用于生产验收或 strict export。
+`rule set` 允许暂时不可达的增量图，`enable` 才硬拦；因此每批编辑后主动 strict lint。**任何含设备卡的规则**都不能省略 `--spec-aware`；离线 body/stdin 没有 live device/variable inventory，不能伪称已验证目标网关。常规业务规则必须让 spec-aware/strict lint errors=0；每条 warning 都要按路径逐项审计、解释并明确接受，未解释或未接受的 warning 视为阻断。已证明可终止的 self-loop、兼容旧节点 ID，以及同 ID 无损保留的 opaque/future 卡片可产生 advisory warning，但不能批量忽略。唯一允许 spec-aware error 的窄例外是用户明确授权验证固件扩展的 no-push 临时探针：仍运行并保存两份结果，只允许目标 source 的路径化 no-push error；strict lint 对同一 source 的 no-push warning（exit 1）也须显式接受，其他 errors 为零、其他 warnings 仍逐项审计。图必须隔离且下游只有安全软件 marker，enable 后立即取 logs/readback，再 disable 并保留供用户核对，仅用户要求清理时 delete。该例外不使 validate/lint 变成 clean，也不能用于生产验收或 strict export。
 
 只有用户授权运行时才：
 
@@ -350,4 +354,4 @@ lint --strict exit + summary
 snapshot/backup 与清理状态
 ```
 
-最后提醒用户 F5 网页。临时规则、global probe 变量、测试备份和快照按授权清理；一次性码永不进入交付物。
+最后提醒用户 F5 网页。临时规则默认停用并保留供用户核对，设备恢复原值且再次回读；仅用户要求清理时删除规则/变量或测试备份。私有快照和一次性码不进入公开交付物。

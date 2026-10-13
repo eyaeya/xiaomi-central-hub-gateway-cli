@@ -1,0 +1,50 @@
+{
+  "type": "urn:miot-spec-v2:device:light:0000A001:example-lamp:1",
+  "description": "Example lamp",
+  "services": [
+    {
+      "iid": 2,
+      "type": "urn:miot-spec-v2:service:light:00007802:example:1",
+      "description": "Light",
+      "properties": [
+        {
+          "iid": 1,
+          "type": "urn:miot-spec-v2:property:on:00000006:example:1",
+          "description": "Power",
+          "format": "bool",
+          "access": [
+            "read",
+            "write",
+            "notify"
+          ],
+          "comment": "示例开关"
+        },
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:property:brightness:0000000D:example:1",
+          "description": "Brightness",
+          "format": "uint8",
+          "access": [
+            "read",
+            "write"
+          ],
+          "value-range": [
+            1,
+            100,
+            1
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "iid": 1,
+          "type": "urn:miot-spec-v2:action:toggle:00002801:example:1",
+          "description": "Toggle",
+          "in": [],
+          "out": [],
+          "comment": "示例切换"
+        }
+      ]
+    }
+  ]
+}

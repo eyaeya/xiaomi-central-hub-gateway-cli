@@ -9,6 +9,7 @@ const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const skillRoot = path.join(repositoryRoot, 'skills', 'xgg-rule-authoring');
 const canonicalSkillFiles = [
   'SKILL.md',
+  'references/cloud-workflows.md',
   'references/device-semantics.md',
   'references/graph-model.md',
   'references/habit-learning.md',

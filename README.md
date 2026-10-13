@@ -1,9 +1,10 @@
-# 小米中枢网关极客版 CLI（xgg）
+# xgg · 米家云端直控 × 中枢自动化
 
-> 使用 Codex、Claude 或其他 Agent 工具，调用本项目已审计并建模的小米中枢网关能力，进行 Vibe Coding 式的米家中枢网关自动化规则编程。
+> 使用 Codex、Claude 或其他 Agent 工具直接操作米家设备，自主登录中枢，并调用本项目已审计、建模的网关能力编写和验证自动化。
 
 ## 核心优势
 
+- **云端与中枢双向联调**：米家扫码授权后直接读写设备，自主取得中枢登录码；从云端设备状态和中枢规则日志两个方向核对效果，设备恢复使用明确的直读来源。
 - **为 Agent 原生设计**：默认输出稳定、可解析的 JSON，错误信息提供可执行的下一步提示；npm 包同时携带自包含 Skill，让 Codex、Claude 等 Agent 能直接理解并操作规则图。
 - **覆盖高级规则图能力**：建模 25 类可执行节点及 `nop`，支持事件与数据 pin、全局/局部变量、表达式、时间条件、状态保持、循环、计数和设备动作，不局限于普通米家自动化模板。
 - **以实时设备能力为准**：读取目标网关当前设备清单与 MIoT spec，投影中文语义、访问权限、值域和动作参数；创建前先验证，避免凭设备名或历史示例猜属性。
@@ -11,7 +12,7 @@
 - **结果可回查、可解释**：规则 readback、结构化日志和累积 trace 能把节点、边、设备属性和值标签转译成人与 Agent 都能理解的语义，同时明确扫描边界与证据完整度。
 - **保真迁移与运维**：支持规则 export/import/clone、未知节点同 ID 保留、官方格式本地备份及受保护的云备份流程；通过 WebSocket 承载的加密二进制协议直连用户自有网关，无需第三方中转服务。
 
-`xgg` 是用于操作小米中枢网关极客版的命令行工具。它把网关的登录、设备读取、自动化规则图编辑、变量管理、备份管理和调试日志封装成稳定的 CLI，适合人类在终端中使用，也适合 LLM Agent 按步骤创建和验证自动化。
+`xgg` 把米家云端设备控制与小米中枢网关极客版的自动化编程放进同一个命令行工具。云端负责设备发现、属性读写和动作；中枢负责规则图、变量、备份、习惯学习和运行日志。人类可以在终端操作，Agent 可以按步骤创建、触发、观察和恢复。
 
 本仓库包含两个包（命令名为 `xgg`）：
 
@@ -19,6 +20,92 @@
 - `@eyaeya/xgg-cli`：命令行入口，安装后提供 `xgg` 命令，并携带 Agent skill 文档。
 
 GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli)。npm 包：[`@eyaeya/xgg-cli`](https://www.npmjs.com/package/@eyaeya/xgg-cli)、[`@eyaeya/xgg-core`](https://www.npmjs.com/package/@eyaeya/xgg-core)。
+
+## v2.2.0：扫码一次，贯通设备直控与中枢联调
+
+新增原生 TypeScript `xgg cloud`，基于 [Do1e/mijia-api](https://github.com/Do1e/mijia-api) 的云端协议整合，**无需 Python 或 uv，也无需先登录网关即可操作云端设备**。
+
+| 新能力 | 对用户和 Agent 的价值 |
+| --- | --- |
+| 云端直接读写设备 | 查询家庭、房间、设备、属性、动作、场景、耗材和统计，使用小爱音箱；先读 spec 校验能力，再执行命令。 |
+| 在对话中展示二维码 | 登录返回本地 PNG、Markdown、过期时间与下一步提示；Agent 展示二维码，用户用米家 App 扫码确认即可。 |
+| 自主获取中枢六位码 | 云端授权可用后，Agent 按目标 DID 获取地址和登录码，在内存中登录；同样适用于支持该接口的路由器或家庭屏集成中枢。 |
+| 两个方向验证自动化 | 中枢规则执行后从云端观察设备；云端改变设备后从中枢读取规则日志和变量。 |
+| 安全恢复和证据留存 | 可读属性先保存原值，写入后回读，测试后恢复；写入状态未知时不自动重发。 |
+
+v2.2.0 在 v2.1.1 的网关能力基础上增加云端直控，保留习惯学习、规则 trace、保真导入导出、设备替换和写入保护。完整变更见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。本次覆盖主要云端业务路径，尚未提供上游 MCP 服务和批量物理写入等接口，不宣称与 mijia-api 全功能等价。
+
+### Agent 友好的扫码流程
+
+```bash
+xgg cloud login
+# 已有可用授权时 authenticated=true，无需再次扫码。
+# 否则 Agent 展示 qrMarkdown 指向的本地二维码，请用户用米家 App 扫码确认。
+xgg cloud login --complete --wait-ms 30000
+xgg cloud status
+```
+
+`login` 返回 `qrImagePath`、`qrMarkdown`、`expiresAt` 与 `nextAction`，Agent 可以把二维码直接展示在对话中。不支持本地图片的环境可使用 `qrUrl` / `loginUrl`。开始和完成是两个有界步骤，扫码尚未完成时可再次 `--complete`；过期或需要重新开始时用 `xgg cloud login --restart`。二维码和登录链接属于临时授权材料，不应进入公开日志或仓库。
+
+默认复用与上游兼容的 `~/.config/mijia-api/auth.json`，也支持 `--auth-file` / `XGG_CLOUD_AUTH_FILE`。一次扫码后，已有授权可以复用、刷新；撤销、过期或账号验证仍可能要求重新扫码。云端授权与网关会话彼此独立，`cloud status` 和 `status` 分别检查；`cloud logout` 删除共用授权文件后，上游工具也需要重新授权。
+
+### 云端直控，不再为了读属性先创建规则
+
+```bash
+xgg cloud device list
+xgg cloud device spec --did <DID>
+xgg cloud device get --did <DID> --property light.on --source device
+xgg cloud device get --did <DID> --properties light.on,light.brightness --source device
+xgg cloud device set --did <DID> --property light.on --value true \
+  --snapshots-dir ./snapshots/
+xgg cloud device get --did <DID> --property light.on --source device
+```
+
+用 `--did` 精确选择设备，或使用唯一 `--name`，并可用 `--home-id` 限定家庭。不带属性选择参数的 `device get` 会读取全部可读属性，`--properties` 接受逗号分隔列表；`cloud spec --type <URN>` 可免登录读取公共规范。属性名称、枚举、取值范围和动作参数来自 MIoT spec；`--value` 是 JSON，`--inputs` 是 JSON 数组。真实设备、固件和账号权限决定哪些功能可用。`speaker run` 默认静默，`--no-quiet` 才允许语音回复；`speaker play` 用于明确的文本播报。
+
+### 查询来源决定了能证明什么
+
+设备恢复后，云端缓存仍可能短暂返回恢复前的值。本次实测发现了这种差异，因此读取接口显式提供 `--source auto|device|cache`：
+
+| 来源 | 用途与边界 |
+| --- | --- |
+| `auto` | `device get` 的默认策略，保留兼容行为；返回值可能来自缓存，不能用于确认设备刚刚恢复。 |
+| `device` | 请求设备 RPC 读取，不静默降级到缓存；验证操作效果、保存恢复原值及恢复验收时使用。 |
+| `cache` | 明确读取云端缓存，适合查看最后上报值；即使带 `updateTime` 也不是即时状态确认。 |
+
+`watch` 默认选择 `device`，写操作前的原值读取固定使用 `device`。输出包含 `sourcePolicy` 供 Agent 核对；设备报告值仍不能替代现场物理观察。测试恢复必须显式回读，例如：
+
+```bash
+xgg cloud device get --did <DID> --property light.on --source device
+```
+
+### 云端与中枢，双向核对结果
+
+```bash
+xgg cloud gateway login --did <GATEWAY_OR_ROUTER_DID>
+# 从成功结果取回 baseUrl；也可按 nextCommand.argv 执行生成的 status 命令。
+xgg rule view <RULE_ID> --base-url <RETURNED_BASE_URL>
+xgg cloud device watch --did <DEVICE_DID> --property <PROPERTY> --source device
+# 在另一个终端执行测试，然后按测试开始时间查询日志。
+xgg rule logs <RULE_ID> --since <ISO_TIMESTAMP> --json --base-url <RETURNED_BASE_URL>
+```
+
+登录成功返回 `baseUrl`、可直接按参数数组执行的 `nextCommand.argv` 和 `nextAction`。它不会为后续命令隐式选择默认网关：本地 `status`、`rule`、`device`、`variable`、`learn` 等仍须传返回的 `--base-url`，或在当前会话明确设置 `XGG_BASE_URL`。使用自定义 session 文件时也要继续传同一 `--session-file`，或设置 `XGG_SESSION_FILE`；返回的下一步命令会保留其绝对路径。Agent 应保留生成的参数，只按实际安装方式调整命令入口。
+
+- **中枢 → 云端：** 编辑规则后先 `rule validate --spec-aware` 和 `rule lint --strict`，用户授权后再启用已审查的测试入口；用云端 `get --source device` 回读或 `watch` 观察目标设备，结合网关日志判断动作是否经过预期分支。
+- **云端 → 中枢：** 记录设备原值和测试开始时间，经云端施加状态，再读网关日志和变量确认触发过程。完成后先停测试入口，再恢复原值并以 `--source device` 回读，保留观察规则供核对。
+
+`watch` 默认每 3 秒采样、60 秒截止，是属性轮询，不是云端事件推送；短暂变化可能落在采样间隔内。可以用 `--duration-ms` / `--max-events` 限定测试，`--follow` 显式持续观察。`cloud gateway login` 优先复用已有 daemon，必要时才取码，验证码不会进入输出或快照。设备必须支持相关云端 RPC；电脑仍须能访问中枢局域网地址，独立 hub 离线也不能用来推断路由器内的中枢状态。自动取码不支持时保留手动登录。
+
+Agent 写操作使用 `XGG_AGENT_MODE=1` 和私有 `XGG_SNAPSHOTS_DIR`。可读属性原值未确认时不发送写入；动作、场景、语音指令及只写属性的记录仅供审计，不能当作可撤销备份。API ACK、`accepted`、网关日志与设备回读分别是不同证据，不能直接等同于肉眼看到设备动作。接口与验证边界见 [cloud API](docs/api/cloud.md)、[自动取码](docs/api/cloud-gateway.md)，许可见 [第三方通知](THIRD_PARTY_NOTICES.md)。
+
+### 本轮实机验收与边界
+
+受测家庭共 37 台设备，30 台在线、7 台离线。本轮筛选 17 台可逆写入候选：1 台因设备直读保护未通过而没有写入；实际写入 16 台，最终 16 台均通过原值恢复回读。其中 **14 台的测试变化已回读确认**；另 2 台（摄像头亮度、窗帘唤醒设置）只有写入 ACK，测试变化未得到确认，不能计作动作成功。
+
+v2.2.0 构建还验证了两个方向：中枢输出驱动灯变化，云端 `watch` 记录 `false → true → false`；云端改变灯后，中枢观察变量变为 `1`，恢复后变为 `0`。两条测试规则均已停用并保留。这些是设备报告与规则链证据，未宣称肉眼观察了每台设备。
+
+本轮已验证已有云端授权复用，以及**独立新授权扫码确认 → 云端设备查询 → 新独立 session 自动取码登录中枢 → 规则列表读取**的完整链路，全程无需用户手抄六位码。扫码时改用唯一图片路径后成功；这一对比支持旧图缓存解释，未取得界面缓存内部证据。未操作全部场景、音箱指令或不可恢复动作。详见 [云端审查与实测记录](docs/superpowers/reviews/2026-10-13-cloud-review-results.md)。
 
 ## 实机效果
 
@@ -47,7 +134,7 @@ GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaey
 
 ## 免责声明
 
-本项目是**非官方**工具，与小米（Xiaomi）**无任何隶属关系，未获其授权或背书**。「小米」「米家」「中枢网关极客版」「Xiaomi」等名称为其各自所有者的商标，本项目仅作描述性使用，不使用任何官方 logo。`xgg` 通过 WebSocket 承载的加密二进制协议与**用户自有**的网关设备通信，仅供个人合法使用，风险自负。
+本项目是**非官方**工具，与小米（Xiaomi）**无任何隶属关系，未获其授权或背书**。「小米」「米家」「中枢网关极客版」「Xiaomi」等名称为其各自所有者的商标，本项目仅作描述性使用，不使用任何官方 logo。`xgg` 通过 WebSocket 承载的加密二进制协议与**用户自有**的网关设备通信，也通过经用户授权的米家云端 API 操作账号下设备，仅供个人合法使用，风险自负。
 
 > Unofficial project, not affiliated with or endorsed by Xiaomi. All trademarks belong to their respective owners.
 
@@ -155,7 +242,7 @@ xgg rule view <rule-id> --pretty
 xgg 的完整安装包含两部分：
 
 - `@eyaeya/xgg-cli` 提供 `xgg` 命令，并自动安装匹配版本的 `@eyaeya/xgg-core`。
-- `xgg-rule-authoring` Skill 告诉 Agent 如何安全地设计、校验、写入和验收中枢网关规则。
+- `xgg-rule-authoring` Skill 告诉 Agent 如何扫码登录、直接操作米家设备，以及安全地设计、校验、写入和验收中枢网关规则。
 
 npm 包虽然携带 Skill 的完整离线副本，但 **`npm install` 不会把它注册到 Agent 的 Skill 调用目录**。因此，即使当前由人类安装，也应默认完成 Skill 安装，方便随后交给 Agent 使用。
 
@@ -163,7 +250,7 @@ npm 包虽然携带 Skill 的完整离线副本，但 **`npm install` 不会把�
 
 - Node.js 20.11 或更高版本。
 - `npm`、`npx`、Git，以及访问 npm 和 GitHub 的网络。
-- 网关地址和 6 位登录码只在安装完成后的登录阶段需要；Agent 不应提前索取登录码。
+- 安装完成后优先用米家 App 扫码授权，随后由 Agent 按目标 DID 自主取码登录中枢。网关功能仍要求本机可以访问其局域网地址；自动取码不可用时才需要用户手动提供六位码，Agent 不应提前索取。
 
 ### 推荐：完整安装 CLI 与 Skill
 
@@ -298,7 +385,7 @@ diff -qr "$CLI_SKILL" "$AGENT_SKILL_DIR"
 
 上面的手动命令只示范通用 `~/.agents/skills/` 与 Claude Code 的 `~/.claude/skills/`。其他 Agent 必须先确认其官方 Skill 发现目录，再把 `AGENT_SKILL_DIR` 设为那个**精确的 `xgg-rule-authoring` 目录**并递归比较；不要猜路径，也不要把新文件覆盖到已有目录中。
 
-Skill 采用渐进披露：`SKILL.md` 是入口，`references/` 分别给出图执行模型、25+nop 完整参数表、MIoT 设备语义、复杂配方及实机操作/验收。仓库维护者修改其中任一文件后，运行 `node scripts/sync-xgg-skill.mjs --write` 重算完整树 marker 并刷新 package mirror；校验用 `--check`。同步实际安装副本时必须显式传 `--installed-target <.../xgg-rule-authoring>`。
+Skill 采用渐进披露：`SKILL.md` 是入口，`references/` 分别给出图执行模型、25+nop 完整参数表、MIoT 设备语义、复杂配方、云端登录与双向联调及实机操作/验收。仓库维护者修改其中任一文件后，运行 `node scripts/sync-xgg-skill.mjs --write` 重算完整树 marker 并刷新 package mirror；校验用 `--check`。同步实际安装副本时必须显式传 `--installed-target <.../xgg-rule-authoring>`。
 
 ### Agent 登录与写操作准备
 
@@ -313,19 +400,28 @@ export XGG_SNAPSHOTS_DIR="$PWD/snapshots"
 
 `xgg dump` 只用于 best-effort 资源索引，不是 rollback artifact；若任一资源读取失败，它会输出 `partial:true`、`ok:false` 并返回非零状态。
 
-装好之后，Agent 应主动引导用户完成登录：请用户打开**米家 App 中的中枢网关设备页面**（如果中枢网关是路由器或家庭屏自带的，则打开对应设备内的中枢网关功能页面），把页面上的**中枢网关网址**和 **6 位动态码**发给 Agent，Agent 据此运行 `xgg login --code <6位动态码> --base-url <中枢网关网址>` 完成登录，之后即可开始读取设备、创建自动化。
+云端变更使用独立的私有操作快照，不依赖网关 dump。可读属性的写前原值固定从设备 RPC 读取，读取失败则不写入；动作、场景、语音和只写属性仅记录审计，不能当作可撤销备份。真实快照必须留在私有目录并排除提交。
+
+装好之后，Agent 优先运行 `xgg cloud login`：已有授权直接复用，否则在对话中展示返回的二维码，引导用户用**米家 App 扫码确认**，再运行 `--complete`。从设备清单确定实际中枢 DID 后，使用 `xgg cloud gateway login --did <DID>` 自主登录；只有目标不支持该路径或用户选择手动登录时，才索取对应中枢页面的地址与六位码。
 
 ## 快速开始
 
 ```bash
-xgg login --code <6位登录码> --base-url http://<gateway-ip>:8086
+xgg cloud login
+# 若提示需要授权：Agent 展示二维码，用户用米家 App 扫码确认后再执行：
+xgg cloud login --complete
+xgg cloud device list
+xgg cloud gateway login --did <GATEWAY_DID>
+# 将成功结果中的 baseUrl 原样填入，仅为当前 shell 明确选择目标。
+export XGG_BASE_URL="<RETURNED_BASE_URL>"
+# 若登录时指定自定义 session-file，同时设置 XGG_SESSION_FILE 为同一绝对路径。
 xgg status
 xgg device list --pretty
 xgg rule list --pretty
 xgg variable list --pretty
 ```
 
-登录成功后，CLI 会启动 per-host daemon 复用已认证会话。daemon 的空闲窗口按最后一次网关调用向后延长，适合多轮 Agent 操作；`xgg status` 可查看会话状态。遇到认证失效或退出码 3 时，不要盲目重试，请重新从米家 App 获取新的 6 位登录码后再执行 `xgg login`。
+已有云端授权无需重复扫码。登录输出的 `nextCommand.argv` 已带地址及必要的 session 文件，可优先执行它检查状态。网关登录成功后，CLI 启动 per-host daemon 复用会话，空闲窗口按最后一次网关调用延长。退出码 3 要先区分认证域：云端授权失效需重新扫码，网关会话失效优先通过已有云端授权自主取码；只有该路径不可用时才手动 `xgg login --code <CODE> --base-url <URL>`。不要在物理写入结果未知后重新登录并自动重放写入。
 
 ## 创建自动化的标准流程
 
@@ -491,6 +587,24 @@ xgg rule validate --rule-id <rule-id> --spec-aware
 ## 常用命令
 
 ```bash
+xgg cloud login [--complete] [--wait-ms <MS>] [--restart]
+xgg cloud status
+xgg cloud device list
+xgg cloud device spec --did <DID>
+xgg cloud spec --type <URN>
+xgg cloud device get --did <DID> [--properties <SERVICE.PROPERTY,...>] --source device
+xgg cloud device watch --did <DID> --property <PROPERTY> [--duration-ms <MS>] --source device
+xgg cloud device set --did <DID> --property <PROPERTY> --value <JSON>
+xgg cloud device action --did <DID> --action <ACTION> --inputs '[]'
+xgg cloud home list
+xgg cloud scene list
+xgg cloud scene run <SCENE_ID> --home-id <HOME_ID>
+xgg cloud consumable list
+xgg cloud statistics --did <DID> --key <KEY> --data-type <TYPE> --start <EPOCH_SECONDS> --end <EPOCH_SECONDS>
+xgg cloud speaker run --did <DID> --text <INSTRUCTION> [--no-quiet]
+xgg cloud speaker play --did <DID> --text <TEXT>
+xgg cloud gateway login --did <GATEWAY_DID>
+
 xgg login --code <6位登录码> --base-url http://<gateway-ip>:8086
 xgg logout
 xgg status
@@ -553,7 +667,7 @@ xgg api <method> [--kind read] [--params '<json>']
 xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 ```
 
-默认 stdout 输出 JSON，适合 Agent 解析；需要人读表格时加 `--pretty`。例外：`xgg rule logs` 默认输出人类表格，需要 JSON 时显式加 `--json`。
+默认 stdout 输出 JSON，适合 Agent 解析；需要人读表格时加 `--pretty`。例外：`xgg rule logs` 默认输出人类表格，需要 JSON 时显式加 `--json`；`xgg cloud device watch` 始终逐行输出 NDJSON 观察事件。
 
 `xgg device spec <did> --pretty` 是设备卡片的能力选择入口；它与 `device list/get --pretty` 都显示 spec URN 的稳定 `deviceType` token 和 `device-template` 的中文 `deviceTypeDescription`，目录失败会明示并只回退 token。spec 输出按规则用途分成三组：事件与 notify 属性对应 `deviceInput` / `deviceInputSetVar`，read 属性对应 `deviceGet` / `deviceGetSetVar`，write 属性与 action 对应 `deviceOutput`；每组内部仍按标准与 proprietary/vendor 分组，`device-information` 元数据不会混入可自动化能力。property 显示 selector short-name、完整 URN、原始 format、UI 投影 dtype、value-list/range，action input 与 event argument 会按 PIID 解析成 property 详情；`action.out` 仅标作 MIoT 元数据，不能绑定到 `deviceOutput`，也不是规则图输出 pin。其他中文语义采用当前 xgg 的 best-effort 优先级：值标签为 `multiLanguage → normalization → raw`，service/property/event 名称为 `multiLanguage → template → raw`，action 名称为 `multiLanguage → raw → template`，action input 属性名为 `multiLanguage → raw`；目录请求失败会在 `Catalog status` 明示并回退。跨 service 重复 short-name 不会合并，创建卡片时按对应 service 的 `siid` 加 `--device-siid` 消歧；长行按 120 个终端显示列完整换行，中文、组合字符、emoji 和长 URN 不会被误切或截断。三条 device 命令省略 `--pretty` 时原有紧凑 JSON shape 保持不变，也不会发起语义目录请求。
 
@@ -563,7 +677,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 
 ## 重要限制
 
-- 当前 xgg 对规则、变量、设备与备份操作使用 WebSocket 承载的加密二进制协议 RPC，登录使用米家 App 提供的 6 位码。这不是对所有固件、服务或未来版本“绝不存在 HTTP API”的证明。
+- 网关规则、变量、设备与备份操作使用 WebSocket 承载的加密二进制协议 RPC，登录码可由云端获取或用户手动提供；`xgg cloud` 使用独立的 HTTPS 云端接口。这不是对所有固件、服务或未来版本接口存在性的概括。
 - 已打开的网关网页不会自动看到 CLI 写入的规则、变量或 scope。CLI 写入后请刷新网页，再判断 UI 是否同步。
 - `xgg device list` 与默认 replacement discovery 都排除 ghost device。显式聚焦 ghost 的替换 dry-run 仅返回 `eligible:false` 诊断结果且没有 `planId`；不要把网页标为“设备已丢失”的设备作为规则目标。
 - 变量类型只有 `number` 和 `string`。规则引用会按使用点核对实际类型：`varChange` / `varGet` 使用卡片 `varType`，`varSetNumber` 的 target 与所有变量 operand 必须是 number，`varSetString` 的 target 必须是 string；当前 xgg 对 `varSetString` operand 保守允许 number/string。设备 capture/output 则按 MIoT 投影 dtype 校验。开关状态建议用数字 `1/0` 或字符串表示。
@@ -572,7 +686,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 - 变量 scope 默认用 `global`。规则本地变量使用当前规则的 `R<rule-id>`；变量写命令会确认其中的 rule id 确实存在，规则节点也只接受与自身 `--rule-id` 匹配的本地 scope。合法本地 scope 不需要 `--allow-unknown-scope`；跨规则、不存在或自定义 scope 会告警并在严格校验中失败。如果 rule id 含连字符，本地变量 scope 无法按该约定合法创建，建议改用 `global` 或使用纯字母数字 rule id。
 - `rule export` 会用当前表达式解析器回读生成的 `varSetNumber` / `varSetString --expr`；若源图的结构化 elements 无法用 DSL 无损表示（例如变量后紧跟会被吞入变量 ID 的字母或数字常量），导出会以 `ConfigError` 拒绝。请先在源表达式中加入显式分隔符，或改用 `rule view` 的整图 JSON 往返。
 - `rule export/import --target-id` 克隆时只把源规则的 `R<source-id>` 迁移为 `R<target-id>`。脚本先只读断言全部可发现的 modeled `global` 依赖存在且类型匹配，再预检完整的已捕获本地变量计划；含 opaque 节点时会因无法证明或改写内部引用而拒绝 clone。随后以 `expect-absent` 创建空目标规则，确认目标 ID 未被占用后才准备规则内变量。已有目标（包括预检期间新出现的目标）会在任何变量/规则写入前失败，绝不覆盖。兼容的已有本地变量会保留，类型/值/显示名冲突也会在首次写前失败。`global` 不会被创建或改写；预检与后续命令之间仍存在并发漂移窗口。
-- 当前 `xgg` 已建模接口没有“客户端随时读取任意设备实时属性”的通用 typed 命令。需要观测实时值时，用 `deviceInputSetVar`（变化推送）或 `deviceGetSetVar`（由规则事件触发读取）写入变量，再用 `xgg variable watch --follow` 观察；不要把这个结论外推为所有固件都绝无其他私有接口。
+- 当前网关本地接口没有直接查询任意设备属性的通用 typed 命令。`cloud device get --source device` / `cloud device watch` 可以请求设备直读，但并非所有设备都支持该 RPC；`auto` / `cache` 和 `updateTime` 不能证明即时状态。需要验证网关自身的观测路径时，仍用 `deviceInputSetVar`（变化推送）或 `deviceGetSetVar`（由规则事件触发读取）写入变量，再用 `variable watch --follow` 观察。
 - `backup local-import` 同时接受完整 version-2 `.bak` 与官方旧版 rules-only 数组；旧版没有变量，解码后规范化为 `variables: {}`。`--confirm-replace-all` 会先删除当前全部规则和变量，再仅重建备份包含的内容，因此导入旧版文件不会保留或重建任何变量。固定先跑 `--dry-run` 并核对 `createVariables` 等计数；应用路径必须有 rollback snapshot，且不应在未授权的家庭网关上做恢复试验。
 - 从历史云备份取得可移植文件时优先用 `backup cloud-export`：它会在同一 mutation lease 内自动 download、确认进度并 generate，再于 lease 释放后原子发布官方 envelope 的 `.bak`，stdout 不包含完整规则/变量。低层 `backup generate` 只适合明确知道同一备份已在网关缓存中的高级流程。
 - `backup load` 实现完整恢复前置：在同一 mutation lease 内先 download、确认缓存进度，再调用 load 并等待可确认的恢复终态；不需要手工预下载。下载 ACK/进度含糊时绝不进入 load；load 若只返回 `{}` 等无进度 ACK，仍按 `NOT_CONFIRMED` 封锁，不能把固定等待数秒当成完成证据。
@@ -582,7 +696,7 @@ xgg api <method> --kind write --snapshots-dir <dir> [--params '<json>']
 
 GitHub 源码发布根目录是本目录。本仓库与 npm 包只依赖这里发布的源码、构建产物和自包含文档；使用 CLI 或 Skill 不需要任何仓外参考文件或专有代码。
 
-npm 只发布 `@eyaeya/xgg-core` 与 `@eyaeya/xgg-cli` 两个包。`@eyaeya/xgg-cli` 依赖并自动安装 `@eyaeya/xgg-core`，用户只需要全局安装 CLI 包。两个包的 `package.json` 使用 `files` allow-list：除 npm 必带的 `package.json` 外，core tarball 只包含 `dist`、`LICENSE`、`README.md`；cli tarball 额外包含整个 `skills/xgg-rule-authoring/`（正文与 references），不会包含 fixtures、开发计划、探测记录、快照或本地逆向材料。
+npm 只发布 `@eyaeya/xgg-core` 与 `@eyaeya/xgg-cli` 两个包。`@eyaeya/xgg-cli` 依赖并自动安装 `@eyaeya/xgg-core`，用户只需要全局安装 CLI 包。两个包的 `package.json` 使用 `files` allow-list：除 npm 必带的 `package.json` 外，core tarball 只包含 `dist`、`LICENSE`、`README.md` 和 `THIRD_PARTY_NOTICES.md`；cli tarball 额外包含整个 `skills/xgg-rule-authoring/`（正文与 references），不会包含 fixtures、开发计划、探测记录、快照或本地逆向材料。
 
 ## 开发与发布检查
 
@@ -600,7 +714,7 @@ tar -tzf release-artifacts/eyaeya-xgg-cli-*.tgz
 - `pnpm check` 通过。
 - `pnpm pack:release` 能生成 `@eyaeya/xgg-core` 和 `@eyaeya/xgg-cli` tarball。
 - 临时安装生成的 CLI tarball 后，`xgg --version` 和 `xgg --help` 正常。
-- `tar -tzf` 确认除 npm 必带的 `package.json` 外，core tarball 只含 `dist/LICENSE/README.md`，cli tarball 只额外含 `skills/xgg-rule-authoring/` 正文与 references（不含源码、fixtures、本地材料）。
+- `tar -tzf` 确认除 npm 必带的 `package.json` 外，core tarball 只含 `dist/LICENSE/README.md/THIRD_PARTY_NOTICES.md`，cli tarball 只额外含 `skills/xgg-rule-authoring/` 正文与 references（不含源码、fixtures、本地材料）。
 - 公开树中没有真实 IP、6 位登录码、设备 DID、家庭名或本地快照。
 
 发布命令：
@@ -614,10 +728,10 @@ npm publish release-artifacts/eyaeya-xgg-cli-*.tgz --access public
 
 ## Agent 权威参考
 
-供 AI Agent 操作本 CLI 的完整权威指南见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。首次设计/改写规则必须按入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或实机写入时再读取对应的 `device-semantics.md`、`recipes.md`、`operations.md`；新家庭观察、区域语义回访和画像复用则读取 [`references/habit-learning.md`](skills/xgg-rule-authoring/references/habit-learning.md)。这套材料覆盖 25 种执行卡片 + `nop`、event/state 图模型、完整 flags/defaults/enums、MIoT label→wire value、复杂 reset/stop 模式和证据分层，并明确禁止使用未经当前 xgg 校验的历史、第三方节点 JSON。
+供 AI Agent 操作本 CLI 的完整权威指南见 [skills/xgg-rule-authoring/SKILL.md](skills/xgg-rule-authoring/SKILL.md)。云端登录、设备直控与两种联调路径读取 [`references/cloud-workflows.md`](skills/xgg-rule-authoring/references/cloud-workflows.md)。首次设计/改写规则必须按入口继续读取 `references/graph-model.md` 与 `references/node-catalog.md`；涉及设备、复杂时序或实机写入时再读取对应的 `device-semantics.md`、`recipes.md`、`operations.md`；新家庭观察、区域语义回访和画像复用则读取 [`references/habit-learning.md`](skills/xgg-rule-authoring/references/habit-learning.md)。这套材料覆盖 25 种执行卡片 + `nop`、event/state 图模型、完整 flags/defaults/enums、MIoT label→wire value、复杂 reset/stop 模式和证据分层，并明确禁止使用未经当前 xgg 校验的历史、第三方节点 JSON。
 
 ## License
 
-GNU 通用公共许可证 v3 或更新版本（GPL-3.0-or-later），见 [LICENSE](LICENSE)。
+GNU 通用公共许可证 v3 或更新版本（GPL-3.0-or-later），见 [LICENSE](LICENSE)。云端协议来源与保留的第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 Copyright (C) 2026 不系 (@eyaeya)

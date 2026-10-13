@@ -1,6 +1,7 @@
 import {
   ConfigError,
   type FilterRuleLogsOpts,
+  NetworkError,
   type RuleLogEntry,
   fetchRuleLogs,
   filterRuleLogs,
@@ -28,12 +29,16 @@ interface LogsOpts extends RuleOpts {
   follow?: boolean;
   intervalMs?: string;
   maxBlocks?: string;
+  maxEvents?: string;
+  durationMs?: string;
   json?: boolean;
   nextHint?: boolean;
 }
 
 const DEFAULT_TAIL = 50;
 const DEFAULT_FOLLOW_INTERVAL_MS = 2000;
+const MAX_NETWORK_RETRIES = 3;
+const MAX_RETRY_DELAY_MS = 30_000;
 
 export function attachLogs(cmd: Command): void {
   const sub = cmd
@@ -52,6 +57,14 @@ export function attachLogs(cmd: Command): void {
     )
     .option('--max-blocks <N>', 'max getLog blocks to fetch per poll (default 8)')
     .option(
+      '--max-events <N>',
+      'stop after N new entries, excluding initial dump (0: initial dump only)',
+    )
+    .option(
+      '--duration-ms <N>',
+      'stop starting --follow polls after N ms; in-flight reads use --timeout',
+    )
+    .option(
       '--json',
       'emit one JSON envelope; --follow then emits each new entry as one NDJSON line',
     )
@@ -68,6 +81,7 @@ Examples:
   $ xgg rule logs 1779888258312 --tail 10 --level error --json
   $ xgg rule logs 1779888258312 --since 2026-05-27T12:00:00Z
   $ xgg rule logs 1779888258312 --follow --interval-ms 1500
+  $ xgg rule logs 1779888258312 --follow --json --duration-ms 30000 --max-events 20
 
 Note: this shows successfully parsed entries from a bounded gateway log fetch,
 then filters by rule id / time / level and applies --tail. It does not expose
@@ -79,10 +93,30 @@ initial envelope and each later line is one newly observed entry.`,
     )
     .action(
       wrap('rule.logs', async (id: string, opts: LogsOpts) => {
+        if (
+          opts.follow !== true &&
+          (opts.intervalMs !== undefined ||
+            opts.maxEvents !== undefined ||
+            opts.durationMs !== undefined)
+        ) {
+          throw new ConfigError('--interval-ms / --max-events / --duration-ms require --follow');
+        }
         const filterOpts = buildFilter(id, opts);
         const maxBlocks =
           opts.maxBlocks !== undefined
-            ? parseIntOrThrow(opts.maxBlocks, '--max-blocks')
+            ? parsePositiveIntOrThrow(opts.maxBlocks, '--max-blocks')
+            : undefined;
+        const intervalMs =
+          opts.intervalMs !== undefined
+            ? parsePositiveTimerMs(opts.intervalMs, '--interval-ms')
+            : DEFAULT_FOLLOW_INTERVAL_MS;
+        const maxEvents =
+          opts.maxEvents !== undefined
+            ? parseIntOrThrow(opts.maxEvents, '--max-events')
+            : undefined;
+        const durationMs =
+          opts.durationMs !== undefined
+            ? parsePositiveTimerMs(opts.durationMs, '--duration-ms')
             : undefined;
         const deps = makeDeps(opts);
         const fetchDeps = {
@@ -104,11 +138,7 @@ initial envelope and each later line is one newly observed entry.`,
           return;
         }
 
-        const intervalMs =
-          opts.intervalMs !== undefined
-            ? parsePositiveTimerMs(opts.intervalMs, '--interval-ms')
-            : DEFAULT_FOLLOW_INTERVAL_MS;
-        await followLoop(fetchDeps, filterOpts, opts, intervalMs);
+        await followLoop(fetchDeps, filterOpts, opts, intervalMs, maxEvents, durationMs);
       }),
     );
 }
@@ -147,16 +177,22 @@ function buildFilter(id: string, opts: LogsOpts): FilterRuleLogsOpts {
 // entries", which doesn't need to mean "all of memory".
 const MAX_TAIL = 100_000;
 
-function parseIntOrThrow(raw: string, flag: string): number {
+function parseIntOrThrow(raw: string, flag: string, maximum = MAX_TAIL): number {
   // Accept canonical nonnegative decimals only: 0 or [1-9][0-9]*.
   // Rejects '+5', '-5', '007', '1.0', '1e3', '0x10', ' 5 ', ''.
   if (!/^(0|[1-9]\d*)$/.test(raw)) {
     throw new ConfigError(`${flag} must be a nonnegative decimal integer (got '${raw}')`);
   }
   const n = Number(raw);
-  if (n > MAX_TAIL) {
-    throw new ConfigError(`${flag} must be <= ${MAX_TAIL} (got '${raw}')`);
+  if (n > maximum) {
+    throw new ConfigError(`${flag} must be <= ${maximum} (got '${raw}')`);
   }
+  return n;
+}
+
+function parsePositiveIntOrThrow(raw: string, flag: string, maximum = MAX_TAIL): number {
+  const n = parseIntOrThrow(raw, flag, maximum);
+  if (n === 0) throw new ConfigError(`${flag} must be positive (got '${raw}')`);
   return n;
 }
 
@@ -193,39 +229,69 @@ async function followLoop(
   filterOpts: ReturnType<typeof buildFilter>,
   opts: LogsOpts,
   intervalMs: number,
+  maxEvents: number | undefined,
+  durationMs: number | undefined,
 ): Promise<void> {
   const seenRaw = new Set<string>();
-  // Initial dump: print whatever's already there matching the filter so the
-  // user has context, then mark every line we showed as "seen" so the next
-  // tick only renders new arrivals.
-  const initial = await fetchRuleLogs(fetchDeps);
-  const initialFiltered = filterRuleLogs(initial.entries, filterOpts);
-  render(initialFiltered, opts);
-  for (const e of initial.entries) seenRaw.add(e.raw);
-
-  // sleep helper kept terse — no extra deps.
+  const deadline = durationMs === undefined ? undefined : Date.now() + durationMs;
+  let initial = true;
+  let emitted = 0;
+  let delayMs = 0;
+  let consecutiveFailures = 0;
+  let lastNetworkError: NetworkError | undefined;
   const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  const { tail: _tail, ...noTailFilter } = filterOpts;
+  void _tail;
 
-  // Loop until SIGINT — Ctrl-C ends the process and the daemon stays.
-  // We intentionally do not signal an exit code from a follower; users
-  // expect tail-like semantics.
+  // An explicit duration bounds scheduling, not cancellation: the gateway's
+  // paged read API has a timeout per RPC but no cancellation signal.
   while (true) {
-    await sleep(intervalMs);
+    if (delayMs > 0) {
+      const remaining = deadline === undefined ? delayMs : Math.max(0, deadline - Date.now());
+      await sleep(Math.min(delayMs, remaining));
+    }
+    if (deadline !== undefined && Date.now() >= deadline) {
+      // A window ending during an outage is a failed observation, not evidence
+      // that nothing happened. Preserve the last typed error for the outer wrap.
+      if (lastNetworkError !== undefined) throw lastNetworkError;
+      return;
+    }
     let next: Awaited<ReturnType<typeof fetchRuleLogs>>;
     try {
       next = await fetchRuleLogs(fetchDeps);
     } catch (err) {
-      process.stderr.write(`(follow: fetch failed — ${(err as Error).message}; retrying)\n`);
+      // Auth/schema/config/service/unknown errors need intervention. Only
+      // transient network reads can be retried, with a bounded failure streak.
+      if (!(err instanceof NetworkError)) throw err;
+      consecutiveFailures += 1;
+      if (consecutiveFailures > MAX_NETWORK_RETRIES) {
+        process.stderr.write('(follow: network retry limit reached; stopping)\n');
+        throw err;
+      }
+      lastNetworkError = err;
+      delayMs = Math.min(
+        Math.max(intervalMs, 250) * 2 ** (consecutiveFailures - 1),
+        MAX_RETRY_DELAY_MS,
+      );
+      process.stderr.write(
+        `(follow: network read failed; retry ${consecutiveFailures}/${MAX_NETWORK_RETRIES} in ${delayMs}ms)\n`,
+      );
+      continue;
+    }
+    consecutiveFailures = 0;
+    lastNetworkError = undefined;
+    delayMs = intervalMs;
+    if (initial) {
+      render(filterRuleLogs(next.entries, filterOpts), opts);
+      for (const e of next.entries) seenRaw.add(e.raw);
+      initial = false;
+      if (maxEvents === 0) return;
       continue;
     }
     const fresh = next.entries.filter((e) => !seenRaw.has(e.raw));
     for (const e of fresh) seenRaw.add(e.raw);
-    // In follow mode we never tail — every fresh entry that matches is
-    // worth showing as it arrives. Rebuild the filter without `tail`
-    // (biome lint forbids `delete` on object properties).
-    const { tail: _tail, ...noTailFilter } = filterOpts;
-    void _tail;
-    const matched = filterRuleLogs(fresh, noTailFilter);
+    const filtered = filterRuleLogs(fresh, noTailFilter);
+    const matched = maxEvents === undefined ? filtered : filtered.slice(0, maxEvents - emitted);
     if (matched.length === 0) continue;
     if (opts.json === true) {
       for (const e of matched) process.stdout.write(`${JSON.stringify(e)}\n`);
@@ -238,5 +304,7 @@ async function followLoop(
       for (const e of matched) table.push([e.iso, e.level, e.nodeId ?? '-', e.message]);
       process.stdout.write(`${table.toString()}\n`);
     }
+    emitted += matched.length;
+    if (maxEvents !== undefined && emitted >= maxEvents) return;
   }
 }

@@ -1,0 +1,20 @@
+{
+  "homelist": [
+    {
+      "id": "101",
+      "name": "Example home",
+      "uid": 42,
+      "roomlist": [
+        {
+          "id": "201",
+          "name": "Example room",
+          "dids": [
+            "device-demo"
+          ]
+        }
+      ],
+      "address": "SYNTHETIC_PRIVATE_LOCATION",
+      "latitude": 0
+    }
+  ]
+}
