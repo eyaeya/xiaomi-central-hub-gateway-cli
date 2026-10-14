@@ -19,7 +19,7 @@ pnpm --filter @xgg/cli dev cloud --help
 1. 先完成 CLI、账号文件和执行入口等准备工作，安排在用户能够立即扫码时才生成二维码；生成后立即展示，不把扫码延后到构建、测试或研究结束。`xgg cloud login` 优先复用或刷新已有授权；`authenticated:true` 时无需扫码或调用 complete。默认凭据兼容 `~/.config/mijia-api/auth.json`，也可用 `--auth-file` / `XGG_CLOUD_AUTH_FILE` 隔离账号。
 2. 若返回 `authenticated:false,status:"pending"`，先检查 `expiresAt` 尚未到期，再**在对话中直接展示返回的 `qrMarkdown`，或用 `qrImagePath` 的绝对路径嵌入图片**；不要只贴 JSON 或图片路径。向用户说明：“请打开米家 App 扫描这个二维码，并在手机上确认登录。” `loginUrl` 仅作打不开图片时的备用入口。二维码只在当前授权对话展示，不纳入公开报告、提交或长期知识库。
 3. 展示二维码之后，优先使用返回的 `nextCommand.argv` 有界等待，默认等价于 `xgg cloud login --complete --wait-ms 20000`，期间继续向用户说明当前状态。该数组保留所选 `--auth-file` 的绝对路径、非默认 timeout/wait 和 pretty；不能重新拼一个丢失自定义账号文件的裸 complete。`nextAction` 是等价的 POSIX 安全命令，优先数组执行，不用 eval 或按空格拆词。数组首项为 `xgg`，可以按当前源码/node/npx入口替换命令前缀，其余参数保持原样。未扫码的普通等待结束仍返回 pending、保留同一二维码；不能当作失败，也不要反复生成新码。用户确认后继续 complete，直到 `authenticated:true`。`expiresAt` 是 ISO 过期时间；如果已到期或返回 qr-expired，旧二维码不能继续使用。先说明旧码已过期，待用户能立即扫码时再次 login，展示新返回的图片；不能再次要求用户扫描历史消息中的旧码。只有用户要求换码、凭据确实损坏或明确需要重启流程时才 `--restart`；已有有效授权仍会复用。用户明确要求切换账号时才 `cloud logout` 后重新登录。
-4. 已有明确网关地址和 session 配置时先运行对应 `xgg status --base-url <BASE_URL>`，live 会话直接复用。不知道承载设备、DID 或 IP 时，先读 [gateway-discovery.md](gateway-discovery.md)，按目标家庭清单与准确型号定位；不能只按昵称、gateway 子串或单台 hub 的在线状态判断。选定 DID 后直接 `xgg cloud gateway login --did <GATEWAY_DID>`，未知地址不传 `--base-url`，并排除无关 `XGG_BASE_URL` 覆盖，让云端发现地址。候选仍不明确且用户也不知道设备时，继续指南中的 App 定位和人工兜底。
+4. 已有明确网关地址和 session 配置时先运行对应 `xgg status --base-url <BASE_URL>`，live 会话直接复用。不知道承载设备、DID 或 IP 时，先读 [gateway-discovery.md](gateway-discovery.md)，按目标家庭清单与准确型号定位独立中枢、路由器、屏幕、音箱、智能存储中的候选；不能只按昵称、gateway 子串或单台 hub 的在线状态判断，不能因存储没有蓝牙/Mesh 网关就排除其中枢能力。五类候选选定 DID 后都直接使用 `xgg cloud gateway login --did <GATEWAY_DID>`，未知地址不传 `--base-url`，并排除无关 `XGG_BASE_URL` 覆盖，由同一命令发现 URL 并内存取码；每台设备的 RPC 支持仍须实际验证。候选仍不明确且用户也不知道设备时，继续指南中的 App 定位和人工兜底。
 
    登录成功返回明确的 `baseUrl`、`nextCommand.argv` 和等价 `nextAction`。先运行返回的 status 命令，保留其 `--base-url` 与自定义 `--session-file`；后续 rule/variable/logs 命令同样传这些参数，或在当前执行环境显式设置 `XGG_BASE_URL` / `XGG_SESSION_FILE`。登录并不会为其他本地命令隐式选默认网关，不扫描 session 后挑第一个。不要将云端 `--auth-file` 与网关 `--session-file` 混用。
 
@@ -29,7 +29,7 @@ pnpm --filter @xgg/cli dev cloud --help
    xgg rule list --base-url <RETURNED_BASE_URL> --session-file <SAME_SESSION_FILE>
    ```
 
-5. 六位码由命令在内存取出并传入网关登录，Agent 不打印、不保存、不手工拼入命令行。云端发现/取码确实不支持、目标无法确定，或用户选择手动登录时，按 [gateway-discovery.md](gateway-discovery.md) 一次问齐缺失的完整极客 URL（或 LAN IP 加端口）与新六位码，执行 `xgg login --code <CODE> --base-url <BASE_URL>`；自定义会话文件时对手动 login 显式传 `--session-file`，并在状态验证后再恢复原只读操作。云端授权失效走扫码，网络不可达先排连接，不反复索码。
+5. 六位码由命令在内存取出并传入网关登录，Agent 不打印、不保存、不手工拼入命令行。云端发现/取码确实不支持、目标无法确定，或用户选择手动登录时，按 [gateway-discovery.md](gateway-discovery.md) 一次问齐缺失的完整极客 URL（或 LAN IP 加端口）与新六位码，执行 `xgg login --code <CODE> --base-url <BASE_URL>`；自定义会话文件时对手动 login 显式传 `--session-file`，并在状态验证后再恢复原只读操作。云端授权失效走扫码；账号/共享权限不足先核对账号、家庭及设备权限，不等同型号不支持，不反复扫码；网络不可达先排连接，不反复索码。
 
 云端 exit 3 的 `error.details.domain=cloud` 应走扫码；不能向用户索取网关码修复云端授权。网关 exit 3 优先走云端引导。授权可续用但不保证永久有效。`cloud logout` 与网关 `logout` 各自独立，多步任务结束不需要为了“清理”强制登出可复用会话。
 

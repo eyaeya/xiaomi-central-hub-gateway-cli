@@ -2,9 +2,9 @@
 
 米家云端设备控制与小米中枢网关极客版命令行工具。安装后提供 `xgg`：直接读写米家设备，自主取码登录中枢，读取设备/规则/变量，编辑自动化规则图、管理变量与备份、学习家庭习惯，并读取规则运行日志与 trace。
 
-## v3.0.0：云端直控、中枢定位与联调
+## v3.0.1：五类中枢候选、云端直控与联调
 
-原生 TypeScript `xgg cloud`，无需 Python、uv 或运行中的网关 daemon。米家扫码授权后，可以发现家庭/房间/设备、读取和设置属性、执行动作，访问场景、耗材、统计和小爱音箱；需要中枢时，再通过云端自主取得六位码并复用本地会话。v3.0.0 沿用 v2.2.0 的云端能力，补全未知 IP 的中枢定位与手动回退；规则、习惯学习、导入导出、设备替换及写入保护继续保留。
+原生 TypeScript `xgg cloud`，无需 Python、uv 或运行中的网关 daemon。米家扫码授权后，可以发现家庭/房间/设备、读取和设置属性、执行动作，访问场景、耗材、统计和小爱音箱；需要中枢时，再通过云端自主取得六位码并复用本地会话。v3.0.1 补齐五类 11 款中枢候选的查找指引，沿用 v3.0.0 的未知 IP 定位与手动回退，以及 v2.2.0 的云端能力；规则、习惯学习、导入导出、设备替换及写入保护继续保留。
 
 - **对话扫码：** `cloud login` 返回本地二维码 PNG 的 `qrImagePath`、可展示的 `qrMarkdown`、有效期 `expiresAt` 与 `nextAction`。Agent 展示二维码，引导用户用米家 App 确认，再执行 `--complete`；已有授权可复用，失效仍需重新扫码。
 - **明确读取来源：** `device get` 默认 `--source auto`，可能返回缓存。测试变化和恢复验收使用 `--source device` 请求设备 RPC；`cache` 只读最后上报缓存。不是所有设备都支持直读，失败时不能降级缓存后宣称恢复成功。
@@ -18,7 +18,7 @@ xgg cloud device get --did <DID> --properties light.on,light.brightness --source
 xgg cloud device watch --did <DID> --property light.on --source device
 ```
 
-云端 spec 校验访问权限、类型、范围和动作参数。API ACK、缓存、设备报告和中枢日志是不同证据，不能等同于肉眼确认物理效果。完整更新与验收边界见 [v3.0.0 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.0.0/RELEASE_NOTES.md)；尚未提供上游 MCP 服务或批量物理写入等全部能力。
+云端 spec 校验访问权限、类型、范围和动作参数。API ACK、缓存、设备报告和中枢日志是不同证据，不能等同于肉眼确认物理效果。完整更新与验收边界见 [v3.0.1 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.0.1/RELEASE_NOTES.md)；尚未提供上游 MCP 服务或批量物理写入等全部能力。
 
 ## 安装（CLI + Agent Skill）
 
@@ -97,7 +97,7 @@ xgg variable list --pretty
 
 `cloud gateway login` 返回 `baseUrl`、`nextCommand.argv` 与 `nextAction`，不打印六位码。登录不会隐式选择默认网关，后续本地命令仍须传同一 `--base-url` / `--session-file`，或使用对应的 `XGG_BASE_URL` / `XGG_SESSION_FILE`。电脑仍须可达中枢局域网地址。
 
-中枢候选应同时考虑独立设备、内置中枢的路由器和部分家庭屏，并核对具体型号/固件；不是全部同类产品都支持中枢或取码 RPC。候选不唯一时先确认实际目标。未指定地址时由云端发现。纯网络故障先检查地址、端口、是否同网及路由，不立即换码。云端地址发现/取码不支持或确需补地址/认证信息时，说明具体缺口并引导用户从对应米家设备页补充；需要手动认证时，使用当前地址与新六位码运行 `xgg login --base-url <USER_PROVIDED_URL> --code <FRESH_CODE>`。完整流程见随包 `references/gateway-discovery.md`。
+中枢候选覆盖五类 11 款：独立小米中枢网关；路由器 BE10000 Pro、BE7200 Pro、BE6500 Pro、BE3600 Pro 套装主路由及网线版主路由；家庭屏 11、中控屏 Max；Sound 2 Max、Sound 2 Pro；小米智能存储。智能存储仅有中枢、无网关能力，仍不能据此排除。该清单不是全型号实机兼容认证，目标型号、固件、极客接口与两个云端 RPC 仍须验证。候选不唯一时先确认实际目标。未指定地址时由云端发现。纯网络故障先检查地址、端口、是否同网及路由，不立即换码。云端地址发现/取码不支持或确需补地址/认证信息时，说明具体缺口并引导用户从对应米家设备页补充；需要手动认证时，使用当前地址与新六位码运行 `xgg login --base-url <USER_PROVIDED_URL> --code <FRESH_CODE>`。逐款依据与完整流程见随包 [中枢定位指南](skills/xgg-rule-authoring/references/gateway-discovery.md)。
 
 退出码 3 先区分认证域：云端授权失效走扫码；网关会话失效优先用已有云端授权自动取码。只有设备不支持取码或用户选择手动方式时，才从米家 App 对应中枢页面取得六位码，运行 `xgg login --code <CODE> --base-url <URL>`。不要在设备写入结果未知后自动重放写入。
 
