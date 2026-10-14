@@ -409,9 +409,14 @@ export function formatErrorJson(err: unknown): ErrorJson {
         code: err.code,
         message: err.message,
         hint:
-          err.details?.domain === 'cloud'
-            ? lookupCloudHint(err.code, err.details?.reason)
-            : lookupHint(err.code, command, err.message),
+          err.details?.domain === 'update'
+            ? String(
+                err.details.hint ??
+                  'Run xgg update --help; check the update registry and installation permissions.',
+              )
+            : err.details?.domain === 'cloud'
+              ? lookupCloudHint(err.code, err.details?.reason)
+              : lookupHint(err.code, command, err.message),
         details: err.details,
       },
     };

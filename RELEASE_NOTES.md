@@ -1,4 +1,22 @@
-# xgg v3.0.1 · 补齐五类 11 款中枢候选
+# xgg v3.1.0 · 前台自动更新与镜像回退
+
+新增 `xgg update --check` 和 `xgg update`，分别用于独立检查版本与升级当前 npm 全局安装，无需米家授权或网关登录。CLI、Core 与随包 Skill 同步为 3.1.0；已有云端直控、中枢登录和规则能力继续保留。
+
+- **前台择机升级：** 有限只读命令通过命令行解析后、业务查询前检查更新，成功检查后间隔至少 24 小时、失败后至少 1 小时。写操作、登录/扫码、后台 daemon、持续观察、help/version 和 CI 不触发；`XGG_AUTO_UPDATE=0` 可关闭。
+- **本次调用立即生效：** 升级完成后切换到新 CLI，由它执行当前查询且仅执行一次；旧 CLI 不先执行业务动作，新进程不递归更新。更新提示只写 stderr，业务 stdout 与退出码来自执行查询的 CLI；离线等更新失败继续原查询。已有 daemon 和登录会话保持运行。
+- **网络回退：** 默认 npm 官方源失败后尝试 npmmirror，检查与暂存安装均支持回退；`--registry` / `XGG_UPDATE_REGISTRY` 可指定可信 HTTPS registry。结果标明来源与降级状态，镜像可能落后，离线不算最新，也不保证所有大陆网络可达。
+- **受控替换：** 仅管理已确认的 npm 全局安装，固定版本暂存完整依赖、核对 CLI/Core 与运行检查后再替换；保留失败恢复路径，并以锁防止并发更新。源码、局部依赖、npx、pnpm 链接和无法确认的安装不自动覆盖，不使用 sudo。
+- **Skill 分开同步：** 包内完整 Skill 随升级更新，Agent 全局发现目录中的副本仍须按 README 显式同步，不自动覆盖定制内容。
+
+```bash
+xgg update --check
+xgg update
+xgg update --registry https://registry.npmmirror.com
+```
+
+首次安装或旧版本尚无 `update` 命令时，使用文末的 npm 安装命令，再按 [README](README.md#检查与升级) 完成 Skill 同步与验证。
+
+## v3.0.1 历史：补齐五类 11 款中枢候选
 
 v3.0.1 修正中枢定位指引的候选遗漏：音箱与智能存储也必须进入查找流程，不能把此前独立中枢、路由器、家庭屏的例子当作类别白名单。CLI 帮助、完整 Skill、README 与 npm 包说明同步更新；已有云端直控、扫码、自动取码和双向联调能力继续保留。
 
@@ -149,10 +167,10 @@ v2.2.0 轮次的已有授权复用和**从新扫码到中枢的完整链路**均
 按 [README 安装流程](README.md#安装人类与-ai-agent) 安装 CLI，并用对应版本的 Git tag 安装完整 Skill，包含 `references/`。已有安装也要同步更新 Skill，不能只替换二进制。
 
 ```bash
-npm install -g @eyaeya/xgg-cli@3.0.1
+npm install -g @eyaeya/xgg-cli@3.1.0
 xgg --version
 xgg cloud --help
-npx --yes skills add eyaeya/xiaomi-central-hub-gateway-cli@v3.0.1 --global --all
+npx --yes skills add eyaeya/xiaomi-central-hub-gateway-cli@v3.1.0 --global --all
 ```
 
 Agent 仍须执行 README 的全局 Skill 发现验证，确认实际调用者能够加载该 Skill。源码开发则运行 `pnpm install`、`pnpm build`，通过 `node packages/cli/dist/cli.js` 调用当前 checkout，并用 `skills add .` 安装同一份指南。

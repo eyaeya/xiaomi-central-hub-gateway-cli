@@ -1,0 +1,16 @@
+{
+  "name": "@eyaeya/xgg-cli",
+  "version": "3.0.1",
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "commander": "^12.1.0",
+    "cli-table3": "^0.6.5",
+    "string-width": "^4.2.3",
+    "@eyaeya/xgg-core": "^3.0.1"
+  },
+  "engines": { "node": ">=20.11" },
+  "dist": {
+    "tarball": "https://registry.npmmirror.com/@eyaeya/xgg-cli/-/xgg-cli-3.0.1.tgz",
+    "integrity": "sha512-p31hZ/csNhf6Zl81sjaCo+CF+n7mBpufSSjs60xmhw7cjb4xuWV3dYX+ADVaRWgurBkIPgy+LgcV1vZ8eBd01w=="
+  }
+}

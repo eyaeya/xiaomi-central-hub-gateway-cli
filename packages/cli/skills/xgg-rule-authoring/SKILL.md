@@ -3,9 +3,17 @@ name: xgg-rule-authoring
 description: Use when an Agent controls Xiaomi Home devices through xgg cloud or authors and debugs Central Hub Geek Edition rules, including Mi Home QR authorization, automatic gateway login, cloud/local verification, household habit learning, all 25 cards plus nop, event/state semantics, variables, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-9bd9d3d69ee977164a4c32910be669afed101b720f9a6a94e85d90daf327cf1f -->
+<!-- xgg-skill-content-build: sha256-ba1c2f887a6489ac30922ea897afc89c7d379389d0773563e6301303ab93ffa6 -->
 
 # xgg 米家云端控制与中枢网关自动化编译器
+
+## CLI 版本与更新
+
+本指南随 xgg v3.1.0 发布。`xgg update --check` 只检查，`xgg update` 检查并升级已确认的 npm 全局安装；两者不需要米家或网关认证。官方 npm 失败后尝试 npmmirror；可用 `--registry <https-url>` 或 `XGG_UPDATE_REGISTRY` 指定可信源，命令行选项优先。镜像可能延迟或不可达，必须保留结果里的来源与降级边界，不能把离线或镜像无新版表述为官方已确认最新。
+
+有限前台只读命令通过命令行解析后、业务查询前会自动检查，成功检查后至少间隔 24 小时，失败后至少 1 小时。`XGG_AUTO_UPDATE=0` 关闭自动检查和升级，显式 update 仍可用。daemon、登录/扫码、logout、写操作、原始 api、持续 watch/follow、help/version 与 CI 不触发。升级后立即由新 CLI 执行本次查询，旧 CLI 不先执行业务动作，新进程跳过重复更新，因此查询只执行一次。提示只写 stderr，业务 stdout/退出码来自实际执行查询的 CLI；离线等更新失败继续原查询。不要为升级主动 logout/relogin，现有 daemon 保持会话，Agent 代码在下一次正常登录时更新。
+
+源码 checkout、项目局部依赖、npx 缓存、pnpm 链接或无法确认的安装不自动覆盖；按返回指引使用原安装方式处理，不能用 sudo 或另一 prefix 伪装成原入口已升级。先核对实际 `xgg --version`。包内完整 Skill 随升级更新，Agent 全局目录中的独立副本仍须显式同步并验证；GitHub 不可达时从已安装 CLI 的 `skills/xgg-rule-authoring/` 复制整个目录，保留已有定制修改，不能只复制 SKILL.md 或假设 npm 已完成注册。
 
 ## 云端任务路由
 

@@ -22,7 +22,11 @@ export default defineWorkspace([
     test: {
       name: 'core-contract',
       root: './packages/core',
-      include: ['tests/contract/cloud*.test.ts', 'tests/contract/rule-logs.test.ts'],
+      include: [
+        'tests/contract/cloud*.test.ts',
+        'tests/contract/rule-logs.test.ts',
+        'tests/contract/update.test.ts',
+      ],
     },
   },
   {
@@ -33,6 +37,8 @@ export default defineWorkspace([
       include: [
         'tests/unit/commands/cloud*.test.ts',
         'tests/unit/commands/rule-logs-follow.test.ts',
+        'tests/unit/commands/update.test.ts',
+        'tests/unit/update/**/*.test.ts',
       ],
     },
   },
