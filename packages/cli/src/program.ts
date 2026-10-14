@@ -10,6 +10,7 @@ import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { ruleCommand } from './commands/rule/index.js';
 import { statusCommand } from './commands/status.js';
+import { updateCommand } from './commands/update.js';
 import { variableCommand } from './commands/variable.js';
 import { VERSION } from './version.js';
 
@@ -31,6 +32,7 @@ export function buildProgram(): Command {
   program.addCommand(logoutCommand());
   program.addCommand(ruleCommand());
   program.addCommand(statusCommand());
+  program.addCommand(updateCommand());
   program.addCommand(variableCommand());
   program.addCommand(agentCommand(), { hidden: true });
 

@@ -31,7 +31,11 @@ npm 包只包含运行 core 所需的 `dist`、许可证、第三方通知与本
 
 网关本地通过 WebSocket 承载的加密二进制协议通信，新增云端 transport 独立使用 HTTPS。除低层逃生口外，core 层使用 schema 校验返回，避免调用方直接依赖未建模响应。
 
-## v3.0.1 云端 SDK 与中枢引导
+## v3.1.0 与 CLI 更新
+
+Core 与 CLI 同步发布为 3.1.0。新增的 `xgg update --check`、`xgg update` 和前台自动更新均由 CLI 层负责，直接导入 Core SDK 不会执行版本检查、启动更新进程或修改安装。CLI 升级会校验配套 Core；SDK 使用者仍由项目的包管理器和锁文件管理依赖版本。完整行为见 [v3.1.0 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.1.0/RELEASE_NOTES.md)。
+
+## 云端 SDK 与中枢引导
 
 v3.0.1 补齐五类中枢候选指引，沿用 v3.0.0 的中枢定位流程与 v2.2.0 的原生 TypeScript 云端实现，不要求 Python 或网关 daemon。公共导出包括 `CloudClient`、`createCloudTransport`、`cloudLoginStart` / `cloudLoginComplete`、`cloudStatus` / `cloudLogout` 与 `loginGatewayViaCloud`，以及独立的云端快照工具。支持设备与家庭发现、MIoT spec、属性读写、动作、场景、耗材、统计和音箱；已有网关 SDK、workflow 租约、规则与习惯学习能力继续保留。
 
@@ -59,7 +63,7 @@ const reading = await cloud.getProperty(
 
 云端物理写入不使用网关 workflow 租约，也不会自动套用 CLI 的 Agent guard 或写前快照。直接调用 SDK 的程序负责授权范围、设备直读原值、快照、写后回读及恢复；可使用导出的云端快照工具。云端 mutation 不自动重发，结果未知时抛出 `NotConfirmedError`；动作、场景和音箱审计不是可逆备份。逐属性错误及 `accepted` 必须分别处理，不能仅凭 API ACK 宣称设备已经执行。
 
-云端协议参考 [Do1e/mijia-api](https://github.com/Do1e/mijia-api)，来源与保留的许可见随包 `THIRD_PARTY_NOTICES.md`。本次未包含上游所有 MCP、批量物理写入及开发辅助入口，完整范围见 [v3.0.1 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.0.1/RELEASE_NOTES.md)。
+云端协议参考 [Do1e/mijia-api](https://github.com/Do1e/mijia-api)，来源与保留的许可见随包 `THIRD_PARTY_NOTICES.md`。本次未包含上游所有 MCP、批量物理写入及开发辅助入口，完整范围见 [v3.1.0 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.1.0/RELEASE_NOTES.md)。
 
 ## 写操作与 workflow 租约
 

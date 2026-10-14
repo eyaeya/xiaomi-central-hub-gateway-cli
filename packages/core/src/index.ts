@@ -16,6 +16,7 @@ export * from './agent/index.js';
 export * from './resources/index.js';
 export * from './session/index.js';
 export * from './transport/errors.js';
+export * from './schemas/update.js';
 export * from './usecases/index.js';
 export { nodeSchemaForType } from './schemas/nodes/registry.js';
 export {

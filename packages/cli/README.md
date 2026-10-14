@@ -2,7 +2,23 @@
 
 米家云端设备控制与小米中枢网关极客版命令行工具。安装后提供 `xgg`：直接读写米家设备，自主取码登录中枢，读取设备/规则/变量，编辑自动化规则图、管理变量与备份、学习家庭习惯，并读取规则运行日志与 trace。
 
-## v3.0.1：五类中枢候选、云端直控与联调
+## v3.1.0：前台自动更新与网络回退
+
+`xgg update --check` 仅检查版本，`xgg update` 检查并升级已确认的 npm 全局安装。升级不依赖米家授权或网关登录，先暂存和验证新安装，再替换当前版本；源码、局部依赖、npx 缓存与 pnpm 链接不自动覆盖，不使用 sudo。
+
+```bash
+xgg update --check
+xgg update
+xgg update --registry https://registry.npmmirror.com
+```
+
+默认先使用 npm 官方源，失败后回退 npmmirror，检查与暂存安装均支持回退；`--registry <https-url>` / `XGG_UPDATE_REGISTRY` 可选择可信来源，命令行选项优先。镜像可能延迟或不可达，结果标记来源与降级状态，不能把离线当成最新，也不保证所有大陆网络均可用。升级固定已检查的版本，不因镜像落后而降级。
+
+有限前台只读命令通过命令行解析后、业务查询前会自动检查：成功检查后间隔至少 24 小时，失败后至少 1 小时。`XGG_AUTO_UPDATE=0` 关闭自动更新；显式 `xgg update` 仍可运行。写操作、登录/扫码、logout、原始 api、持续 watch/follow、help/version、CI 与后台 daemon 不触发。升级后立即切换新 CLI 执行本次查询，旧 CLI 不先执行业务动作，新进程跳过重复更新，因此查询只执行一次。提示只写 stderr，业务 stdout 与退出码来自实际执行查询的 CLI；离线等更新失败继续原查询。已有 daemon 保持会话，Agent 代码在下次正常登录时更新。
+
+包内 Skill 随 CLI 更新，Agent 全局目录中的独立副本须另行按下面流程同步并验证。GitHub 不可达时可使用包内完整 Skill 的[手动回退流程](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.1.0/README.md#无法使用-skills-cli-时的手动回退)，保留已有定制修改。
+
+## 云端直控与中枢联调
 
 原生 TypeScript `xgg cloud`，无需 Python、uv 或运行中的网关 daemon。米家扫码授权后，可以发现家庭/房间/设备、读取和设置属性、执行动作，访问场景、耗材、统计和小爱音箱；需要中枢时，再通过云端自主取得六位码并复用本地会话。v3.0.1 补齐五类 11 款中枢候选的查找指引，沿用 v3.0.0 的未知 IP 定位与手动回退，以及 v2.2.0 的云端能力；规则、习惯学习、导入导出、设备替换及写入保护继续保留。
 
@@ -18,13 +34,13 @@ xgg cloud device get --did <DID> --properties light.on,light.brightness --source
 xgg cloud device watch --did <DID> --property light.on --source device
 ```
 
-云端 spec 校验访问权限、类型、范围和动作参数。API ACK、缓存、设备报告和中枢日志是不同证据，不能等同于肉眼确认物理效果。完整更新与验收边界见 [v3.0.1 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.0.1/RELEASE_NOTES.md)；尚未提供上游 MCP 服务或批量物理写入等全部能力。
+云端 spec 校验访问权限、类型、范围和动作参数。API ACK、缓存、设备报告和中枢日志是不同证据，不能等同于肉眼确认物理效果。完整更新与验收边界见 [v3.1.0 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.1.0/RELEASE_NOTES.md)；尚未提供上游 MCP 服务或批量物理写入等全部能力。
 
 ## 安装（CLI + Agent Skill）
 
 > **给正在执行本 README 的 Agent：** 不要只安装 npm 包。完整安装同时包含提供 `xgg` 命令的 CLI，以及让 Agent 知道如何安全调用它的 `xgg-rule-authoring` Skill；两者验证通过后才能报告安装成功。人类与 Agent 使用相同流程。
 
-要求 Node.js 20.11 或更高版本，并可通过 npm 和 GitHub 下载依赖。先声明验收对象：Agent 必须把 `AGENT_NAME` 替换成 `skills list --json` 使用的自身规范化名称（例如 `Codex`、`Claude Code`）；人类已确定后续 Agent 时也填写其具体名称，尚未确定时才使用 `*`。`*` 只证明 Skill 已注册给当前 `skills` CLI 识别到的至少一个 Agent；实际 Agent 接手前仍须按其具体名称重跑验证。随后执行无交互全局安装：
+要求 Node.js 20.11 或更高版本，以及可访问的 npm registry；下面的 Skill 安装命令还需要 GitHub 网络，无法访问时可从 npm 包中复制完整 Skill。先声明验收对象：Agent 必须把 `AGENT_NAME` 替换成 `skills list --json` 使用的自身规范化名称（例如 `Codex`、`Claude Code`）；人类已确定后续 Agent 时也填写其具体名称，尚未确定时才使用 `*`。`*` 只证明 Skill 已注册给当前 `skills` CLI 识别到的至少一个 Agent；实际 Agent 接手前仍须按其具体名称重跑验证。随后执行无交互全局安装：
 
 ```bash
 set -euo pipefail
