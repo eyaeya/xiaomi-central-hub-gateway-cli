@@ -3,13 +3,13 @@ name: xgg-rule-authoring
 description: Use when an Agent controls Xiaomi Home devices through xgg cloud or authors and debugs Central Hub Geek Edition rules, including Mi Home QR authorization, automatic gateway login, cloud/local verification, household habit learning, all 25 cards plus nop, event/state semantics, variables, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-1e04776ce1c9b410f0e06dc3ed3e74855284e6a4e44c0dc20bafdee37eb444a4 -->
+<!-- xgg-skill-content-build: sha256-9bd9d3d69ee977164a4c32910be669afed101b720f9a6a94e85d90daf327cf1f -->
 
 # xgg 米家云端控制与中枢网关自动化编译器
 
 ## 云端任务路由
 
-扫码登录、设备直接读写/观察、云端与网关双向联调，先读 [references/cloud-workflows.md](references/cloud-workflows.md)。优先米家 App 扫码云端授权，再自主获取中枢六位码；已有授权和 live daemon 均复用；扫码续接采用返回的 `nextCommand.argv`，网关引导后保留返回的 baseUrl 和所选 session 文件用于后续命令。不知道承载设备、DID 或地址时读 [references/gateway-discovery.md](references/gateway-discovery.md)，先定位再云端发现地址。只做云端操作无需读取规则卡目录。写前、写后与恢复核验用 `get/watch --source device`，auto/cache 不可冒充实时状态；设备直读失败时不得把缓存当恢复证明。规则任务继续遵循下面完整编译与验收契约，不能因云端可控而省略网关 spec/日志证明。
+扫码登录、设备直接读写/观察、云端与网关双向联调，先读 [references/cloud-workflows.md](references/cloud-workflows.md)。优先米家 App 扫码云端授权，再自主获取中枢六位码；已有授权和 live daemon 均复用；扫码续接采用返回的 `nextCommand.argv`，网关引导后保留返回的 baseUrl 和所选 session 文件用于后续命令。不知道承载设备、DID 或地址时读 [references/gateway-discovery.md](references/gateway-discovery.md)，覆盖独立中枢、路由器、屏幕、音箱、智能存储五类候选，先定位再用同一命令发现地址并取码。中枢不要求自带蓝牙/Mesh 网关，型号清单不证明双 RPC 均已实测。只做云端操作无需读取规则卡目录。写前、写后与恢复核验用 `get/watch --source device`，auto/cache 不可冒充实时状态；设备直读失败时不得把缓存当恢复证明。规则任务继续遵循下面完整编译与验收契约，不能因云端可控而省略网关 spec/日志证明。
 
 ## 目标
 

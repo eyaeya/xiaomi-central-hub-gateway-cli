@@ -15,7 +15,7 @@ export function cloudGatewayCommand(): Command {
     .description(
       'Discover the gateway address through Mi Home, fetch a code in memory and log in; reuse a live daemon when possible.',
     )
-    .requiredOption('--did <did>', 'explicit gateway, router or smart-screen cloud DID')
+    .requiredOption('--did <did>', 'explicit cloud DID of the device hosting the Central Hub')
     .option(
       '--base-url <url>',
       'explicit address override (or XGG_BASE_URL); otherwise discover through Mi Home',

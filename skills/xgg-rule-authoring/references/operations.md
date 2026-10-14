@@ -30,7 +30,7 @@ node packages/cli/dist/cli.js --help
 
 ## 登录与写前保护
 
-先读 [cloud-workflows.md](cloud-workflows.md) 的扫码与自主取码流程。优先 `cloud login` 复用米家授权；需扫码时先完成准备、生成后立即展示未过期二维码，引导米家 App 确认，使用返回的 `nextCommand.argv` 保留账号路径继续等待。旧码过期后必须生成新码，不能要求扫描旧图。已有明确地址的 live daemon 可直接复用；中枢设备/DID/IP 未知时读 [gateway-discovery.md](gateway-discovery.md)。确定真实中枢 DID 后，未知地址应由云端发现：
+先读 [cloud-workflows.md](cloud-workflows.md) 的扫码与自主取码流程。优先 `cloud login` 复用米家授权；需扫码时先完成准备、生成后立即展示未过期二维码，引导米家 App 确认，使用返回的 `nextCommand.argv` 保留账号路径继续等待。旧码过期后必须生成新码，不能要求扫描旧图。已有明确地址的 live daemon 可直接复用；中枢设备/DID/IP 未知时读 [gateway-discovery.md](gateway-discovery.md)，候选覆盖独立中枢、路由器、屏幕、音箱、智能存储，不按类别或是否有蓝牙/Mesh 网关建立白名单。确定真实中枢 DID 后，各类候选统一由以下命令发现 URL 并内存取码，实际支持以目标响应为准：
 
 ```bash
 env -u XGG_BASE_URL xgg cloud gateway login --did <GATEWAY_DID>
