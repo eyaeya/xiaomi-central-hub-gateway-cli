@@ -4,7 +4,8 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectInstall } from './install.js';
-import { runUpdate } from './service.js';
+import { runUpdate, synchronizeSkills } from './service.js';
+import { type SkillSyncResult, syncInstalledSkills } from './skills.js';
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -44,6 +45,43 @@ export function isAutomaticUpdateEligible(argv: string[], env: NodeJS.ProcessEnv
   return [1, 2, 3].some((length) => READ_COMMANDS.has(argv.slice(0, length).join(' ')));
 }
 
+/** A newly handed-off CLI must repair Skills even though it must not check for updates again. */
+export function isAutomaticSkillSyncEligible(argv: string[], env: NodeJS.ProcessEnv): boolean {
+  return isAutomaticUpdateEligible(argv, { ...env, XGG_UPDATE_HANDOFF: undefined });
+}
+
+export function notifySkillSync(result: SkillSyncResult, notify: (message: string) => void): void {
+  const report = (message: string) => {
+    try {
+      notify(message);
+    } catch {
+      // A closed diagnostics stream must not undo the update decision or replay a query.
+    }
+  };
+  for (const skillPath of result.updatedPaths) {
+    report(
+      `[xgg update] Agent Skill updated at ${JSON.stringify(skillPath)}. Reread SKILL.md and relevant references before subsequent work.`,
+    );
+  }
+  for (const backup of result.backups) {
+    if (backup.customized) {
+      report(
+        `[xgg update] Skill customization was preserved at ${JSON.stringify(backup.backupPath)}; it was not merged into the new active Skill.`,
+      );
+    }
+  }
+  if (result.status === 'partial') {
+    for (const issue of result.issues) {
+      report(
+        `[xgg update] Agent Skill issue at ${JSON.stringify(issue.path)}: ${JSON.stringify(issue.reason)}`,
+      );
+    }
+    report(
+      '[xgg update] Agent Skill synchronization is incomplete. Continuing the query; inspect the issues above before retrying.',
+    );
+  }
+}
+
 export interface AutomaticDependencies {
   fs: Pick<typeof fs, 'mkdir' | 'readFile' | 'writeFile' | 'rename' | 'readdir' | 'unlink'>;
   now: () => number;
@@ -51,6 +89,7 @@ export interface AutomaticDependencies {
   packageRoot: string;
   detect: typeof detectInstall;
   run: typeof runUpdate;
+  syncSkills: typeof syncInstalledSkills;
   notify: (message: string) => void;
 }
 
@@ -84,7 +123,7 @@ export async function maybeAutomaticUpdate(
   env = process.env,
   overrides: Partial<AutomaticDependencies> = {},
 ): Promise<boolean> {
-  if (!isAutomaticUpdateEligible(argv, env)) return false;
+  if (!isAutomaticSkillSyncEligible(argv, env)) return false;
   const deps: AutomaticDependencies = {
     fs,
     now: Date.now,
@@ -92,10 +131,18 @@ export async function maybeAutomaticUpdate(
     packageRoot: fileURLToPath(new URL('../../', import.meta.url)),
     detect: detectInstall,
     run: runUpdate,
+    syncSkills: syncInstalledSkills,
     notify: (message) => process.stderr.write(`${message}\n`),
     ...overrides,
   };
   try {
+    const installation = await deps.detect();
+    if (!installation.supported) return false;
+    // This local pass repairs old copies even while offline or inside the registry
+    // cooldown, and bootstraps a handoff from an unmodified 3.2.0 updater.
+    const skills = await synchronizeSkills(installation.packageRoot, deps.syncSkills);
+    notifySkillSync(skills, deps.notify);
+    if (!isAutomaticUpdateEligible(argv, env)) return false;
     const key = createHash('sha256')
       .update(path.resolve(deps.packageRoot))
       .digest('hex')
@@ -104,8 +151,6 @@ export async function maybeAutomaticUpdate(
     const now = deps.now();
     const oldState = await readState(stateFile, deps);
     if (!due(oldState, now)) return false;
-    const installation = await deps.detect();
-    if (!installation.supported) return false;
     await deps.fs.mkdir(deps.stateRoot, { recursive: true, mode: 0o700 });
     // Exclusive per-hour reservation requires no stale PID lock stealing. A crashed
     // attempt naturally expires after the failure backoff. Keep reservations until aged out.
@@ -133,7 +178,11 @@ export async function maybeAutomaticUpdate(
       }
     }
     try {
-      const result = await deps.run(currentVersion, { registry: env.XGG_UPDATE_REGISTRY });
+      const result = await deps.run(currentVersion, {
+        registry: env.XGG_UPDATE_REGISTRY,
+        skipCurrentSkillSync: true,
+      });
+      if ('skills' in result && result.skills) notifySkillSync(result.skills, deps.notify);
       // An installed update remains installed even if saving its throttle fails.
       await save({ attemptedAt: now, succeededAt: deps.now() }).catch(() => {});
       return result.status === 'updated';

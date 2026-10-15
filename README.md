@@ -21,6 +21,12 @@
 
 GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli)。npm 包：[`@eyaeya/xgg-cli`](https://www.npmjs.com/package/@eyaeya/xgg-cli)、[`@eyaeya/xgg-core`](https://www.npmjs.com/package/@eyaeya/xgg-core)。
 
+## v3.2.1：Agent Skill 随 CLI 自动更新
+
+已安装的 Agent Skill 现在随 CLI 一起更新，完整复制包内 `SKILL.md` 与 references，无需 GitHub。自动升级交接在当前查询前完成同步；即使版本检查尚在冷却期或网络离线，符合条件的前台查询也会从包内修复旧 Skill。`xgg update` 在 CLI 已是最新时同样修复，`--check` 保持只读。
+
+共享软链接保持不变；定制副本先完整备份再安装新版，提示备份路径且不自动合并定制。未知来源、无发布标记、较新版本或不安全目录保留并报告。同步失败不会中断原查询，但会明确提示，不能视为全部更新完成。收到更新提示后，Agent 应重新读取新版 `SKILL.md` 与任务所需 references；已读入对话的旧文本不会自动替换。
+
 ## v3.2.0：灯光动态公式
 
 `xgg light formula` 内置色温与亮度两种计算，输出极客版表达式和指定日期的全天预览。它参考 [MIoT Geek 网页工具](https://lzj.ac.cn/tools/iot/miot-geek) 独立实现数学模型，并修复正午除零、极区非有限值和图表取整不一致。计算完全离线，不需米家或网关授权，不写设备/规则，也不触发自动更新。
@@ -393,7 +399,13 @@ export XGG_AUTO_UPDATE=0
 
 升级只支持已确认的 npm 全局安装，先暂存并验证完整的新安装，再替换当前 CLI；失败时保留或恢复原版本。源码 checkout、项目局部依赖、npx 缓存、pnpm 链接及无法确认的安装方式会跳过自动升级，显式更新提供手动处理指引。权限不足时不会使用 `sudo`，也不会偷偷改装到另一 npm prefix。已运行的网关 daemon 保持原会话，Agent 代码随下一次正常登录启动更新；不要为了升级主动 logout/relogin。
 
-CLI 包中的 Skill 会随版本更新，但 Agent 全局目录中的独立副本需要另行同步。升级后运行下列命令，并重跑上面的全局 Skill 发现验证；GitHub 不可达时使用[手动回退](#无法使用-skills-cli-时的手动回退)，保留已有自定义修改，不直接覆盖不明来源的目录。
+v3.2.1 起，已有发布标记的 Agent Skill 副本从已安装包离线同步，无需另行 `skills add`。更新器只查找已有安装：全局 Agent skills 目录、支持的配置目录与当前项目内识别出的副本；不扫描整块磁盘，也不新增 Agent 注册。自定义位置可设置 `XGG_SKILL_DIRS`，值为完整的 `xgg-rule-authoring` 目录，多个位置以系统路径分隔符分隔（Unix 为 `:`，Windows 为 `;`）。
+
+同步前校验包内完整树，先暂存和备份，再替换并回读。软链接保留，指向同一目录的别名只更新一次；本地定制保存在返回的 `skills.backups` 路径，不合入新版官方内容。未知来源、无标记、较新版本或不安全的目录保持原样，结果列入 `skills.issues`，部分失败后可修复权限或路径再重试。不要把 CLI 已更新解释为所有副本均已同步；也不要在未核对备份前删除它。
+
+符合条件的查询在 registry 冷却期内或离线时也会修复本地 Skill，`XGG_AUTO_UPDATE=0` 和 CI 关闭自动修复。`xgg update --check` 只检查、不修复；显式 `xgg update` 会在已是最新时修复。3.2.0 自动升级到新版会通过新 CLI 交接在同次查询前同步；旧版显式 `xgg update` 没有交接，首次升级后再运行符合条件的查询或新版 `xgg update`。收到更新提示后，Agent 应重新读取提示路径的入口及相关 references，当前对话中已加载的旧文本不会自行更新。
+
+以下命令用于首次注册、未被发现的安装或显式重装；不是自动更新的前置步骤。重装前仍需保留本地定制。GitHub 不可达时见[手动回退](#无法使用-skills-cli-时的手动回退)。
 
 ```bash
 XGG_VERSION="$(xgg --version)"

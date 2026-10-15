@@ -1,6 +1,6 @@
 # ADR 0016：前台 CLI 自更新与 registry 回退
 
-- 状态：Accepted
+- 状态：Accepted；外部 Skill 排除部分由 ADR 0019 在 v3.2.1 中取代
 - 日期：2026-10-14
 - 发布版本：3.1.0
 

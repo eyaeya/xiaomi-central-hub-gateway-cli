@@ -51,3 +51,31 @@ manifest rejection cases. CLI unit tests inject fake fetch responses for source
 ordering, fallback, lag, exact version checks, URL validation, body limits,
 timeouts, numeric versions and sanitized failures. Live reachability is evidence
 for the tested network only; neither source is guaranteed on every mainland ISP.
+
+## Installed Agent Skill synchronization (v3.2.1)
+
+This is local filesystem behavior; it adds no gateway/cloud/registry endpoint.
+After successful CLI activation, update synchronizes already-installed published
+xgg-rule-authoring copies from the full bundled tree. Explicit update adds a
+`skills` result with `status` (current/updated/not-installed/partial), `digest`,
+`updatedPaths`, `backups` (path/backupPath/customized), and `issues` (path/reason).
+A CLI result of updated does not imply all Skill targets succeeded.
+
+Eligible foreground queries perform local repair before registry cooldown checks,
+including a 3.2.0 updater handoff. No additional network access is needed. Automatic
+output goes to stderr and instructs the Agent to reread changed entrypoints; query
+stdout and exit status retain their business meaning. Partial synchronization
+reports individual escaped paths and reasons without requiring another network
+check to inspect them. --check remains read-only.
+Existing automatic exclusions, CI and XGG_AUTO_UPDATE=0 apply to local repair too.
+
+Only recognized existing published copies are managed. Root aliases are preserved,
+internal symlinks/unsafe paths rejected, newer Skills never downgraded. Customized
+copies are fully backed up then replaced by the official tree; customization is
+not automatically merged. Unknown/unmarked copies are retained and reported.
+Source digest, staging/readback, serialization and rollback are covered by injected
+filesystem tests; real old-updater acceptance must start with an old external Skill.
+
+The legacy explicit 3.2.0 update process has no handoff: synchronization first runs
+on the next eligible query or a new-version update call. Help/version smoke remains
+free of external writes. See ADR 0019 and the current auto-skill-update design.
