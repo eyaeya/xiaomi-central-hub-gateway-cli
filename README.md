@@ -21,28 +21,30 @@
 
 GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli)。npm 包：[`@eyaeya/xgg-cli`](https://www.npmjs.com/package/@eyaeya/xgg-cli)、[`@eyaeya/xgg-core`](https://www.npmjs.com/package/@eyaeya/xgg-core)。
 
+## v3.2.0：灯光动态公式
+
+`xgg light formula` 内置色温与亮度两种计算，输出极客版表达式和指定日期的全天预览。它参考 [MIoT Geek 网页工具](https://lzj.ac.cn/tools/iot/miot-geek) 独立实现数学模型，并修复正午除零、极区非有限值和图表取整不一致。计算完全离线，不需米家或网关授权，不写设备/规则，也不触发自动更新。
+
+从 v3.2.0 起，安装匹配版本的 CLI 与 Skill 后即可运行：
+
+```bash
+xgg light formula temperature \
+  --latitude 23.129 --min 3200 --max 5400 --date 2026-10-15 --pretty
+xgg light formula brightness \
+  --latitude 23.129 --min 10 --max 100 --expression-only
+xgg light formula brightness \
+  --latitude 23.129 --min 10 --max 80 --speed 0.5 --offset-minutes 30
+```
+
+亮度使用一个 `brightness` 模式：默认 `--speed 1`，0.5 更缓、2 更陡，允许 0.1–20；速度是斜率倍率，不是刷新间隔或持续时长。时间偏移 `--offset-minutes` 和昼夜反相 `--invert` 也在该模式中按需设置；色温不接受这些控制。
+
+默认 JSON 适合 Agent；`--expression-only` 输出单行公式，`--pretty` 输出人读结果。纬度与上下限必须明确提供，例子不代表某个家庭。亮度单位为百分比、色温为 K，应用前仍要查目标 spec 的单位、可写权限、值域、步进和枚举。模型沿用近似日期与固定正午，不是天文日出日落；亮度时间偏移可能在午夜跳变，极区延伸也不保证恒定输出。Skill 会在动态灯光配置时推荐、询问缺失参数，并沿用已有授权范围接入 number 变量、`varSetNumber --expr` 与周期规则；单独算公式不会启用灯光。完整参数和边界见 [灯光公式指南](skills/xgg-rule-authoring/references/lighting-formulas.md)。
+
 ## v3.1.0：命令行升级与前台自动更新
 
 `xgg update --check` 单独检查版本，`xgg update` 检查并升级受支持的 npm 全局安装。合适的前台只读命令通过命令行解析后，CLI 在业务查询前自动检查：成功检查后间隔至少 24 小时，失败后至少 1 小时再试；发现并安装新版本时立即切换，由新 CLI 执行本次查询且仅执行一次，不重启已有网关 daemon。
 
 更新默认先访问 npm 官方源，不可用时回退 npmmirror；可以指定其他可信 HTTPS registry。镜像可能延迟或不可达，结果会标明来源与降级状态，离线不能算“已是最新”。源码、项目局部安装、npx 缓存与 pnpm 链接安装不自动覆盖。完整行为和退出方式见下文[检查与升级](#检查与升级)，本次变更见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
-
-## 源码新增：灯光动态公式（尚未发布）
-
-`xgg light formula` 内置色温、亮度与可调 Beta 亮度三种计算，输出极客版表达式和指定日期的全天预览。它参考 [MIoT Geek 网页工具](https://lzj.ac.cn/tools/iot/miot-geek) 独立实现数学模型，并修复正午除零、极区非有限值和图表取整不一致。计算完全离线，不需米家或网关授权，不写设备/规则，也不触发自动更新。
-
-当前 npm v3.1.0 尚不包含此功能。在包含本变更的 checkout 中先 `pnpm install && pnpm build`，再运行：
-
-```bash
-node packages/cli/dist/cli.js light formula temperature \
-  --latitude 23.129 --min 3200 --max 5400 --date 2026-10-15 --pretty
-node packages/cli/dist/cli.js light formula brightness \
-  --latitude 23.129 --min 10 --max 100 --expression-only
-node packages/cli/dist/cli.js light formula brightness-beta \
-  --latitude 23.129 --min 10 --max 80 --speed 0.3 --smoothness 0.9 --invert
-```
-
-默认 JSON 适合 Agent；`--expression-only` 输出单行公式，`--pretty` 输出人读结果。纬度与上下限必须明确提供，例子不代表某个家庭。亮度单位为百分比、色温为 K，应用前仍要查目标 spec 的单位、可写权限、值域、步进和枚举。模型沿用近似日期与固定正午，不是天文日出日落；Beta 时间偏移可能在午夜跳变，极区延伸也不保证恒定输出。Skill 会在动态灯光配置时推荐、询问缺失参数，并沿用已有授权范围接入 number 变量、`varSetNumber --expr` 与周期规则；单独算公式不会启用灯光。完整参数和边界见 [灯光公式指南](skills/xgg-rule-authoring/references/lighting-formulas.md)。
 
 ## 云端直控、中枢定位与联调
 

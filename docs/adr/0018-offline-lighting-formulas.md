@@ -19,7 +19,7 @@ expression, normalized parameters, model warnings and an optional deterministic
 preview. It does not execute user code, access the network, create rules, discover
 location or control lamps. No new dependency, RPC schema or mutation is needed.
 
-Preserve the original approximate seasonal model and Beta curve controls. Correct
+Preserve the original approximate seasonal model and useful curve controls. Correct
 the noon singularity with an equivalent absolute-time expression and protect
 numeric domains/overflow. Previews use the generated formula's floor semantics.
 Polar protection is only a bounded numerical extension; it is not a verified
@@ -42,4 +42,15 @@ enable and readback workflow and the user's lighting configuration intent.
 Source attribution: https://lzj.ac.cn/tools/iot/miot-geek (Zijing Li / Jimmy
 Website). No website source files or assets are redistributed. Formula models
 and the new implementation are documented in
-[the design](../superpowers/specs/2026-10-15-lighting-formula-design.md).
+[the current design](../superpowers/specs/2026-10-15-lighting-unification-release-design.md).
+
+## v3.2.0 interface consolidation
+
+Before first publication, the two overlapping brightness modes were consolidated
+into one `brightness` mode. Keep the standard k=4.5/M curve by default and use a
+single dimensionless speed factor (default 1) to adjust steepness. Offset and
+inversion remain optional brightness controls. Remove the experimental M^0.7
+model and the duplicate speed/smoothness product; they offered no independently
+verified improvement that justified asking users to select another algorithm.
+Temperature remains unchanged. Skill asks about desired effects, not algorithm
+names. The original source audit continues to describe all source modes accurately.

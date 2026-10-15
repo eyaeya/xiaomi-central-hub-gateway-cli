@@ -1,5 +1,8 @@
 # Offline dynamic lighting formulas
 
+Historical first implementation. The current interface, mathematics and release
+scope are superseded by [the unified v3.2.0 design](2026-10-15-lighting-unification-release-design.md).
+
 Date: 2026-10-15. User request: understand Jimmy Website's MIoT Geek calculator
 and integrate its calculation capability into xgg and the authoring Skill.
 

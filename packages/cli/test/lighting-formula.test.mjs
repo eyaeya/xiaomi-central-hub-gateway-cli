@@ -50,7 +50,6 @@ test('packaged CLI calculates all modes offline in agent mode without snapshots'
   for (const [mode, min, max, unit] of [
     ['temperature', '3200', '5400', 'kelvin'],
     ['brightness', '0', '100', 'percent'],
-    ['brightness-beta', '0', '100', 'percent'],
   ]) {
     const output = success([mode, '--latitude', '23.129', '--min', min, '--max', max]);
     const result = JSON.parse(output);
@@ -58,6 +57,19 @@ test('packaged CLI calculates all modes offline in agent mode without snapshots'
     assert.equal(result.mode, mode);
     assert.equal(result.unit, unit);
     assert.equal(result.recommendedIntervalSeconds, 30);
+    assert.deepEqual(
+      result.parameters,
+      mode === 'brightness'
+        ? {
+            latitude: 23.129,
+            min: Number(min),
+            max: Number(max),
+            speed: 1,
+            offsetMinutes: 0,
+            invert: false,
+          }
+        : { latitude: 23.129, min: Number(min), max: Number(max) },
+    );
     assert.match(result.expression, /floor\(/);
     assert.equal(result.preview, undefined);
     assert.equal(output.split('\n').length, 2);
@@ -79,9 +91,9 @@ test('preview uses explicit local calendar samples and source-derived values', (
   assert.equal(result.preview.date, '2026-10-15');
 });
 
-test('beta controls are normalized and expression-only is exactly one line', () => {
+test('brightness controls are normalized and expression-only is exactly one line', () => {
   const args = [
-    'brightness-beta',
+    'brightness',
     '--latitude',
     '-23.129',
     '--min',
@@ -90,8 +102,6 @@ test('beta controls are normalized and expression-only is exactly one line', () 
     '100',
     '--speed',
     '.5',
-    '--smoothness',
-    '1.2',
     '--offset-minutes',
     '-30',
     '--invert',
@@ -102,7 +112,6 @@ test('beta controls are normalized and expression-only is exactly one line', () 
     min: 0,
     max: 100,
     speed: 0.5,
-    smoothness: 1.2,
     offsetMinutes: -30,
     invert: true,
   });
@@ -126,6 +135,10 @@ test('pretty output and help explain the calculation boundary and units', () => 
   assert.match(help, /larger is steeper/);
   assert.match(help, /positive shifts earlier/);
   assert.match(help, /Brightness output is percent/);
+  assert.match(help, /temperature or brightness/);
+  assert.match(help, /smaller is gentler/);
+  assert.match(help, /not a duration or update interval/);
+  assert.doesNotMatch(help, /brightness-beta|--smoothness/);
 });
 
 test('invalid calculation input emits only CONFIG error JSON with actionable offline help', () => {
@@ -135,8 +148,13 @@ test('invalid calculation input emits only CONFIG error JSON with actionable off
     [...baseArgs, '--latitude', '0x10'],
     [...baseArgs, '--latitude', 'NaN'],
     [...baseArgs, '--min', '10.2'],
-    [...baseArgs, '--speed', '0.3'],
-    [...baseArgs, '--invert'],
+    [...baseArgs, '--speed', '0'],
+    [...baseArgs, '--speed', '21'],
+    [...baseArgs, '--speed', '2x'],
+    [...baseArgs, '--offset-minutes', '181'],
+    ['brightness-beta', ...baseArgs.slice(1)],
+    ['temperature', '--latitude', '23.129', '--min', '3200', '--max', '5400', '--speed', '1'],
+    ['temperature', '--latitude', '23.129', '--min', '3200', '--max', '5400', '--invert'],
     [...baseArgs, '--sample-minutes', '30'],
     [...baseArgs, '--date', '2026-02-30'],
     [...baseArgs, '--date', '2026-10-15', '--sample-minutes', '17'],
@@ -155,12 +173,45 @@ test('invalid calculation input emits only CONFIG error JSON with actionable off
 
 test('boolean invert and required input options cannot silently accept extra values', () => {
   for (const args of [
-    ['brightness-beta', ...baseArgs.slice(1), '--invert', 'false'],
+    [...baseArgs, '--invert', 'false'],
     ['brightness', '--min', '10', '--max', '100'],
   ]) {
     const result = run(args);
     assert.equal(result.status, 5, result.stderr);
     assert.equal(result.stdout, '');
-    assert.equal(JSON.parse(result.stderr).error.code, 'CONFIG');
+    const error = JSON.parse(result.stderr);
+    assert.equal(error.error.code, 'CONFIG');
+    assert.match(error.error.hint, /xgg light formula --help/);
+    assert.doesNotMatch(error.error.hint, /Check --base-url|--code|env vars/);
+  }
+});
+
+test('removed smoothness option is rejected with no formula or hidden compatibility behavior', () => {
+  const result = run([...baseArgs, '--smoothness', '0.9']);
+  assert.equal(result.status, 5, result.stderr);
+  assert.equal(result.stdout, '');
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.error.code, 'CONFIG');
+  assert.match(error.error.message, /--smoothness.*--speed.*default 1/);
+  assert.match(error.error.hint, /xgg light formula --help/);
+  assert.doesNotMatch(error.error.hint, /Check --base-url|--code|env vars/);
+});
+
+test('parser failures retain offline context and never suggest gateway authentication', () => {
+  for (const args of [
+    [...baseArgs, '--unknown'],
+    [...baseArgs, '--smoothness=0.9'],
+    ['brightness', '--latitude', '23.129', '--min', '10'],
+    ['--latitude', '23.129', '--min', '10', '--max', '100'],
+    [...baseArgs, '--speed'],
+    [...baseArgs, 'extra'],
+  ]) {
+    const result = run(args);
+    assert.equal(result.status, 5, result.stderr);
+    assert.equal(result.stdout, '');
+    const error = JSON.parse(result.stderr);
+    assert.equal(error.error.code, 'CONFIG');
+    assert.match(error.error.hint, /xgg light formula --help/);
+    assert.doesNotMatch(error.error.hint, /Check --base-url|--code|env vars/);
   }
 });

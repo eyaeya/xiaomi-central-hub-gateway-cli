@@ -3,13 +3,13 @@ name: xgg-rule-authoring
 description: Use when an Agent controls Xiaomi Home devices through xgg cloud or authors and debugs Central Hub Geek Edition rules, including offline dynamic lighting formulas, Mi Home QR authorization, automatic gateway login, cloud/local verification, household habit learning, all 25 cards plus nop, event/state semantics, variables, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-8db9ac0ed0fb4548373e727f438b0e723aa38aa7e1a5f3f64173cf3606d3bffd -->
+<!-- xgg-skill-content-build: sha256-2e405173f7178df0e82d2a0be100cae1c8eac157f9c56631fa43465f0ebc313b -->
 
 # xgg 米家云端控制与中枢网关自动化编译器
 
 ## CLI 版本与更新
 
-本指南随 xgg v3.1.0 发布。`xgg update --check` 只检查，`xgg update` 检查并升级已确认的 npm 全局安装；两者不需要米家或网关认证。官方 npm 失败后尝试 npmmirror；可用 `--registry <https-url>` 或 `XGG_UPDATE_REGISTRY` 指定可信源，命令行选项优先。镜像可能延迟或不可达，必须保留结果里的来源与降级边界，不能把离线或镜像无新版表述为官方已确认最新。
+本指南随 xgg v3.2.0 发布。`xgg update --check` 只检查，`xgg update` 检查并升级已确认的 npm 全局安装；两者不需要米家或网关认证。官方 npm 失败后尝试 npmmirror；可用 `--registry <https-url>` 或 `XGG_UPDATE_REGISTRY` 指定可信源，命令行选项优先。镜像可能延迟或不可达，必须保留结果里的来源与降级边界，不能把离线或镜像无新版表述为官方已确认最新。
 
 有限前台只读命令通过命令行解析后、业务查询前会自动检查，成功检查后至少间隔 24 小时，失败后至少 1 小时。`XGG_AUTO_UPDATE=0` 关闭自动检查和升级，显式 update 仍可用。daemon、登录/扫码、logout、写操作、原始 api、持续 watch/follow、help/version 与 CI 不触发。升级后立即由新 CLI 执行本次查询，旧 CLI 不先执行业务动作，新进程跳过重复更新，因此查询只执行一次。提示只写 stderr，业务 stdout/退出码来自实际执行查询的 CLI；离线等更新失败继续原查询。不要为升级主动 logout/relogin，现有 daemon 保持会话，Agent 代码在下一次正常登录时更新。
 
@@ -21,7 +21,7 @@ description: Use when an Agent controls Xiaomi Home devices through xgg cloud or
 
 ## 灯光动态公式路由
 
-用户要随时间动态调整亮度或色温时，简短推荐内置 `xgg light formula`，并读取 [references/lighting-formulas.md](references/lighting-formulas.md)。复用已有信息，只补问纬度、希望的上下限及接入时的目标设备能力；Beta 形状、偏移或反相按需询问。普通开关灯或固定值控制不插入推荐。计算完全离线，不需登录、快照或规则写入；只算公式就只交付公式/预览。接入灯具前核对实际 spec、百分比与原始值、步进，仍按既有授权和验证流程实施。此命令为当前源码新增，已发布 v3.1.0 尚不包含；使用同一 checkout 的 CLI 与 Skill，具体入口见 reference。
+用户要随时间动态调整亮度或色温时，简短推荐内置 `xgg light formula`，并读取 [references/lighting-formulas.md](references/lighting-formulas.md)。复用已有信息，只补问纬度、希望的上下限及接入时的目标设备能力；亮度使用同一个 `brightness` 模式，默认 `speed=1`；只有用户要求过渡更缓/更陡时才调整速度，偏移或反相按需询问。普通开关灯或固定值控制不插入推荐。计算完全离线，不需登录、快照或规则写入；只算公式就只交付公式/预览。接入灯具前核对实际 spec、百分比与原始值、步进，仍按既有授权和验证流程实施。此命令从 v3.2.0 起提供；使用匹配版本的 CLI 与 Skill，具体入口见 reference。
 
 ## 目标
 

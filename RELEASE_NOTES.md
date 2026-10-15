@@ -1,4 +1,20 @@
-# xgg v3.1.0 · 前台自动更新与镜像回退
+# xgg v3.2.0 · 内置灯光动态公式
+
+新增完全离线的 `xgg light formula`，为 Agent 生成极客版可用的色温或亮度表达式，并预览指定日期的全天数值。只需选择色温或亮度，无需在重复的亮度算法之间选择。CLI、Core 与完整 Skill 同步为 3.2.0。
+
+- **两个清晰入口：** `temperature` 输出 K，`brightness` 输出百分比；纬度和期望上下限显式指定。亮度默认采用标准曲线，按需提供一个 `--speed` 过渡倍率（默认 1）、`--offset-minutes` 和 `--invert`。小于 1 更柔和，大于 1 更陡。
+- **公式与预览一致：** 修复来源工具的正午除零和非有限数值边界，预览遵循实际公式的向下取整；返回归一化参数、单位、模型限制与 30 秒建议重算周期。日期只控制预览，公式运行时读取网关日期与时钟。
+- **适合 Agent 调用：** 默认 JSON，可用 `--expression-only` 取得单行公式，或 `--pretty` 查看曲线样本。严格拒绝错误参数；无需登录、不联网、不触发自动更新、不写入设备或规则。
+- **Skill 主动建议：** 配置动态灯光时提示能力、复用已知参数并补问缺失信息；普通开关灯不插入推荐。应用前核对目标属性的单位、范围和步进，沿用快照与规则校验流程。
+
+```bash
+xgg light formula temperature --latitude 23.129 --min 3200 --max 5400 --date 2026-10-15 --pretty
+xgg light formula brightness --latitude 23.129 --min 10 --max 100 --speed 0.5 --offset-minutes 30
+```
+
+数学行为参考 [Jimmy Website 的 MIoT Geek 工具](https://lzj.ac.cn/tools/iot/miot-geek)，由 xgg 独立实现。模型使用近似月份和固定正午，不是精确天文日出日落计算；极区有界延伸和偏移后的午夜跳变已有说明。离线计算与语法验证不等于目标灯具的物理验收。
+
+## v3.1.0 历史：前台自动更新与镜像回退
 
 新增 `xgg update --check` 和 `xgg update`，分别用于独立检查版本与升级当前 npm 全局安装，无需米家授权或网关登录。CLI、Core 与随包 Skill 同步为 3.1.0；已有云端直控、中枢登录和规则能力继续保留。
 
@@ -167,10 +183,10 @@ v2.2.0 轮次的已有授权复用和**从新扫码到中枢的完整链路**均
 按 [README 安装流程](README.md#安装人类与-ai-agent) 安装 CLI，并用对应版本的 Git tag 安装完整 Skill，包含 `references/`。已有安装也要同步更新 Skill，不能只替换二进制。
 
 ```bash
-npm install -g @eyaeya/xgg-cli@3.1.0
+npm install -g @eyaeya/xgg-cli@3.2.0
 xgg --version
 xgg cloud --help
-npx --yes skills add eyaeya/xiaomi-central-hub-gateway-cli@v3.1.0 --global --all
+npx --yes skills add eyaeya/xiaomi-central-hub-gateway-cli@v3.2.0 --global --all
 ```
 
 Agent 仍须执行 README 的全局 Skill 发现验证，确认实际调用者能够加载该 Skill。源码开发则运行 `pnpm install`、`pnpm build`，通过 `node packages/cli/dist/cli.js` 调用当前 checkout，并用 `skills add .` 安装同一份指南。

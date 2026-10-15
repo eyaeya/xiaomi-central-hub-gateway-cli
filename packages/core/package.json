@@ -1,6 +1,6 @@
 {
   "name": "@eyaeya/xgg-core",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Core library for Xiaomi Home cloud device control and local Central Hub automation",
   "license": "GPL-3.0-or-later",
   "type": "module",

@@ -1,7 +1,7 @@
 import { ConfigError } from '../transport/errors.js';
 import { checkVarSetNumberExprString } from './var-expr-check.js';
 
-export type LightingFormulaMode = 'temperature' | 'brightness' | 'brightness-beta';
+export type LightingFormulaMode = 'temperature' | 'brightness';
 
 export interface LightingFormulaOptions {
   mode: LightingFormulaMode;
@@ -9,7 +9,6 @@ export interface LightingFormulaOptions {
   min: number;
   max: number;
   speed?: number;
-  smoothness?: number;
   offsetMinutes?: number;
   invert?: boolean;
   date?: string;
@@ -21,7 +20,6 @@ export interface LightingFormulaParameters {
   min: number;
   max: number;
   speed?: number;
-  smoothness?: number;
   offsetMinutes?: number;
   invert?: boolean;
 }
@@ -49,14 +47,14 @@ export interface LightingFormulaResult {
   preview?: LightingFormulaPreview;
 }
 
-const MODES = ['temperature', 'brightness', 'brightness-beta'];
-const BETA_OPTIONS = ['speed', 'smoothness', 'offsetMinutes', 'invert'] as const;
+const MODES = ['temperature', 'brightness'];
+const BRIGHTNESS_OPTIONS = ['speed', 'offsetMinutes', 'invert'] as const;
 const OPTION_KEYS = new Set([
   'mode',
   'latitude',
   'min',
   'max',
-  ...BETA_OPTIONS,
+  ...BRIGHTNESS_OPTIONS,
   'date',
   'sampleMinutes',
 ]);
@@ -98,9 +96,7 @@ function buildExpression(p: LightingFormulaParameters): string {
   const halfDay = `(acos(max((0-1),min(1,${angle})))*43200/pi())`;
   const denominator = `max(1,min(${halfDay},43200-${halfDay}))`;
   const slope =
-    p.speed === undefined
-      ? `(4.5/${denominator})`
-      : `(${literal(p.speed)}*${literal(p.smoothness ?? 0.9)}/pow(${denominator},0.7))`;
+    p.speed === undefined ? `(4.5/${denominator})` : `(4.5*${literal(p.speed)}/${denominator})`;
   const offset = p.offsetMinutes === undefined ? '' : `+${literal(p.offsetMinutes * 60)}`;
   const time = `(hours()*3600+minutes()*60+seconds()-43200${offset})`;
   const exponent = `max((0-60),min(60,${slope}*(abs(${time})-${halfDay})))`;
@@ -120,10 +116,7 @@ function previewFormula(
   const angle = -Math.tan((p.latitude * Math.PI) / 180) * Math.tan((declination * Math.PI) / 180);
   const halfDay = (Math.acos(clamp(angle, -1, 1)) * 43200) / Math.PI;
   const denominator = Math.max(1, Math.min(halfDay, 43200 - halfDay));
-  const slope =
-    p.speed === undefined
-      ? 4.5 / denominator
-      : (p.speed * (p.smoothness ?? 0.9)) / denominator ** 0.7;
+  const slope = (4.5 * (p.speed ?? 1)) / denominator;
   const samples: LightingFormulaPreview['samples'] = [];
   for (let minute = 0; minute < 1440; minute += sampleMinutes) {
     const time = minute * 60 - 43200 + (p.offsetMinutes ?? 0) * 60;
@@ -158,14 +151,17 @@ export function generateLightingFormula(options: LightingFormulaOptions): Lighti
     throw new ConfigError('Lighting formula options must be an object');
   }
   for (const key of Object.keys(options)) {
+    if (key === 'smoothness') {
+      throw new ConfigError('smoothness is no longer supported; use brightness speed (default 1)');
+    }
     if (!OPTION_KEYS.has(key)) throw new ConfigError(`Unsupported lighting formula option: ${key}`);
   }
   if (!MODES.includes(options.mode)) {
-    throw new ConfigError('mode must be temperature, brightness, or brightness-beta');
+    throw new ConfigError('mode must be temperature or brightness; brightness-beta was removed');
   }
-  if (options.mode !== 'brightness-beta') {
-    for (const key of BETA_OPTIONS) {
-      if (options[key] !== undefined) throw new ConfigError(`${key} requires brightness-beta mode`);
+  if (options.mode !== 'brightness') {
+    for (const key of BRIGHTNESS_OPTIONS) {
+      if (options[key] !== undefined) throw new ConfigError(`${key} requires brightness mode`);
     }
   }
   const isTemperature = options.mode === 'temperature';
@@ -180,18 +176,12 @@ export function generateLightingFormula(options: LightingFormulaOptions): Lighti
     throw new ConfigError('min and max must be integers');
   }
   if (parameters.min >= parameters.max) throw new ConfigError('min must be less than max');
-  if (options.mode === 'brightness-beta') {
+  if (options.mode === 'brightness') {
     parameters.speed = boundedNumber(
-      options.speed === undefined ? 0.3 : options.speed,
+      options.speed === undefined ? 1 : options.speed,
       'speed',
       0.1,
       20,
-    );
-    parameters.smoothness = boundedNumber(
-      options.smoothness === undefined ? 0.9 : options.smoothness,
-      'smoothness',
-      0.1,
-      5,
     );
     parameters.offsetMinutes = boundedNumber(
       options.offsetMinutes === undefined ? 0 : options.offsetMinutes,
@@ -229,9 +219,9 @@ export function generateLightingFormula(options: LightingFormulaOptions): Lighti
     'Noon and polar boundaries are numerically bounded; polar behavior is an extension of the source model, not verified astronomy.',
     'Integer output uses floor and may not reach the requested maximum. Check the actual device range, step and unit before applying.',
   ];
-  if (options.mode === 'brightness-beta') {
+  if (options.mode === 'brightness') {
     warnings.push(
-      'Beta is experimental. Speed and smoothness multiply; increasing either steepens transitions. Positive offset advances the curve; offsets do not wrap across midnight.',
+      'Speed is a dimensionless transition multiplier: 1 preserves the standard curve, smaller is gentler and larger is steeper; it is not a duration. Positive offset advances the curve; offsets do not wrap across midnight.',
     );
   }
   const result: LightingFormulaResult = {

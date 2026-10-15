@@ -3,8 +3,8 @@ import {
   type LightingFormulaOptions,
   generateLightingFormula,
 } from '@eyaeya/xgg-core';
-import { Command } from 'commander';
-import { wrap } from '../action-wrap.js';
+import { Command, type ErrorOptions } from 'commander';
+import { type CmdTagged, wrap } from '../action-wrap.js';
 import { emit } from '../output.js';
 
 interface FormulaCliOptions {
@@ -12,13 +12,27 @@ interface FormulaCliOptions {
   min: string;
   max: string;
   speed?: string;
-  smoothness?: string;
   offsetMinutes?: string;
   invert?: boolean;
   date?: string;
   sampleMinutes?: string;
   expressionOnly?: boolean;
   pretty?: boolean;
+}
+
+/** Keep parser failures on this offline command in the same error contract as its action. */
+class LightingFormulaCommand extends Command {
+  override error(message: string, options?: ErrorOptions): never {
+    const obsoleteSmoothness =
+      options?.code === 'commander.unknownOption' &&
+      /^error: unknown option '--smoothness(?:=|')/.test(message);
+    const detail = obsoleteSmoothness
+      ? '--smoothness is no longer supported. Use brightness --speed <factor> (default 1; smaller is gentler, larger is steeper).'
+      : message.replace(/^error: /, '');
+    const error: ConfigError & CmdTagged = new ConfigError(detail);
+    error.__xggCmd = 'light.formula';
+    throw error;
+  }
 }
 
 function decimal(value: string, flag: string): number {
@@ -59,26 +73,24 @@ function renderPretty(result: ReturnType<typeof generateLightingFormula>): void 
 
 export function lightCommand(): Command {
   const light = new Command('light').description('Offline dynamic lighting calculations');
-  light
-    .command('formula')
+  const formula = new LightingFormulaCommand('formula')
     .description(
       'Generate a gateway expression and optional daily preview without network or device access',
     )
-    .argument('<mode>', 'temperature, brightness, or brightness-beta')
+    .argument('<mode>', 'temperature or brightness')
     .allowExcessArguments(false)
     .requiredOption('--latitude <degrees>', 'latitude from -75 to 75; decimal degrees')
     .requiredOption('--min <value>', 'integer lower bound: 2000–8000 K or 0–100 percent')
     .requiredOption('--max <value>', 'integer upper bound greater than --min')
-    .option('--speed <number>', 'beta only: transition speed, 0.1–20 (default 0.3)')
     .option(
-      '--smoothness <number>',
-      'beta only: shape multiplier, 0.1–5 (default 0.9); larger is steeper',
+      '--speed <factor>',
+      'brightness only: slope factor, 0.1–20 (default 1); smaller is gentler, larger is steeper',
     )
     .option(
       '--offset-minutes <minutes>',
-      'beta only: -180 to 180 (default 0); positive shifts earlier',
+      'brightness only: -180 to 180 (default 0); positive shifts earlier',
     )
-    .option('--invert', 'beta only: invert the day/night brightness curve')
+    .option('--invert', 'brightness only: invert the day/night brightness curve')
     .option(
       '--date <YYYY-MM-DD>',
       'preview an explicit calendar date using local wall-clock samples',
@@ -98,9 +110,11 @@ export function lightCommand(): Command {
 Examples:
   $ xgg light formula temperature --latitude 23.129 --min 3200 --max 5400
   $ xgg light formula brightness --latitude 23.129 --min 10 --max 100 --expression-only
-  $ xgg light formula brightness-beta --latitude 23.129 --min 10 --max 100 --speed 0.3 --smoothness 0.9 --offset-minutes 30 --date 2026-10-15 --pretty
+  $ xgg light formula brightness --latitude 23.129 --min 10 --max 100 --speed 0.5 --offset-minutes 30 --date 2026-10-15 --pretty
 
 Output defaults to JSON. All numeric options require decimal numbers without units.
+Brightness speed is a dimensionless slope multiplier, not a duration or update
+interval: 1 keeps the default curve; 0.5 is gentler and 2 is steeper.
 This command is entirely local: no login, network, automatic update, device write,
 rule creation, or snapshot. It does not apply or enable an automation.
 The curve approximates daylight around fixed local-clock noon; it is not an
@@ -120,9 +134,6 @@ Use the expression with varSetNumber --expr and an explicit repeating trigger.
           min: decimal(opts.min, '--min'),
           max: decimal(opts.max, '--max'),
           ...(opts.speed !== undefined ? { speed: decimal(opts.speed, '--speed') } : {}),
-          ...(opts.smoothness !== undefined
-            ? { smoothness: decimal(opts.smoothness, '--smoothness') }
-            : {}),
           ...(opts.offsetMinutes !== undefined
             ? { offsetMinutes: decimal(opts.offsetMinutes, '--offset-minutes') }
             : {}),
@@ -138,5 +149,6 @@ Use the expression with varSetNumber --expr and an explicit repeating trigger.
         else emit({ ok: true, ...result }, { pretty: false });
       }),
     );
+  light.addCommand(formula);
   return light;
 }
