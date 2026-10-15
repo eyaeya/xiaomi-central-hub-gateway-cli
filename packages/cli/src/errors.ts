@@ -175,6 +175,12 @@ const HINTS: HintRule[] = [
     hint: 'The named resource was not found on the gateway. Check the id/scope and list available ones first.',
   },
 
+  {
+    code: 'CONFIG',
+    command: 'light.formula',
+    hint: 'Run `xgg light formula --help`; check the mode, latitude, bounds, and preview options. This calculator requires no login or gateway address.',
+  },
+
   // CONFIG — card-validation gate (rule set / rule enable / node add / validate).
   // Snapshot setup is a global mutation contract, not a command family. Match
   // the two guard messages exactly so unrelated ConfigErrors cannot inherit a

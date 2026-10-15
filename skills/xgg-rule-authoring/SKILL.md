@@ -1,15 +1,15 @@
 ---
 name: xgg-rule-authoring
-description: Use when an Agent controls Xiaomi Home devices through xgg cloud or authors and debugs Central Hub Geek Edition rules, including Mi Home QR authorization, automatic gateway login, cloud/local verification, household habit learning, all 25 cards plus nop, event/state semantics, variables, logs, and backups.
+description: Use when an Agent controls Xiaomi Home devices through xgg cloud or authors and debugs Central Hub Geek Edition rules, including offline dynamic lighting formulas, Mi Home QR authorization, automatic gateway login, cloud/local verification, household habit learning, all 25 cards plus nop, event/state semantics, variables, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-ba1c2f887a6489ac30922ea897afc89c7d379389d0773563e6301303ab93ffa6 -->
+<!-- xgg-skill-content-build: sha256-2e405173f7178df0e82d2a0be100cae1c8eac157f9c56631fa43465f0ebc313b -->
 
 # xgg 米家云端控制与中枢网关自动化编译器
 
 ## CLI 版本与更新
 
-本指南随 xgg v3.1.0 发布。`xgg update --check` 只检查，`xgg update` 检查并升级已确认的 npm 全局安装；两者不需要米家或网关认证。官方 npm 失败后尝试 npmmirror；可用 `--registry <https-url>` 或 `XGG_UPDATE_REGISTRY` 指定可信源，命令行选项优先。镜像可能延迟或不可达，必须保留结果里的来源与降级边界，不能把离线或镜像无新版表述为官方已确认最新。
+本指南随 xgg v3.2.0 发布。`xgg update --check` 只检查，`xgg update` 检查并升级已确认的 npm 全局安装；两者不需要米家或网关认证。官方 npm 失败后尝试 npmmirror；可用 `--registry <https-url>` 或 `XGG_UPDATE_REGISTRY` 指定可信源，命令行选项优先。镜像可能延迟或不可达，必须保留结果里的来源与降级边界，不能把离线或镜像无新版表述为官方已确认最新。
 
 有限前台只读命令通过命令行解析后、业务查询前会自动检查，成功检查后至少间隔 24 小时，失败后至少 1 小时。`XGG_AUTO_UPDATE=0` 关闭自动检查和升级，显式 update 仍可用。daemon、登录/扫码、logout、写操作、原始 api、持续 watch/follow、help/version 与 CI 不触发。升级后立即由新 CLI 执行本次查询，旧 CLI 不先执行业务动作，新进程跳过重复更新，因此查询只执行一次。提示只写 stderr，业务 stdout/退出码来自实际执行查询的 CLI；离线等更新失败继续原查询。不要为升级主动 logout/relogin，现有 daemon 保持会话，Agent 代码在下一次正常登录时更新。
 
@@ -18,6 +18,10 @@ description: Use when an Agent controls Xiaomi Home devices through xgg cloud or
 ## 云端任务路由
 
 扫码登录、设备直接读写/观察、云端与网关双向联调，先读 [references/cloud-workflows.md](references/cloud-workflows.md)。优先米家 App 扫码云端授权，再自主获取中枢六位码；已有授权和 live daemon 均复用；扫码续接采用返回的 `nextCommand.argv`，网关引导后保留返回的 baseUrl 和所选 session 文件用于后续命令。不知道承载设备、DID 或地址时读 [references/gateway-discovery.md](references/gateway-discovery.md)，覆盖独立中枢、路由器、屏幕、音箱、智能存储五类候选，先定位再用同一命令发现地址并取码。中枢不要求自带蓝牙/Mesh 网关，型号清单不证明双 RPC 均已实测。只做云端操作无需读取规则卡目录。写前、写后与恢复核验用 `get/watch --source device`，auto/cache 不可冒充实时状态；设备直读失败时不得把缓存当恢复证明。规则任务继续遵循下面完整编译与验收契约，不能因云端可控而省略网关 spec/日志证明。
+
+## 灯光动态公式路由
+
+用户要随时间动态调整亮度或色温时，简短推荐内置 `xgg light formula`，并读取 [references/lighting-formulas.md](references/lighting-formulas.md)。复用已有信息，只补问纬度、希望的上下限及接入时的目标设备能力；亮度使用同一个 `brightness` 模式，默认 `speed=1`；只有用户要求过渡更缓/更陡时才调整速度，偏移或反相按需询问。普通开关灯或固定值控制不插入推荐。计算完全离线，不需登录、快照或规则写入；只算公式就只交付公式/预览。接入灯具前核对实际 spec、百分比与原始值、步进，仍按既有授权和验证流程实施。此命令从 v3.2.0 起提供；使用匹配版本的 CLI 与 Skill，具体入口见 reference。
 
 ## 目标
 

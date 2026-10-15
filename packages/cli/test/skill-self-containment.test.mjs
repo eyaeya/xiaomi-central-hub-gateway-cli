@@ -14,6 +14,7 @@ const canonicalSkillFiles = [
   'references/gateway-discovery.md',
   'references/graph-model.md',
   'references/habit-learning.md',
+  'references/lighting-formulas.md',
   'references/node-catalog.md',
   'references/operations.md',
   'references/recipes.md',

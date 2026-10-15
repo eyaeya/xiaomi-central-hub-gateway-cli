@@ -168,6 +168,8 @@ XGG_NODE_ENTRY="$(pwd -P)/packages/cli/dist/cli.js" \
 
 ## 变量与表达式
 
+需要灯光随时间变化的表达式时，先读 [lighting-formulas.md](lighting-formulas.md)，用离线 `xgg light formula` 生成并预览；写入变量/规则继续遵循本节契约。
+
 变量 type 只有 `number|string`，scope/id 是非空 `[A-Za-z0-9]+`；常用 scope 为 `global` 与 `R<rid>`。
 
 在线 inventory 按精确 scope+id 与**每个可发现的 modeled 引用路径**核对：`varChange/varGet` 匹配卡片 `varType`；`varSetNumber` target 和所有变量 operand 都是 number；`varSetString` target 是 string、operand 可 number|string；`deviceInputSetVar/deviceGetSetVar` capture 与 `deviceOutput` ref 匹配持久化 dtype/MIoT 投影。不要把同名变量、手写 dtype 或不存在的 bool 类型当成证明。

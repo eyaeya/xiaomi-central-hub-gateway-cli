@@ -28,6 +28,14 @@ export type {
 export { harvestBaseline } from './harvest-baseline.js';
 export type { CodexProduct, HarvestOpts, HarvestResult } from './harvest-baseline.js';
 export { editorNodeIdCompatibilityIssues, lintGraph } from './lint-graph.js';
+export { generateLightingFormula } from './lighting-formula.js';
+export type {
+  LightingFormulaMode,
+  LightingFormulaOptions,
+  LightingFormulaParameters,
+  LightingFormulaPreview,
+  LightingFormulaResult,
+} from './lighting-formula.js';
 export type { LintGraphInput, LintIssue } from './lint-graph.js';
 export { checkReachability } from './reachability.js';
 export {

@@ -2,6 +2,23 @@
 
 米家云端设备控制与小米中枢网关极客版命令行工具。安装后提供 `xgg`：直接读写米家设备，自主取码登录中枢，读取设备/规则/变量，编辑自动化规则图、管理变量与备份、学习家庭习惯，并读取规则运行日志与 trace。
 
+## v3.2.0：离线灯光公式
+
+新增 `xgg light formula <temperature|brightness>`，根据明确的纬度与上下限生成极客版表达式；可选日期预览与公式使用相同的整数取整。计算无需登录、不访问网络、不改规则或设备，也不触发自动更新。安装 v3.2.0 或更高版本及匹配 Skill 后运行：
+
+```bash
+xgg light formula temperature \
+  --latitude 23.129 --min 3200 --max 5400 --date 2026-10-15 --pretty
+xgg light formula brightness \
+  --latitude 23.129 --min 10 --max 100 --expression-only
+xgg light formula brightness \
+  --latitude 23.129 --min 10 --max 80 --speed 0.5 --offset-minutes 30
+```
+
+亮度只有一个 `brightness` 模式，默认 `--speed 1`，小于 1 更缓、大于 1 更陡，允许 0.1–20。速度是斜率倍率，不是持续时长；`--offset-minutes` 与 `--invert` 也仅用于亮度，默认无偏移且不反相。
+
+默认输出 JSON；`--pretty` 与 `--expression-only` 互斥。纬度和范围不使用家庭默认值，以上仅为示例。亮度输出为百分比、色温为 K，应用前仍需检查目标 MIoT spec、原始值映射及步进。模型来源于 [MIoT Geek 工具](https://lzj.ac.cn/tools/iot/miot-geek) 的数学行为，xgg 独立实现并修正正午除零与非有限值；近似日期、固定正午、偏移后的午夜跳变和极区延伸仍有模型限制，不能当作天文或灯具实测结论。Agent 在动态灯光配置时可推荐此能力，只补问缺失参数；接入变量、周期规则和设备输出继续遵循既有授权及验收流程。完整说明随包提供于 `skills/xgg-rule-authoring/references/lighting-formulas.md`。
+
 ## v3.1.0：前台自动更新与网络回退
 
 `xgg update --check` 仅检查版本，`xgg update` 检查并升级已确认的 npm 全局安装。升级不依赖米家授权或网关登录，先暂存和验证新安装，再替换当前版本；源码、局部依赖、npx 缓存与 pnpm 链接不自动覆盖，不使用 sudo。
