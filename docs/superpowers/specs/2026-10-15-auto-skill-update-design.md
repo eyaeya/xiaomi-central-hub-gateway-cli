@@ -58,3 +58,8 @@ This supersedes the external-Skill exclusion of the 3.1.0 updater specification.
 - Publish PR/release/npm and verify registry/README/default npm page separately.
   Local delivery must exercise ordinary-query automatic update, not a manual npm
   upgrade or a separate skills add command that masks the feature under test.
+
+Patch 3.2.2 discovery clarification: generic home/XDG children require positive
+directory/link evidence for their skills root. Inaccessible unrelated application
+configuration is not a failed Skill. Known Agent roots, explicit paths, and errors
+after observing a generic skills root remain reportable; no user permissions change.

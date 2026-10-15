@@ -258,18 +258,17 @@ async function discoveredPaths(
       if (name === '.' || name === '..' || /[/\\\0]/.test(name)) continue;
       if (dotOnly && !name.startsWith('.')) continue;
       if (['.git', '.npm', '.cache', '.local', '.Trash'].includes(name)) continue;
+      const skillsRoot = join(root, name, 'skills');
       try {
-        const stat = await io.lstat(join(root, name));
+        const stat = await io.lstat(skillsRoot);
         if (stat.kind !== 'directory' && stat.kind !== 'link') continue;
-      } catch (error) {
-        if (missing(error)) continue;
-        issues.push({
-          path: join(root, name),
-          reason: 'Additional Agent location could not be inspected.',
-        });
+      } catch {
+        // An unrelated private application directory is not evidence of an
+        // installed Agent Skill. Known and explicitly configured roots remain
+        // unconditional candidates and still report their access failures.
         continue;
       }
-      addRoot(join(root, name, 'skills'));
+      addRoot(skillsRoot);
     }
   };
   await children(home, true);

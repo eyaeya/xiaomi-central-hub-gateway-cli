@@ -24,6 +24,7 @@ class MemoryFs implements SkillFileSystem {
   beforeWrite?: (path: string) => void;
   beforeRead?: (path: string) => void;
   failReaddir?: (path: string) => boolean;
+  failLstat?: (path: string) => boolean;
   add(path: string, value: Buffer | string | null = null): void {
     if (path !== '/' && !this.files.has(dirname(path))) this.add(dirname(path));
     this.files.set(path, typeof value === 'string' ? Buffer.from(value) : value);
@@ -44,6 +45,7 @@ class MemoryFs implements SkillFileSystem {
   }
   async lstat(input: string): Promise<{ kind: 'file' | 'directory' | 'link'; size: number }> {
     const path = this.resolved(input, false);
+    if (this.failLstat?.(path)) throw coded('EACCES');
     let ancestor = dirname(path);
     while (ancestor !== '/') {
       if (this.files.has(ancestor) && this.files.get(ancestor) !== null) throw coded('ENOTDIR');
@@ -203,6 +205,55 @@ describe('installed Agent Skill synchronization', () => {
         reason: 'Additional Agent Skill locations could not be inspected.',
       },
     ]);
+  });
+
+  it('does not report inaccessible unrelated configuration directories as failed Skills', async () => {
+    const h = harness();
+    put(h.io, TARGET, fixture('3.2.1', { 'references/new.md': 'New bundled guide\n' }));
+    h.io.add(`${HOME}/.config/gtk-3.0`);
+    h.io.add(`${HOME}/.unrelated-private-app`);
+    h.io.failLstat = (path) =>
+      path.startsWith(`${HOME}/.config/gtk-3.0/`) ||
+      path.startsWith(`${HOME}/.unrelated-private-app/`);
+    expect(await h.run()).toMatchObject({ status: 'current', updatedPaths: [], issues: [] });
+  });
+
+  it.each(['known', 'explicit'] as const)(
+    'still reports access errors for a %s Agent location',
+    async (kind) => {
+      const h = harness();
+      const root = kind === 'known' ? `${HOME}/.cursor/skills` : '/custom/registered-skills';
+      h.io.add(root);
+      h.io.failLstat = (path) => path.startsWith(`${root}/`);
+      const result = await syncInstalledSkills({
+        ...h.options,
+        env: kind === 'explicit' ? { XGG_SKILL_DIRS: root } : {},
+      });
+      expect(result.status).toBe('partial');
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues[0]?.path).toBe(`${root}/${NAME}`);
+    },
+  );
+
+  it('discovers an additional Agent only after observing its skills directory', async () => {
+    const h = harness();
+    const target = `${HOME}/.config/another-agent/skills/${NAME}`;
+    put(h.io, target, fixture('3.2.0'));
+    const result = await h.run();
+    expect(result.status).toBe('updated');
+    expect(result.updatedPaths).toEqual([target]);
+    expect(h.io.snapshot(target)).toEqual(h.io.snapshot(SOURCE));
+  });
+
+  it('reports a target access failure after positively observing an additional Agent skills root', async () => {
+    const h = harness();
+    const root = `${HOME}/.config/another-agent/skills`;
+    h.io.add(root);
+    h.io.failLstat = (path) => path.startsWith(`${root}/`);
+    const result = await h.run();
+    expect(result.status).toBe('partial');
+    expect(result.issues).toHaveLength(1);
+    expect(result.issues[0]?.path).toBe(`${root}/${NAME}`);
   });
 
   it('replaces the complete old tree offline and retains an exact backup outside skills', async () => {

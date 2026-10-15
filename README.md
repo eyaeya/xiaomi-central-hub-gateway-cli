@@ -21,6 +21,10 @@
 
 GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli)。npm 包：[`@eyaeya/xgg-cli`](https://www.npmjs.com/package/@eyaeya/xgg-cli)、[`@eyaeya/xgg-core`](https://www.npmjs.com/package/@eyaeya/xgg-core)。
 
+## v3.2.2：精确识别 Skill 安装目录
+
+修复额外目录发现的误报：无关应用配置目录不可访问时，不再推断其中存在更新失败的 Skill。常见 Agent 路径、显式自定义路径和已确认的 Skill 目录仍保留权限错误报告。CLI、Core 与完整 Skill 同步为 3.2.2，保留下面的自动更新能力。
+
 ## v3.2.1：Agent Skill 随 CLI 自动更新
 
 已安装的 Agent Skill 现在随 CLI 一起更新，完整复制包内 `SKILL.md` 与 references，无需 GitHub。自动升级交接在当前查询前完成同步；即使版本检查尚在冷却期或网络离线，符合条件的前台查询也会从包内修复旧 Skill。`xgg update` 在 CLI 已是最新时同样修复，`--check` 保持只读。

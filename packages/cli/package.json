@@ -1,6 +1,6 @@
 {
   "name": "@eyaeya/xgg-cli",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "description": "Agent-friendly CLI for Xiaomi Home cloud devices and Central Hub gateway automation",
   "license": "GPL-3.0-or-later",
   "type": "module",

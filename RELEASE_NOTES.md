@@ -1,4 +1,10 @@
-# xgg v3.2.1 · Agent Skill 随 CLI 自动更新
+# xgg v3.2.2 · 修正 Skill 目录发现误报
+
+3.2.1 正式发布后的本机自动升级已成功同步 CLI 与共享 Skill，但额外目录扫描把无权访问的无关应用配置目录误报为 Skill 同步失败。本补丁只在确认额外目录存在 skills 子目录后才把它作为候选；已知 Agent 目录、显式自定义路径及已发现 Skill 的真实权限错误继续逐路径报告。
+
+不修改无关用户目录的权限。保留完整树校验、别名、定制备份、恢复和当前查询交接，CLI、Core 与随包 Skill 统一为 3.2.2。
+
+## v3.2.1 历史：Agent Skill 随 CLI 自动更新
 
 修复 CLI 已升级而 Agent 安装目录仍使用旧 Skill 的缺口。基于 v3.2.0 开发，完整保留离线灯光公式能力；CLI、Core 与随包 Skill 统一为 3.2.1。
 
@@ -194,10 +200,10 @@ v2.2.0 轮次的已有授权复用和**从新扫码到中枢的完整链路**均
 按 [README 安装流程](README.md#安装人类与-ai-agent) 安装 CLI，并用对应版本的 Git tag 安装完整 Skill，包含 `references/`。已有安装也要同步更新 Skill，不能只替换二进制。
 
 ```bash
-npm install -g @eyaeya/xgg-cli@3.2.1
+npm install -g @eyaeya/xgg-cli@3.2.2
 xgg --version
 xgg cloud --help
-npx --yes skills add eyaeya/xiaomi-central-hub-gateway-cli@v3.2.1 --global --all
+npx --yes skills add eyaeya/xiaomi-central-hub-gateway-cli@v3.2.2 --global --all
 ```
 
 Agent 仍须执行 README 的全局 Skill 发现验证，确认实际调用者能够加载该 Skill。源码开发则运行 `pnpm install`、`pnpm build`，通过 `node packages/cli/dist/cli.js` 调用当前 checkout，并用 `skills add .` 安装同一份指南。

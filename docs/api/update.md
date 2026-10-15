@@ -79,3 +79,8 @@ filesystem tests; real old-updater acceptance must start with an old external Sk
 The legacy explicit 3.2.0 update process has no handoff: synchronization first runs
 on the next eligible query or a new-version update call. Help/version smoke remains
 free of external writes. See ADR 0019 and the current auto-skill-update design.
+
+Patch 3.2.2 discovery clarification: generic home/XDG children require positive
+directory/link evidence for their skills root. Inaccessible unrelated application
+configuration is not a failed Skill. Known Agent roots, explicit paths, and errors
+after observing a generic skills root remain reportable; no user permissions change.

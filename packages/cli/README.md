@@ -2,6 +2,10 @@
 
 米家云端设备控制与小米中枢网关极客版命令行工具。安装后提供 `xgg`：直接读写米家设备，自主取码登录中枢，读取设备/规则/变量，编辑自动化规则图、管理变量与备份、学习家庭习惯，并读取规则运行日志与 trace。
 
+## v3.2.2：精确识别 Skill 安装目录
+
+修复额外目录发现的误报：无关应用配置目录不可访问时，不再推断其中存在更新失败的 Skill。常见 Agent 路径、显式自定义路径和已确认的 Skill 目录仍保留权限错误报告。CLI、Core 与完整 Skill 同步为 3.2.2，保留下面的自动更新能力。
+
 ## v3.2.1：Agent Skill 随 CLI 自动更新
 
 已安装的 Agent Skill 现在随 CLI 一起更新，完整复制包内 `SKILL.md` 与 references，无需 GitHub。自动升级交接在当前查询前完成同步；即使版本检查尚在冷却期或网络离线，符合条件的前台查询也会从包内修复旧 Skill。`xgg update` 在 CLI 已是最新时同样修复，`--check` 保持只读。
@@ -39,7 +43,7 @@ xgg update --registry https://registry.npmmirror.com
 
 有限前台只读命令通过命令行解析后、业务查询前会自动检查：成功检查后间隔至少 24 小时，失败后至少 1 小时。`XGG_AUTO_UPDATE=0` 关闭自动更新；显式 `xgg update` 仍可运行。写操作、登录/扫码、logout、原始 api、持续 watch/follow、help/version、CI 与后台 daemon 不触发。升级后立即切换新 CLI 执行本次查询，旧 CLI 不先执行业务动作，新进程跳过重复更新，因此查询只执行一次。提示只写 stderr，业务 stdout 与退出码来自实际执行查询的 CLI；离线等更新失败继续原查询。已有 daemon 保持会话，Agent 代码在下次正常登录时更新。
 
-v3.2.1 起自动同步已识别的安装副本，首次安装仍需完成下面的 Agent 注册流程。3.2.0 自动升级到新版时，同次查询会同步 Skill；旧版显式 `xgg update` 首次升级没有交接进程，须在后续符合条件的查询或再次 `xgg update` 同步。自定义安装路径用 `XGG_SKILL_DIRS`（系统路径分隔符分隔的完整 Skill 目录）。完整发现范围与备份恢复见[升级说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.2.1/README.md#检查与升级)。
+v3.2.1 起自动同步已识别的安装副本，首次安装仍需完成下面的 Agent 注册流程。3.2.0 自动升级到新版时，同次查询会同步 Skill；旧版显式 `xgg update` 首次升级没有交接进程，须在后续符合条件的查询或再次 `xgg update` 同步。自定义安装路径用 `XGG_SKILL_DIRS`（系统路径分隔符分隔的完整 Skill 目录）。完整发现范围与备份恢复见[升级说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.2.2/README.md#检查与升级)。
 
 ## 云端直控与中枢联调
 
@@ -57,7 +61,7 @@ xgg cloud device get --did <DID> --properties light.on,light.brightness --source
 xgg cloud device watch --did <DID> --property light.on --source device
 ```
 
-云端 spec 校验访问权限、类型、范围和动作参数。API ACK、缓存、设备报告和中枢日志是不同证据，不能等同于肉眼确认物理效果。完整更新与验收边界见 [v3.2.1 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.2.1/RELEASE_NOTES.md)；尚未提供上游 MCP 服务或批量物理写入等全部能力。
+云端 spec 校验访问权限、类型、范围和动作参数。API ACK、缓存、设备报告和中枢日志是不同证据，不能等同于肉眼确认物理效果。完整更新与验收边界见 [v3.2.2 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.2.2/RELEASE_NOTES.md)；尚未提供上游 MCP 服务或批量物理写入等全部能力。
 
 ## 安装（CLI + Agent Skill）
 
