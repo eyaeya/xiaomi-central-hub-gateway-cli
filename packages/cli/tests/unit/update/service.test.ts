@@ -42,6 +42,13 @@ function harness(overrides: Partial<UpdateCheck> = {}) {
       previousVersion: currentVersion,
       packageRoot,
     }),
+    syncSkills: vi.fn<UpdateDependencies['syncSkills']>().mockResolvedValue({
+      status: 'current',
+      digest: 'fixture-digest',
+      updatedPaths: [],
+      backups: [],
+      issues: [],
+    }),
   } satisfies UpdateDependencies;
   return { deps, found };
 }
@@ -63,6 +70,7 @@ describe('explicit update orchestration', () => {
     expect(deps.find).toHaveBeenCalledWith(currentVersion, { registry: undefined });
     expect(deps.install).not.toHaveBeenCalled();
     expect(deps.fetchRelease).not.toHaveBeenCalled();
+    expect(deps.syncSkills).not.toHaveBeenCalled();
   });
 
   it('allows check-only in unsupported installations with actionable installation guidance', async () => {
@@ -107,6 +115,8 @@ describe('explicit update orchestration', () => {
         updateAvailable: false,
       });
       expect(deps.install).not.toHaveBeenCalled();
+      expect(deps.syncSkills).toHaveBeenCalledOnce();
+      expect(deps.syncSkills).toHaveBeenCalledWith({ packageRoot });
     },
   );
 
@@ -115,6 +125,10 @@ describe('explicit update orchestration', () => {
     const result = await runUpdate(currentVersion, {}, deps);
     expect(deps.install).toHaveBeenCalledOnce();
     expect(deps.install).toHaveBeenCalledWith(found.release, { packageRoot });
+    expect(deps.syncSkills).toHaveBeenCalledWith({ packageRoot });
+    expect(deps.install.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.syncSkills.mock.invocationCallOrder[0] ?? 0,
+    );
     expect(result).toMatchObject({
       status: 'updated',
       currentVersion: '3.1.0',
@@ -130,6 +144,7 @@ describe('explicit update orchestration', () => {
     expect(deps.fetchRelease).toHaveBeenCalledOnce();
     expect(deps.fetchRelease).toHaveBeenCalledWith(mirror, '3.1.0');
     expect(deps.install).toHaveBeenCalledTimes(2);
+    expect(deps.syncSkills).toHaveBeenCalledOnce();
     expect(deps.install).toHaveBeenNthCalledWith(2, release(mirror), { packageRoot });
     expect(result).toMatchObject({
       status: 'updated',
@@ -204,6 +219,7 @@ describe('explicit update orchestration', () => {
       });
       await expect(attempt).rejects.not.toThrow('private diagnostic must not leak');
       expect(deps.fetchRelease).not.toHaveBeenCalled();
+      expect(deps.syncSkills).not.toHaveBeenCalled();
       expect(deps.install).toHaveBeenCalledOnce();
     },
   );
@@ -225,6 +241,16 @@ describe('explicit update orchestration', () => {
     expect(deps.install).toHaveBeenCalledTimes(2);
   });
 
+  it('never synchronizes the new Skill when package activation was rolled back on both sources', async () => {
+    const { deps } = harness();
+    deps.install.mockRejectedValue(
+      new UpdateInstallError('Activation smoke failed; package restored.', true),
+    );
+    await expect(runUpdate(currentVersion, {}, deps)).rejects.toThrow('both registries');
+    expect(deps.install).toHaveBeenCalledTimes(2);
+    expect(deps.syncSkills).not.toHaveBeenCalled();
+  });
+
   it('propagates check failure instead of claiming an offline installation is current', async () => {
     const { deps } = harness();
     deps.find.mockRejectedValue(
@@ -233,6 +259,58 @@ describe('explicit update orchestration', () => {
     await expect(runUpdate(currentVersion, { check: true }, deps)).rejects.toThrow(
       'Unable to check updates',
     );
+    expect(deps.install).not.toHaveBeenCalled();
+    expect(deps.syncSkills).not.toHaveBeenCalled();
+  });
+
+  it('skips duplicate current-Skill repair only when the foreground caller already performed it', async () => {
+    const { deps } = harness({ updateAvailable: false });
+    await runUpdate(currentVersion, { skipCurrentSkillSync: true }, deps);
+    expect(deps.syncSkills).not.toHaveBeenCalled();
+  });
+
+  it('still synchronizes a newly installed package when current-Skill repair was already done', async () => {
+    const { deps } = harness();
+    await runUpdate(currentVersion, { skipCurrentSkillSync: true }, deps);
+    expect(deps.syncSkills).toHaveBeenCalledOnce();
+  });
+
+  it('returns per-target partial results without rolling back a valid installed CLI', async () => {
+    const { deps } = harness();
+    const skills = {
+      status: 'partial' as const,
+      digest: 'fixture-digest',
+      updatedPaths: ['/virtual/user/.agents/skills/xgg-rule-authoring'],
+      backups: [],
+      issues: [
+        { path: '/virtual/user/.codex/skills/xgg-rule-authoring', reason: 'Target unavailable.' },
+      ],
+    };
+    deps.syncSkills.mockResolvedValue(skills);
+    const result = await runUpdate(currentVersion, {}, deps);
+    expect(result).toMatchObject({ status: 'updated', skills });
+    expect(result.warnings).toContainEqual(
+      expect.stringContaining('synchronization is incomplete'),
+    );
+    expect(deps.install).toHaveBeenCalledOnce();
+    expect(deps.fetchRelease).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed Skill repair on a current CLI without leaking the underlying diagnostic', async () => {
+    const { deps } = harness({ updateAvailable: false });
+    deps.syncSkills.mockRejectedValue(new Error('private filesystem diagnostic'));
+    const result = await runUpdate(currentVersion, {}, deps);
+    expect(result).toMatchObject({
+      status: 'current',
+      skills: {
+        status: 'partial',
+        issues: [{ path: packageRoot, reason: expect.stringContaining('retry') }],
+      },
+    });
+    expect(result.warnings).toContainEqual(
+      expect.stringContaining('synchronization is incomplete'),
+    );
+    expect(JSON.stringify(result)).not.toContain('private filesystem diagnostic');
     expect(deps.install).not.toHaveBeenCalled();
   });
 });

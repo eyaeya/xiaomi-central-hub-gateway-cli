@@ -1,10 +1,13 @@
 import { ConfigError } from '@eyaeya/xgg-core';
 import { UpdateInstallError, detectInstall, installUpdate } from './install.js';
 import { DEFAULT_REGISTRIES, fetchRelease, findUpdate } from './registry.js';
+import { type SkillSyncResult, syncInstalledSkills } from './skills.js';
 
 export interface UpdateOptions {
   check?: boolean | undefined;
   registry?: string | undefined;
+  /** The foreground hook already repaired the current package before checking the network. */
+  skipCurrentSkillSync?: boolean | undefined;
 }
 
 export interface UpdateDependencies {
@@ -12,6 +15,7 @@ export interface UpdateDependencies {
   find: typeof findUpdate;
   fetchRelease: typeof fetchRelease;
   install: typeof installUpdate;
+  syncSkills: typeof syncInstalledSkills;
 }
 
 const defaults: UpdateDependencies = {
@@ -19,9 +23,30 @@ const defaults: UpdateDependencies = {
   find: findUpdate,
   fetchRelease,
   install: installUpdate,
+  syncSkills: syncInstalledSkills,
 };
 
-/** Does not touch gateway state, credentials, or external Agent Skill directories. */
+/** Skill failures never discard a verified CLI installation or expose subprocess diagnostics. */
+export async function synchronizeSkills(
+  packageRoot: string,
+  sync: typeof syncInstalledSkills = syncInstalledSkills,
+): Promise<SkillSyncResult> {
+  try {
+    return await sync({ packageRoot });
+  } catch {
+    return {
+      status: 'partial',
+      digest: '',
+      updatedPaths: [],
+      backups: [],
+      issues: [
+        { path: packageRoot, reason: 'Skill synchronization failed; run xgg update to retry.' },
+      ],
+    };
+  }
+}
+
+/** Does not touch gateway state or credentials. External Skills use the verified package copy. */
 export async function runUpdate(
   currentVersion: string,
   options: UpdateOptions = {},
@@ -52,7 +77,22 @@ export async function runUpdate(
     installSupported: installation.supported,
     ...(installation.reason ? { installHint: installation.reason } : {}),
   };
-  if (options.check || !found.updateAvailable) return result;
+  if (options.check) return result;
+  if (!found.updateAvailable) {
+    if (options.skipCurrentSkillSync) return result;
+    const skills = await synchronizeSkills(installation.packageRoot, deps.syncSkills);
+    return {
+      ...result,
+      skills,
+      warnings:
+        skills.status === 'partial'
+          ? [
+              ...result.warnings,
+              'CLI is current, but Agent Skill synchronization is incomplete. Review skills.issues before retrying.',
+            ]
+          : result.warnings,
+    };
+  }
 
   try {
     await deps.install(found.release, { packageRoot: installation.packageRoot });
@@ -102,6 +142,7 @@ export async function runUpdate(
       });
     }
   }
+  const skills = await synchronizeSkills(installation.packageRoot, deps.syncSkills);
   return {
     ...result,
     status: 'updated',
@@ -109,5 +150,13 @@ export async function runUpdate(
     previousVersion: currentVersion,
     updateAvailable: false,
     installedVersion: found.latestVersion,
+    skills,
+    warnings:
+      skills.status === 'partial'
+        ? [
+            ...result.warnings,
+            'CLI was updated, but Agent Skill synchronization is incomplete. Review skills.issues before retrying.',
+          ]
+        : result.warnings,
   };
 }

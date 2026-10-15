@@ -1,4 +1,15 @@
-# xgg v3.2.0 · 内置灯光动态公式
+# xgg v3.2.1 · Agent Skill 随 CLI 自动更新
+
+修复 CLI 已升级而 Agent 安装目录仍使用旧 Skill 的缺口。基于 v3.2.0 开发，完整保留离线灯光公式能力；CLI、Core 与随包 Skill 统一为 3.2.1。
+
+- **同次自动升级：** 新 CLI 接手旧版本的自动升级交接，在当前查询前同步已识别的 Skill 副本。无需 GitHub 或额外执行 skills CLI。
+- **离线修复：** 符合条件的前台查询从包内修复旧 Skill，不受 registry 冷却期影响；显式 update 在无新版时也修复。check/help/version、写操作及离线灯光公式保持原有只读或无自动更新边界。
+- **完整目录与恢复：** 校验整个 Skill 树，保留软链接并去重；先暂存和备份，再替换、回读，失败恢复。定制原件备份后更新为官方版本，明确告知定制未自动合并。未知来源、无标记、较新版本或不安全目录保留并报告，部分失败不冒充全部成功。
+- **Agent 重新读取：** 更新提示包含入口路径，要求重新读 SKILL.md 与任务 reference；不声称能替换已经进入对话的旧指令。
+
+自动同步适用于识别出的既有安装；首次注册仍按 README 安装流程。自定义位置用 XGG_SKILL_DIRS。3.2.0 的显式 update 首次升级没有新进程交接，该历史路径在后续符合条件的查询或再次运行新版 update 时同步；3.2.0 自动升级路径在本次调用完成。
+
+## v3.2.0 历史：内置灯光动态公式
 
 新增完全离线的 `xgg light formula`，为 Agent 生成极客版可用的色温或亮度表达式，并预览指定日期的全天数值。只需选择色温或亮度，无需在重复的亮度算法之间选择。CLI、Core 与完整 Skill 同步为 3.2.0。
 
@@ -183,10 +194,10 @@ v2.2.0 轮次的已有授权复用和**从新扫码到中枢的完整链路**均
 按 [README 安装流程](README.md#安装人类与-ai-agent) 安装 CLI，并用对应版本的 Git tag 安装完整 Skill，包含 `references/`。已有安装也要同步更新 Skill，不能只替换二进制。
 
 ```bash
-npm install -g @eyaeya/xgg-cli@3.2.0
+npm install -g @eyaeya/xgg-cli@3.2.1
 xgg --version
 xgg cloud --help
-npx --yes skills add eyaeya/xiaomi-central-hub-gateway-cli@v3.2.0 --global --all
+npx --yes skills add eyaeya/xiaomi-central-hub-gateway-cli@v3.2.1 --global --all
 ```
 
 Agent 仍须执行 README 的全局 Skill 发现验证，确认实际调用者能够加载该 Skill。源码开发则运行 `pnpm install`、`pnpm build`，通过 `node packages/cli/dist/cli.js` 调用当前 checkout，并用 `skills add .` 安装同一份指南。

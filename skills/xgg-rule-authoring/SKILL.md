@@ -3,17 +3,19 @@ name: xgg-rule-authoring
 description: Use when an Agent controls Xiaomi Home devices through xgg cloud or authors and debugs Central Hub Geek Edition rules, including offline dynamic lighting formulas, Mi Home QR authorization, automatic gateway login, cloud/local verification, household habit learning, all 25 cards plus nop, event/state semantics, variables, logs, and backups.
 ---
 
-<!-- xgg-skill-content-build: sha256-2e405173f7178df0e82d2a0be100cae1c8eac157f9c56631fa43465f0ebc313b -->
+<!-- xgg-skill-content-build: sha256-c4935a203d646c4a3f1a9b77e5527c77ef6a7f456679fcadfa153168bae51770 -->
 
 # xgg 米家云端控制与中枢网关自动化编译器
 
 ## CLI 版本与更新
 
-本指南随 xgg v3.2.0 发布。`xgg update --check` 只检查，`xgg update` 检查并升级已确认的 npm 全局安装；两者不需要米家或网关认证。官方 npm 失败后尝试 npmmirror；可用 `--registry <https-url>` 或 `XGG_UPDATE_REGISTRY` 指定可信源，命令行选项优先。镜像可能延迟或不可达，必须保留结果里的来源与降级边界，不能把离线或镜像无新版表述为官方已确认最新。
+本指南随 xgg v3.2.1 发布。`xgg update --check` 只检查，`xgg update` 检查并升级已确认的 npm 全局安装；两者不需要米家或网关认证。官方 npm 失败后尝试 npmmirror；可用 `--registry <https-url>` 或 `XGG_UPDATE_REGISTRY` 指定可信源，命令行选项优先。镜像可能延迟或不可达，必须保留结果里的来源与降级边界，不能把离线或镜像无新版表述为官方已确认最新。
 
 有限前台只读命令通过命令行解析后、业务查询前会自动检查，成功检查后至少间隔 24 小时，失败后至少 1 小时。`XGG_AUTO_UPDATE=0` 关闭自动检查和升级，显式 update 仍可用。daemon、登录/扫码、logout、写操作、原始 api、持续 watch/follow、help/version 与 CI 不触发。升级后立即由新 CLI 执行本次查询，旧 CLI 不先执行业务动作，新进程跳过重复更新，因此查询只执行一次。提示只写 stderr，业务 stdout/退出码来自实际执行查询的 CLI；离线等更新失败继续原查询。不要为升级主动 logout/relogin，现有 daemon 保持会话，Agent 代码在下一次正常登录时更新。
 
-源码 checkout、项目局部依赖、npx 缓存、pnpm 链接或无法确认的安装不自动覆盖；按返回指引使用原安装方式处理，不能用 sudo 或另一 prefix 伪装成原入口已升级。先核对实际 `xgg --version`。包内完整 Skill 随升级更新，Agent 全局目录中的独立副本仍须显式同步并验证；GitHub 不可达时从已安装 CLI 的 `skills/xgg-rule-authoring/` 复制整个目录，保留已有定制修改，不能只复制 SKILL.md 或假设 npm 已完成注册。
+源码 checkout、项目局部依赖、npx 缓存、pnpm 链接或无法确认的安装不自动覆盖；按返回指引使用原安装方式处理，不能用 sudo 或另一 prefix 伪装成原入口已升级。先核对实际 `xgg --version`。从 v3.2.1 起，已识别的 Agent Skill 安装副本随 CLI 一起更新，直接使用包内完整目录，不依赖 GitHub。符合条件的前台查询在执行前还会离线修复旧副本，不受版本检查冷却期影响；`XGG_AUTO_UPDATE=0` 同时关闭自动修复。完整备份旧目录后再切换新版；如果旧副本有定制，定制内容保存在提示的备份中，不自动合并。未知来源、无发布标记、较新版本或不安全目录会保留并明确报告。自定义安装位置可用 `XGG_SKILL_DIRS` 指定完整的 `xgg-rule-authoring` 目录，多个位置用系统路径分隔符分隔。首次安装仍需按 README 注册 Skill，更新器不会为未安装的 Agent 新增注册。
+
+收到 Skill 已更新提示后，先重新读取提示路径的 `SKILL.md` 和当前任务所需 references，再继续后续操作；文件替换不会自动刷新已读入对话的文本。同步部分失败时，检查返回的 `skills.issues` / stderr，不把 CLI 更新成功当作全部 Skill 已更新。多副本环境以当前 Agent 实际发现的 Skill 路径为准，核对它是否已同步；不要只查看另一个全局副本。权限或路径故障修复后可重试；未知来源或无标记副本需先确认来源和使用策略，不能补造标记或反复更新来掩盖问题。3.2.0 的自动升级交接能在同次调用完成同步；旧版显式 `xgg update` 首次升到新版时，在下一次符合条件的查询或再次 `xgg update` 完成同步。
 
 ## 云端任务路由
 
