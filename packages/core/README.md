@@ -16,7 +16,7 @@ npm install @eyaeya/xgg-core
 
 GitHub 仓库：[eyaeya/xiaomi-central-hub-gateway-cli](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli)。
 
-本包随 xgg v3.2.1 发布，保持 v3.2.0 的离线灯光公式 SDK。Agent Skill 自动同步属于配套 CLI 的安装管理能力，不会使 Core SDK 读写 Agent 目录。
+本包随 xgg v3.2.2 发布，保持 v3.2.0 的离线灯光公式 SDK。Agent Skill 自动同步属于配套 CLI 的安装管理能力，不会使 Core SDK 读写 Agent 目录。
 
 ## 包内容
 

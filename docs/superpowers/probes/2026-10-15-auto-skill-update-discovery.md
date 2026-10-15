@@ -42,3 +42,19 @@ Adopted the actionable-status idea: partial automatic results now name each path
 and escaped reason on stderr, avoiding a redundant network update merely to learn
 that an unmarked development copy is intentionally preserved. Keep the explicit
 JSON result, customization backup notice and entrypoint reread instruction.
+
+## Actual-home follow-up: unrelated configuration permissions
+
+After publishing 3.2.1, an ordinary query really upgraded the local CLI and shared
+10-file Skill from 3.2.0 to 3.2.1. However, the no-partial acceptance assertion
+failed: optional discovery inferred a Skill below an unrelated GTK config
+directory whose search permission was denied. No installed Skill was observed
+there. Actual shared Skill equality and alias preservation passed.
+
+Root cause: generic home/XDG directory discovery added every directory's
+`skills/xgg-rule-authoring` candidate without first observing a skills root.
+Decision for patch 3.2.2: require positive directory/link evidence for generic
+`child/skills` discovery; skip inaccessible unrelated application roots. Known
+Agent roots and explicitly supplied paths remain authoritative candidates and
+still report permission failures. Once a generic skills root is observed, its
+target failure is likewise reported. Do not modify unrelated user permissions.

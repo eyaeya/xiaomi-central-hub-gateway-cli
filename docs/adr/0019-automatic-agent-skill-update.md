@@ -18,3 +18,8 @@ The updater can change files, not already-loaded model context: report changed
 entrypoint paths and require rereading before subsequent tasks. See the current
 auto-skill-update specification for discovery scope and legacy explicit-update
 migration boundaries. No additional runtime dependencies or GitHub access.
+
+Patch 3.2.2 discovery clarification: generic home/XDG children require positive
+directory/link evidence for their skills root. Inaccessible unrelated application
+configuration is not a failed Skill. Known Agent roots, explicit paths, and errors
+after observing a generic skills root remain reportable; no user permissions change.
