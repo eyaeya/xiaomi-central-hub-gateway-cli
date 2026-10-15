@@ -35,6 +35,30 @@ npm 包只包含运行 core 所需的 `dist`、许可证、第三方通知与本
 
 Core 与 CLI 同步发布为 3.1.0。新增的 `xgg update --check`、`xgg update` 和前台自动更新均由 CLI 层负责，直接导入 Core SDK 不会执行版本检查、启动更新进程或修改安装。CLI 升级会校验配套 Core；SDK 使用者仍由项目的包管理器和锁文件管理依赖版本。完整行为见 [v3.1.0 发布说明](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.1.0/RELEASE_NOTES.md)。
 
+## 源码新增：离线灯光公式 SDK（尚未发布）
+
+包含本变更的构建导出 `generateLightingFormula` 与 `LightingFormulaOptions`；已发布 v3.1.0 尚不包含。函数同步执行纯计算，不创建 transport、不读凭据、不请求网络或写文件，也不修改设备/规则：
+
+```ts
+import { generateLightingFormula } from '@eyaeya/xgg-core';
+
+const result = generateLightingFormula({
+  mode: 'temperature',
+  latitude: 23.129,
+  min: 3200,
+  max: 5400,
+  date: '2026-10-15',
+  sampleMinutes: 60,
+});
+// result.expression：通过现有网关表达式语法检查的字符串
+// result.preview?.samples：指定日期当地钟表时间的整数样本
+// result.warnings：近似模型和数值修正边界
+```
+
+支持 `temperature`（K）、`brightness` 和 `brightness-beta`（百分比），纬度与上下限必须显式提供。Beta 可传 `speed`、`smoothness`、`offsetMinutes`、`invert`。`date` 仅控制预览，生成表达式仍读取网关运行时日期；无效参数抛出 `ConfigError`。
+
+数学行为参考 [MIoT Geek 工具](https://lzj.ac.cn/tools/iot/miot-geek)，xgg 独立实现，修复正午除零、极区非有限值并统一公式/预览取整。它仍是固定正午与近似月份的曲线，不是天文日出日落计算；Beta 偏移不回绕午夜，极区数值延伸也不等于真实光照模型。返回的单位、警告和归一化参数应保留给调用者。SDK 不替用户选择灯具范围或把百分比换成原始亮度值；应用前需检查实际 spec、步进、写入权限与用户授权，并由现有规则工作流实施和验证。
+
 ## 云端 SDK 与中枢引导
 
 v3.0.1 补齐五类中枢候选指引，沿用 v3.0.0 的中枢定位流程与 v2.2.0 的原生 TypeScript 云端实现，不要求 Python 或网关 daemon。公共导出包括 `CloudClient`、`createCloudTransport`、`cloudLoginStart` / `cloudLoginComplete`、`cloudStatus` / `cloudLogout` 与 `loginGatewayViaCloud`，以及独立的云端快照工具。支持设备与家庭发现、MIoT spec、属性读写、动作、场景、耗材、统计和音箱；已有网关 SDK、workflow 租约、规则与习惯学习能力继续保留。

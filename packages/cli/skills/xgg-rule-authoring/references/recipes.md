@@ -237,6 +237,10 @@ enable 前同时审查：
 
 若需要确定顺序的初始化，优先显式 `onLoad → deviceGetSetVar → downstream`，并验证 get-set output 的时序；不要让多个独立 preload source 形成隐式竞态。
 
+## 动态亮度与色温
+
+需要随时间计算亮度/色温时，读 [lighting-formulas.md](lighting-formulas.md)。先用 `xgg light formula` 做离线计算，再按用户已授权范围编写 `onLoad → loop → varSetNumber → deviceOutput`；增加所需的开灯状态门、初始化与 stop 语义。目标属性的单位、数值域和步进来自当前 spec，不能把计算器百分比直接当成原始亮度值。启用前按本 Skill 做 `rule validate --spec-aware` 和 strict lint，运行后证明变量先更新、设备后取值，以及目标属性直读结果。
+
 ## 配方验收矩阵
 
 | 模式 | 静态必须过 | 运行时必须证明 |

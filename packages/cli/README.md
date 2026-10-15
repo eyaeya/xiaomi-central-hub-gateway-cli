@@ -18,6 +18,21 @@ xgg update --registry https://registry.npmmirror.com
 
 包内 Skill 随 CLI 更新，Agent 全局目录中的独立副本须另行按下面流程同步并验证。GitHub 不可达时可使用包内完整 Skill 的[手动回退流程](https://github.com/eyaeya/xiaomi-central-hub-gateway-cli/blob/v3.1.0/README.md#无法使用-skills-cli-时的手动回退)，保留已有定制修改。
 
+## 源码新增：离线灯光公式（尚未发布）
+
+当前源码新增 `xgg light formula <temperature|brightness|brightness-beta>`，根据明确的纬度与上下限生成极客版表达式；可选日期预览与公式使用相同的整数取整。计算无需登录、不访问网络、不改规则或设备，也不触发自动更新。已发布 v3.1.0 尚不包含此命令；在包含变更的源码 checkout 中先 `pnpm install && pnpm build`，再运行：
+
+```bash
+node packages/cli/dist/cli.js light formula temperature \
+  --latitude 23.129 --min 3200 --max 5400 --date 2026-10-15 --pretty
+node packages/cli/dist/cli.js light formula brightness \
+  --latitude 23.129 --min 10 --max 100 --expression-only
+node packages/cli/dist/cli.js light formula brightness-beta \
+  --latitude 23.129 --min 10 --max 80 --offset-minutes 30 --invert
+```
+
+默认输出 JSON；`--pretty` 与 `--expression-only` 互斥。纬度和范围不使用家庭默认值，以上仅为示例。亮度输出为百分比、色温为 K，应用前仍需检查目标 MIoT spec、原始值映射及步进。模型来源于 [MIoT Geek 工具](https://lzj.ac.cn/tools/iot/miot-geek) 的数学行为，xgg 独立实现并修正正午除零与非有限值；近似日期、固定正午、Beta 午夜跳变和极区延伸仍有模型限制，不能当作天文或灯具实测结论。Agent 在动态灯光配置时可推荐此能力，只补问缺失参数；接入变量、周期规则和设备输出继续遵循既有授权及验收流程。完整说明随包提供于 `skills/xgg-rule-authoring/references/lighting-formulas.md`。
+
 ## 云端直控与中枢联调
 
 原生 TypeScript `xgg cloud`，无需 Python、uv 或运行中的网关 daemon。米家扫码授权后，可以发现家庭/房间/设备、读取和设置属性、执行动作，访问场景、耗材、统计和小爱音箱；需要中枢时，再通过云端自主取得六位码并复用本地会话。v3.0.1 补齐五类 11 款中枢候选的查找指引，沿用 v3.0.0 的未知 IP 定位与手动回退，以及 v2.2.0 的云端能力；规则、习惯学习、导入导出、设备替换及写入保护继续保留。

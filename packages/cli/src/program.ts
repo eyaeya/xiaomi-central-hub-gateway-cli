@@ -6,6 +6,7 @@ import { cloudCommand } from './commands/cloud.js';
 import { deviceCommand } from './commands/device.js';
 import { dumpCommand } from './commands/dump.js';
 import { learnCommand } from './commands/learn.js';
+import { lightCommand } from './commands/light.js';
 import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { ruleCommand } from './commands/rule/index.js';
@@ -28,6 +29,7 @@ export function buildProgram(): Command {
   program.addCommand(deviceCommand());
   program.addCommand(dumpCommand());
   program.addCommand(learnCommand());
+  program.addCommand(lightCommand());
   program.addCommand(loginCommand());
   program.addCommand(logoutCommand());
   program.addCommand(ruleCommand());
@@ -52,6 +54,7 @@ Examples:
   $ xgg login --code <CODE>                        Bind agent to gateway
   $ xgg dump > inventory.json                      Export best-effort indexes
   $ xgg learn plan --include-context --pretty      Plan a read-only household study
+  $ xgg light formula brightness --latitude 23.129 --min 10 --max 100
   $ xgg rule list --pretty                         Table view
   $ xgg rule new --name "Evening automation"       Create an empty rule
   $ xgg backup list --from fds --pretty            List gateway cloud backups

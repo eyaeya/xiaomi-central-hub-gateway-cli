@@ -128,6 +128,9 @@ describe('automatic update eligibility', () => {
     ['agent', 'serve'],
     ['api', '/api/getGraph'],
     ['update'],
+    ['light', 'formula', 'brightness'],
+    ['light', 'formula', 'temperature'],
+    ['light', 'formula', 'brightness-beta'],
     ['cloud', 'login'],
     ['cloud', 'logout'],
     ['cloud', 'gateway', 'login'],
@@ -190,6 +193,26 @@ describe('automatic update eligibility', () => {
 });
 
 describe('automatic update state and failure isolation', () => {
+  it('keeps offline lighting calculations free of update state, installation probes, and network', async () => {
+    const h = harness();
+    const argv = [
+      'light',
+      'formula',
+      'brightness',
+      '--latitude',
+      '23.129',
+      '--min',
+      '10',
+      '--max',
+      '100',
+    ];
+    expect(await h.invoke(argv, { XGG_AUTO_UPDATE: '1', CI: 'false' })).toBe(false);
+    expect(h.io.readFile).not.toHaveBeenCalled();
+    expect(h.io.mkdir).not.toHaveBeenCalled();
+    expect(h.detect).not.toHaveBeenCalled();
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
   it('runs a first safe invocation, honors registry override, and records a successful check atomically', async () => {
     const h = harness();
     const registry = 'https://packages.example.test';
